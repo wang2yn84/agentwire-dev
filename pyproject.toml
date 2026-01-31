@@ -1,6 +1,6 @@
 [project]
 name = "agentwire-dev"
-version = "1.0.0"
+version = "1.0.2"
 description = "Multi-session voice web interface for AI coding agents"
 readme = "README.md"
 license = "AGPL-3.0-or-later"

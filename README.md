@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="AgentWire" width="400">
+  <img src="https://raw.githubusercontent.com/dotdevdotdev/agentwire-dev/main/docs/logo.png" alt="AgentWire" width="400">
 </p>
 
 <p align="center">
