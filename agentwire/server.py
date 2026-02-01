@@ -871,10 +871,21 @@ class AgentWireServer:
 
                 # Clean up state for sessions that no longer exist
                 current_names = set(session_names)
+                removed_sessions = []
                 for name in list(session_states.keys()):
                     if name not in current_names:
                         del session_states[name]
                         self.session_activity.pop(name, None)
+                        removed_sessions.append(name)
+
+                # Notify dashboard about removed sessions
+                if removed_sessions:
+                    for name in removed_sessions:
+                        logger.info(f"[Monitor] Session '{name}' no longer exists, notifying dashboard")
+                        await self.broadcast_dashboard("session_closed", {"session": name})
+                    # Send updated sessions list
+                    sessions_data = await self._get_all_sessions_data()
+                    await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
 
                 await asyncio.sleep(0.5)  # Poll every 500ms
 
