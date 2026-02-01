@@ -331,6 +331,30 @@ def tmux_session_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def tmux_session_has_agent(name: str) -> bool:
+    """Check if a tmux session has an agent running (not just a bare shell).
+
+    Returns True if pane 0 is running claude, opencode, or similar agent.
+    Returns False if pane 0 is just zsh/bash (agent died or never started).
+    """
+    result = subprocess.run(
+        ["tmux", "list-panes", "-t", f"={name}", "-F", "#{pane_index}:#{pane_current_command}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False
+
+    for line in result.stdout.strip().split("\n"):
+        if line.startswith("0:"):
+            cmd = line[2:].lower()
+            # Agent is running if command is not a bare shell
+            bare_shells = {"zsh", "bash", "sh", "fish", "tcsh", "csh"}
+            return cmd not in bare_shells
+
+    return False
+
+
 def load_config() -> dict:
     """Load configuration from ~/.agentwire/config.yaml."""
     config_path = CONFIG_DIR / "config.yaml"
@@ -6786,11 +6810,22 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
         if not json_mode and max_attempts > 1:
             print(f"Attempt {attempt}/{max_attempts}")
 
-        # Ensure session exists
+        # Ensure session exists and has agent running
+        needs_create = False
+
         if not tmux_session_exists(session):
+            needs_create = True
             if not json_mode:
                 print(f"Creating session '{session}'...")
+        elif not tmux_session_has_agent(session):
+            # Session exists but agent died (just bare shell)
+            if not json_mode:
+                print(f"Session '{session}' exists but agent not running, recreating...")
+            # Kill the stale session
+            subprocess.run(["tmux", "kill-session", "-t", f"={session}"], capture_output=True)
+            needs_create = True
 
+        if needs_create:
             class NewArgs:
                 def __init__(self):
                     self.session = session

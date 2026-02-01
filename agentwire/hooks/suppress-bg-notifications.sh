@@ -147,10 +147,73 @@ ${summary_content}"
         fi
       fi
     ) &
-  elif [[ -n "$parent_session" ]]; then
-    # Orchestrator pane: direct notification to parent
-    message="${session_name} is idle"
-    $AGENTWIRE alert -q --to "$parent_session" "$message" 2>/dev/null &
+  elif [[ "$pane_index" == "0" && -n "$tmux_session" ]]; then
+    # Pane 0: Check for scheduled task context
+    task_context_file="$HOME/.agentwire/tasks/${tmux_session}.json"
+
+    if [[ -f "$task_context_file" ]]; then
+      log "Scheduled task detected, starting background job"
+      # Scheduled task: handle completion
+      (
+        dlog="/tmp/claude-hook-debug.log"
+        echo "[$(date -Iseconds)] TASK: started session=$tmux_session" >> "$dlog"
+
+        # Wait 2s for Claude to settle
+        sleep 2
+
+        # Read task context
+        task_name=$(jq -r '.task // ""' "$task_context_file" 2>/dev/null)
+        summary_file=$(jq -r '.summary_file // ""' "$task_context_file" 2>/dev/null)
+        idle_count=$(jq -r '.idle_count // 0' "$task_context_file" 2>/dev/null)
+        exit_on_complete=$(jq -r '.exit_on_complete // true' "$task_context_file" 2>/dev/null)
+
+        echo "[$(date -Iseconds)] TASK: task=$task_name idle_count=$idle_count exit_on_complete=$exit_on_complete" >> "$dlog"
+
+        # Increment idle count
+        new_idle_count=$((idle_count + 1))
+        jq ".idle_count = $new_idle_count" "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
+
+        if [[ "$new_idle_count" == "1" ]]; then
+          # First idle: send summary prompt
+          echo "[$(date -Iseconds)] TASK: first idle, sending summary prompt" >> "$dlog"
+          summary_path="${cwd}/${summary_file}"
+
+          instruction="Task complete. Write a brief summary to ${summary_path} with:
+# Task Summary
+## Status
+complete | incomplete | error
+## What Was Done
+[Brief description]
+## Notes
+[Any important context]"
+
+          $AGENTWIRE send -s "$tmux_session" "$instruction" >/dev/null 2>&1 &
+          echo "[$(date -Iseconds)] TASK: summary prompt sent" >> "$dlog"
+        else
+          # Second+ idle: task complete, write completion signal and optionally exit
+          echo "[$(date -Iseconds)] TASK: second idle, writing completion signal" >> "$dlog"
+
+          # Write completion signal file
+          complete_file="$HOME/.agentwire/tasks/${tmux_session}.complete"
+          echo "{\"completed_at\":\"$(date -Iseconds)\",\"status\":\"complete\",\"summary_file\":\"${summary_file}\"}" > "$complete_file"
+
+          if [[ "$exit_on_complete" == "true" ]]; then
+            echo "[$(date -Iseconds)] TASK: exit_on_complete=true, sending /exit" >> "$dlog"
+            sleep 1
+            $AGENTWIRE send -s "$tmux_session" "/exit" >/dev/null 2>&1
+
+            # Wait for Claude to exit, then kill the tmux session
+            sleep 3
+            echo "[$(date -Iseconds)] TASK: killing tmux session" >> "$dlog"
+            tmux kill-session -t "$tmux_session" 2>/dev/null &
+          fi
+        fi
+      ) &
+    elif [[ -n "$parent_session" ]]; then
+      # Orchestrator pane with parent: notify parent
+      message="${session_name} is idle"
+      $AGENTWIRE alert -q --to "$parent_session" "$message" 2>/dev/null &
+    fi
   fi
 fi
 
