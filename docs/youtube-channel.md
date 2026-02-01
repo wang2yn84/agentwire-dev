@@ -33,7 +33,7 @@ agentwire portal start
 • Website: https://agentwire.dev
 • GitHub: https://github.com/dotdevdotdev/agentwire-dev
 • PyPI: https://pypi.org/project/agentwire-dev/
-• Discord: https://discord.gg/H6vMTA9D
+• Discord: https://discord.gg/e6KxXVdJ25
 
 #AI #CodingAgents #ClaudeCode #OpenCode #VoiceInterface #DevTools
 ```
