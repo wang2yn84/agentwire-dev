@@ -2915,10 +2915,13 @@ def cmd_new(args) -> int:
                 return _output_result(False, json_mode, f"Session '{session_name}' already exists on {machine_id}. Use -f to replace.")
 
         # Create remote tmux session
-        # Determine agent type and session type from CLI flags
+        # Determine agent type and session type from CLI --type flag or boolean flags
         agent_type = detect_default_agent_type()
 
-        if getattr(args, 'bare', False):
+        # Check explicit --type flag first (from portal UI or CLI)
+        if getattr(args, 'type', None):
+            session_type = args.type
+        elif getattr(args, 'bare', False):
             session_type = "bare"
         elif getattr(args, 'restricted', False):
             session_type = f"{agent_type}-restricted"
