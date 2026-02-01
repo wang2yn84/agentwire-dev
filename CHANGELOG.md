@@ -7,14 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-02-01
+
 ### Added
 
-- AGPL v3 licensing with CLA for dual-licensing model
-- GitHub issue templates (bug report, feature request, question)
-- Pull request template
-- Security policy (SECURITY.md)
-- Code of Conduct
-- GitHub Actions CI workflow for linting
+- MCP server for external agent integration with tools for sessions, machines, and transcription
+- Scheduled workloads with `ensure` and `exit_on_complete` options and lock management CLI
+- Email notifications via Resend with branded templates and banner header
+- TTS improvements: queued audio playback, orphaned task handling, model-specific roles
+- Standalone voice role for non-orchestration use; support `voice: random` in project config
+- Progressive loading for faster UI feedback and real-time session updates
+- UI enhancements: combo button in projects list, delete project action, reusable ListCard component
+
+### Changed
+
+- Roles refactored for consistency; leader role made agent-agnostic; delegation roles authoritative
+- Roles and docs updated to favor MCP tools over direct CLI commands
+- Updated assets and splash screens with layered foreground images
+
+### Fixed
+
+- Numerous CLI and portal fixes: correct `--type` handling for remote sessions; proper session removal broadcasts; correct sessions data access in monitor
+- Health/exit behavior for scheduled tasks; TTS error messages surfaced; directory auto-creation on custom paths
+- Email template layout fixes (full-width banner, proper aspect ratios) and HTML detection to prevent escaping
+- Worktree guidance and examples corrected; GLM-only delegation role enforced; pane spawn examples require explicit `pane_type`
+
+### Documentation
+
+- Expanded docs: scheduled workloads spec, lock management commands, email notifications, MCP tools and roles
+- Added brainstorm docs (context compression, transcripts, worker streaming, ambient context, audio cues)
+- Updated project URLs and YouTube channel descriptions; clarified MCP tools worktree limitations
+
+### Chore
+
+- Asset cleanup and refresh (logos, splash images, transparent and black-bg variants)
+- Git hygiene and ignore updates; example/demo script additions
 
 ## [1.0.0] - 2026-01-19
 
@@ -67,3 +94,6 @@ Initial public release of AgentWire.
 - Security documentation
 
 [1.0.0]: https://github.com/dotdevdotdev/agentwire-dev/releases/tag/v1.0.0
+
+[1.1.0]: https://github.com/dotdevdotdev/agentwire-dev/compare/v1.0.0...v1.1.0
+[Unreleased]: https://github.com/dotdevdotdev/agentwire-dev/compare/v1.1.0...HEAD
