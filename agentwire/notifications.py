@@ -60,14 +60,43 @@ class EmailResult:
     error: Optional[str] = None
 
 
+def _is_html_content(text: str) -> bool:
+    """Check if text appears to be HTML content.
+
+    Detects common HTML patterns to avoid escaping user-provided HTML.
+    """
+    if not text:
+        return False
+
+    # Check for common HTML indicators
+    html_patterns = [
+        r'<(h[1-6]|p|div|span|table|tr|td|th|ul|ol|li|a|strong|em|br|hr)\b',  # Common tags
+        r'<[a-zA-Z][^>]*style\s*=',  # Inline styles
+        r'<!DOCTYPE',  # DOCTYPE declaration
+        r'<html',  # HTML root
+    ]
+
+    for pattern in html_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+
+    return False
+
+
 def _simple_markdown_to_html(text: str) -> str:
     """Convert simple markdown to HTML.
 
     Handles basic formatting without external dependencies.
     For full markdown support, install 'markdown' package.
+
+    If text already appears to be HTML, returns it unchanged.
     """
     if not text:
         return ""
+
+    # If the text is already HTML, return it unchanged
+    if _is_html_content(text):
+        return text
 
     lines = text.split("\n")
     html_lines = []
