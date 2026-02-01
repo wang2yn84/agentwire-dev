@@ -136,14 +136,9 @@ roles:
 
 ### Git Access for Workers
 
-If workers will commit, use isolated worktrees:
+For most tasks, workers share your session's working directory - no special setup needed.
 
-```bash
-# Set up worktree first (Bash) - use your delegation role's type
-agentwire spawn --branch feature-auth --type <your-pane-type> --roles <your-worker-role>
-```
-
-Read-only workers don't need worktrees.
+For isolated commits (parallel workers modifying same files), ask the user to set up git worktrees before spawning.
 
 ## Worker Tracking
 
