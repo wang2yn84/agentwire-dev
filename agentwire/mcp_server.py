@@ -379,6 +379,9 @@ def pane_spawn(
 ) -> str:
     """Spawn a worker pane in a session.
 
+    Workers share the orchestrator's working directory. For isolated commits
+    with git worktrees, use CLI: agentwire spawn --branch <name>
+
     Args:
         session: Session name (defaults to current session if in tmux)
         roles: Comma-separated list of roles for the worker

@@ -168,6 +168,8 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 - **MCP tools** - Agents in sessions (orchestrators, workers)
 - **CLI commands** - Humans, shell scripts, automation outside of agent sessions
 
+**Note:** MCP tools don't support git worktree creation. Workers spawned via `pane_spawn` share the orchestrator's working directory. For isolated commits with worktrees, use the CLI `agentwire spawn --branch <name>` directly.
+
 The MCP server runs as part of the portal. All 26 tools are documented via `agentwire roles show leader`.
 
 ## Config
