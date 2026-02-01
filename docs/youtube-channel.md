@@ -5,19 +5,16 @@
 ## Channel Description
 
 ```
-dotdev - Building tools for AI-powered development
+dotdev — Building tools for AI-powered development
+
+I build open source developer tools that make working with AI coding agents easier and more natural. My focus is on voice interfaces, multi-agent orchestration, and seamless human-AI collaboration.
 
 🦉 AgentWire - Voice interface for AI coding agents
-Talk to Claude Code and OpenCode with your voice. Push-to-talk from any device.
+Talk to Claude Code, OpenCode, and other AI assistants using push-to-talk from any device. Control multiple sessions from your phone, tablet, or laptop. Let your agents talk back with text-to-speech. Orchestrate workers across local and remote machines.
 
 pip install agentwire-dev
 
-🔗 Links:
-• Website: https://dotdev.dev
-• AgentWire: https://agentwire.dev
-• GitHub: https://github.com/dotdevdotdev
-• Discord: https://discord.gg/H6vMTA9D
-• PyPI: https://pypi.org/project/agentwire-dev/
+I share tutorials, demos, and deep dives into AI-assisted development workflows. Subscribe to follow along as I build in public and ship tools that help developers work smarter with AI.
 ```
 
 ## Video Description Template (AgentWire Demo)
