@@ -35,7 +35,7 @@
     /* Header */
     .header {
       text-align: center;
-      padding: 10px 20px 0 20px;
+      padding: 0;
       border-bottom: 2px solid #00ff88;
     }
 
@@ -60,7 +60,6 @@
     .banner {
       width: 100%;
       height: auto;
-      border-radius: 8px 8px 0 0;
       margin-bottom: 0;
     }
 
@@ -209,11 +208,6 @@
         <img src="{{ banner_image_url }}" alt="AgentWire" class="banner">
         {% elif echo_image_url %}
         <img src="{{ echo_image_url }}" alt="Echo" class="echo-logo">
-        {% endif %}
-        {% if logo_image_url %}
-        <img src="{{ logo_image_url }}" alt="AgentWire" class="brand-logo">
-        {% else %}
-        <div class="brand-text">AgentWire</div>
         {% endif %}
       </div>
 
