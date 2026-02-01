@@ -884,7 +884,7 @@ class AgentWireServer:
                         logger.info(f"[Monitor] Session '{name}' no longer exists, notifying dashboard")
                         await self.broadcast_dashboard("session_closed", {"session": name})
                     # Send updated sessions list
-                    sessions_data = await self._get_all_sessions_data()
+                    sessions_data = await self._get_sessions_data()
                     await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
 
                 await asyncio.sleep(0.5)  # Poll every 500ms
