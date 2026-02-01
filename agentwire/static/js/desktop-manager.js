@@ -55,6 +55,12 @@ class DesktopManager {
 
         /** @type {number} Timestamp of last audio play */
         this._lastAudioTime = 0;
+
+        /** @type {Array<{base64Data: string, session: string}>} Audio queue */
+        this._audioQueue = [];
+
+        /** @type {boolean} Whether audio is currently playing */
+        this._audioPlaying = false;
     }
 
     // ============================================
@@ -694,11 +700,12 @@ class DesktopManager {
     }
 
     // ============================================
-    // Audio Playback
+    // Audio Playback (Queued)
     // ============================================
 
     /**
-     * Play base64-encoded audio data.
+     * Queue base64-encoded audio data for sequential playback.
+     * Messages queue and play one after another without overlap.
      * @param {string} base64Data - Base64 encoded audio (WAV format)
      * @param {string} session - Session name for event emission
      */
@@ -719,6 +726,28 @@ class DesktopManager {
 
         this._lastAudioHash = audioHash;
         this._lastAudioTime = now;
+
+        // Add to queue
+        this._audioQueue.push({ base64Data, session });
+
+        // Start playback if not already playing
+        if (!this._audioPlaying) {
+            this._playNextAudio();
+        }
+    }
+
+    /**
+     * Play the next audio in the queue.
+     * Called when audio ends or when first item is queued.
+     */
+    async _playNextAudio() {
+        if (this._audioQueue.length === 0) {
+            this._audioPlaying = false;
+            return;
+        }
+
+        this._audioPlaying = true;
+        const { base64Data, session } = this._audioQueue.shift();
 
         try {
             // Decode base64 to binary
@@ -742,14 +771,17 @@ class DesktopManager {
             source.buffer = audioBuffer;
             source.connect(this._audioContext.destination);
 
-            // Emit audio_ended when playback finishes
+            // When playback ends, wait 300ms then play next
             source.onended = () => {
                 this.emit('audio_ended', { session });
+                setTimeout(() => this._playNextAudio(), 300);
             };
 
             source.start(0);
         } catch (err) {
             console.error('[DesktopManager] Audio playback failed:', err);
+            // On error, try next in queue after short delay
+            setTimeout(() => this._playNextAudio(), 100);
         }
     }
 }

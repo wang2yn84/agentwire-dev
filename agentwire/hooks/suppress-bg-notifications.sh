@@ -209,10 +209,28 @@ complete | incomplete | error
           fi
         fi
       ) &
-    elif [[ -n "$parent_session" ]]; then
-      # Orchestrator pane with parent: notify parent
-      message="${session_name} is idle"
-      $AGENTWIRE alert -q --to "$parent_session" "$message" 2>/dev/null &
+    else
+      # No task context file - check if this might be a scheduled task that lost its context
+      # Look for recent task summary files in the project directory
+      recent_summary=$(find "${cwd}/.agentwire" -name "task-summary-*.md" -mmin -5 2>/dev/null | head -1)
+
+      if [[ -n "$recent_summary" ]]; then
+        log "No task context but found recent summary file, cleaning up session"
+        # Task appears to have completed but context was cleared - try to exit gracefully
+        (
+          dlog="/tmp/claude-hook-debug.log"
+          echo "[$(date -Iseconds)] TASK-ORPHAN: found summary at $recent_summary, exiting session" >> "$dlog"
+          sleep 1
+          $AGENTWIRE send -s "$tmux_session" "/exit" >/dev/null 2>&1
+          sleep 3
+          echo "[$(date -Iseconds)] TASK-ORPHAN: killing tmux session" >> "$dlog"
+          tmux kill-session -t "$tmux_session" 2>/dev/null &
+        ) &
+      elif [[ -n "$parent_session" ]]; then
+        # Orchestrator pane with parent: notify parent
+        message="${session_name} is idle"
+        $AGENTWIRE alert -q --to "$parent_session" "$message" 2>/dev/null &
+      fi
     fi
   fi
 fi
