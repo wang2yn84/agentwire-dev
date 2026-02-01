@@ -6,9 +6,11 @@ model: inherit
 
 # Claude Code Task Delegation
 
+**This role defines your worker type: Claude Code workers ONLY.**
+
 **Claude Code is a nuanced collaborator.** It infers intent, handles ambiguity, and makes judgment calls. Your job is to describe goals and constraints clearly, then let Claude figure out the details.
 
-This role supplements `leader` with Claude Code-specific techniques.
+This role supplements `leader` with Claude Code-specific spawn patterns, task templates, and communication techniques.
 
 ---
 

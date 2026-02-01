@@ -6,11 +6,11 @@ model: inherit
 
 # GLM-4.7 Task Delegation
 
-**CRITICAL: This role overrides worker selection from the leader role. ONLY spawn GLM/OpenCode workers. Do NOT spawn Claude Code workers under any circumstances.**
+**This role defines your worker type: GLM/OpenCode workers ONLY.**
 
 **GLM is a focused task executor.** It uses all its capabilities to complete tasks but needs clear guidance on goals and constraints. Your job is to provide clear goals and explicit constraints, then let GLM figure out the details.
 
-This role supplements `leader` with GLM-specific techniques. Ignore any "Choose Claude When..." guidance from the leader role.
+This role supplements `leader` with GLM-specific spawn patterns, task templates, and communication techniques.
 
 ---
 
@@ -76,9 +76,7 @@ Workers output structured exit summaries. Look for:
 | 2 | Good | **Standard tasks (use this)** |
 | 3 | ~50% degraded | Avoid |
 
-**Rule: Spawn max 2 GLM workers at a time. Wait for them to complete before spawning more.**
-
-**DO NOT spawn Claude workers when using this role.** If a task needs more than 2 workers, run them in sequential waves of 2.
+**Rule: Spawn max 2 GLM workers at a time.** Wait for them to complete before spawning more. If a task needs more than 2 workers, run them in sequential waves of 2.
 
 ---
 
