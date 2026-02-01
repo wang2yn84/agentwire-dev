@@ -1,0 +1,41 @@
+name: Publish to PyPI/TestPyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # For OIDC to PyPI
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Publish to TestPyPI (pre-release tags)
+        if: contains(github.ref_name, '-')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI (stable tags)
+        if: ${{ !contains(github.ref_name, '-') }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+
