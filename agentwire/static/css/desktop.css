@@ -287,6 +287,7 @@ body {
 
 /* Tree - cycles through green → cyan → blue */
 .layer-tree {
+    z-index: 1;
     animation: tree-glow 15s ease-in-out infinite;
 }
 
@@ -307,6 +308,7 @@ body {
 
 /* Telephone - shifts green → purple → teal */
 .layer-telephone {
+    z-index: 2;
     animation: telephone-shift 20s ease-in-out infinite;
 }
 
@@ -331,6 +333,7 @@ body {
 
 /* Owl - glowing eyes with color shift */
 .layer-owl {
+    z-index: 3;
     animation: owl-glow 12s ease-in-out infinite;
 }
 
@@ -351,6 +354,7 @@ body {
 
 /* Text - subtle color cycling */
 .layer-text {
+    z-index: 4;
     animation: text-shimmer 18s ease-in-out infinite;
 }
 
@@ -367,6 +371,18 @@ body {
         filter: hue-rotate(-20deg) brightness(1.05);
         opacity: 0.65;
     }
+}
+
+/* Telephone foreground (wire) - syncs with telephone animation */
+.layer-telephone-fg {
+    z-index: 10;
+    animation: telephone-shift 20s ease-in-out infinite;
+}
+
+/* Owl claw foreground - syncs with owl animation */
+.layer-claw-fg {
+    z-index: 11;
+    animation: owl-glow 12s ease-in-out infinite;
 }
 
 .desktop-welcome {
