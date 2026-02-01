@@ -16,10 +16,11 @@ This role supplements `leader` with Claude Code-specific techniques.
 
 For detailed exit summary format, see `worker` role. Delegation roles focus on task communication, not summary format.
 
-### Spawn Command
+### Spawn Command (ALWAYS use this exact pattern)
 ```
-agentwire_pane_spawn(roles="claude-worker")
+agentwire_pane_spawn(pane_type="claude-bypass", roles="claude-worker")
 ```
+**Never omit `pane_type` - it defaults to wrong permissions.**
 
 ### Task Pattern (natural language)
 ```

@@ -100,6 +100,8 @@ agentwire_pane_kill(pane=2)      # Kill another orphan
 
 Workers spawn as panes in your session. You (pane 0) see them working alongside you.
 
+**CRITICAL: Always specify `pane_type`.** Omitting it defaults to restricted mode with the wrong agent.
+
 ```
 # DEFAULT: Spawn GLM worker (well-defined execution tasks)
 agentwire_pane_spawn(pane_type="opencode-bypass", roles="glm-worker")
@@ -126,7 +128,7 @@ agentwire_pane_spawn(pane_type="opencode-bypass", roles="glm-worker")
 
 **Optional (Claude Code):**
 ```
-agentwire_pane_spawn(roles="claude-worker")
+agentwire_pane_spawn(pane_type="claude-bypass", roles="claude-worker")
 ```
 - Best for: Nuanced, judgment-heavy tasks requiring context inference
 - No concurrency limit
