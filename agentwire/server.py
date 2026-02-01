@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import pty
+import random
 import re
 import shlex
 import signal
@@ -303,6 +304,38 @@ class AgentWireServer:
         except Exception as e:
             logger.warning(f"TTS voices request error: {e}")
             return [self.config.tts.default_voice]
+
+    async def _resolve_voice(self, voice: str) -> str:
+        """Resolve voice name, handling 'random' special value.
+
+        Args:
+            voice: Voice name or 'random' for random selection
+
+        Returns:
+            Resolved voice name (string)
+        """
+        if voice.lower() != "random":
+            return voice
+
+        # Get available voices
+        voices_raw = await self._tts_get_voices()
+        default_voice = self.config.tts.default_voice
+
+        # Extract voice names (voices may be dicts with 'name' key or strings)
+        def get_name(v):
+            return v["name"] if isinstance(v, dict) else v
+
+        voices = [get_name(v) for v in voices_raw]
+
+        # Filter out default voice if others are available
+        non_default = [v for v in voices if v != default_voice]
+
+        if non_default:
+            return random.choice(non_default)
+        elif voices:
+            return voices[0]
+        else:
+            return default_voice
 
     async def cleanup_old_uploads(self):
         """Delete uploads older than cleanup_days."""
@@ -3680,8 +3713,12 @@ projects:
 
         logger.info(f"[{session_name}] speak: {len(session.clients)} session client(s)")
 
-        # Get voice settings
+        # Get voice settings (resolve "random" once per session)
         voice = session.config.voice or self.config.tts.default_voice
+        if voice.lower() == "random":
+            voice = await self._resolve_voice(voice)
+            session.config.voice = voice  # Cache for this session
+            logger.info(f"[{session_name}] Resolved random voice to: {voice}")
         exaggeration = session.config.exaggeration
         cfg_weight = session.config.cfg_weight
 
