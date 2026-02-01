@@ -3010,8 +3010,8 @@ def cmd_new(args) -> int:
         session_path = projects_dir / project
 
     if not session_path.exists():
-        if args.force:
-            # Auto-create directory with -f flag
+        if args.force or path:
+            # Auto-create directory with -f flag or when custom path explicitly provided
             session_path.mkdir(parents=True, exist_ok=True)
         else:
             return _output_result(False, json_mode, f"Path does not exist: {session_path}")
