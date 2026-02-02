@@ -1,453 +1,286 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/dotdevdotdev/agentwire-dev/main/docs/logo.png" alt="AgentWire" width="400">
+  <img src="https://agentwire.dev/images/splash-full-transparent.png" alt="AgentWire" width="500">
 </p>
 
 <p align="center">
-  <strong>Multi-session voice web interface for AI coding agents</strong>
+  <strong>Talk to your AI coding agents. From anywhere.</strong>
 </p>
 
 <p align="center">
-  <a href="https://agentwire.dev"><img src="https://img.shields.io/badge/docs-agentwire.dev-blue" alt="Documentation"></a>
   <a href="https://pypi.org/project/agentwire-dev/"><img src="https://img.shields.io/pypi/v/agentwire-dev?color=green" alt="PyPI"></a>
   <a href="https://pypi.org/project/agentwire-dev/"><img src="https://img.shields.io/pypi/pyversions/agentwire-dev" alt="Python"></a>
   <a href="https://github.com/dotdevdotdev/agentwire-dev/blob/main/LICENSE"><img src="https://img.shields.io/github/license/dotdevdotdev/agentwire-dev" alt="License"></a>
+  <a href="https://discord.gg/bspFZNTdUr"><img src="https://img.shields.io/discord/1234567890?color=5865F2&label=discord" alt="Discord"></a>
 </p>
 
 ---
 
-Push-to-talk voice input from any device to tmux sessions running Claude Code or any AI coding assistant.
+## The Problem
 
-## Features
+You're on the couch. Your AI agent is on your workstation. You have an idea.
 
-- **Desktop Control Center** - WinBox-powered window management with draggable/resizable session windows
-- **Session Windows** - Monitor mode (read-only output) or Terminal mode (full xterm.js) per session
-- **Push-to-Talk Voice** - Hold to speak, release to send transcription from any device
-- **TTS Playback** - Agent responses spoken back via browser audio with smart routing
-- **Multi-Device Access** - Control sessions from phone, tablet, or laptop on your network
-- **Git Worktrees** - Multiple agents work the same project in parallel on separate branches
-- **Remote Machines** - Orchestrate Claude Code sessions on remote servers via SSH
-- **Safety Hooks** - 300+ dangerous command patterns blocked (rm -rf, git push --force, secret exposure)
-- **Session Roles** - Orchestrator sessions coordinate voice, workers execute focused tasks
-- **Permission Hooks** - Claude Code integration for permission dialogs in the portal
+Old way: Get up. Walk to computer. Type.
 
-## What's New
+**AgentWire way:** Pull out phone. Hold button. Talk. Done.
 
-**v1.0.0 (January 2026):**
+---
 
-- Desktop Control Center with WinBox-based window management
-- Safety hooks with 300+ dangerous command patterns blocked
-- Git worktree support for parallel agent work
-- Session roles (orchestrator/worker) for coordinated workflows
-- Voice cloning support with custom TTS voices
-- Remote machine orchestration via SSH tunnels
+## What It Does
+
+Push-to-talk voice control for [Claude Code](https://github.com/anthropics/claude-code), [OpenCode](https://github.com/opencode-ai/opencode), or any AI coding assistant running in tmux.
+
+<p align="center">
+  <img src="https://agentwire.dev/images/demo.gif" alt="Demo" width="600">
+</p>
+
+```
+Phone → AgentWire Portal → tmux session → Claude Code
+ 🎤        (WebSocket)         📺           🤖
+```
+
+**From your phone, tablet, or laptop on your network:**
+- Hold to speak, release to send
+- Watch agents work in real-time
+- Hear responses via TTS
+- Manage multiple projects simultaneously
+
+---
 
 ## Quick Start
 
-### System Requirements
+```bash
+# Install
+pip install agentwire-dev
 
-Before installing, ensure you have:
+# Setup (interactive)
+agentwire init
+agentwire generate-certs
 
-| Requirement | Minimum | Check |
-|-------------|---------|-------|
-| **Claude Code OR OpenCode** | Any recent | `claude --version` or `opencode --version` |
-| **Python** | 3.10+ | `python3 --version` |
-| **tmux** | Any recent | `tmux -V` |
-| **ffmpeg** | Any recent | `ffmpeg -version` |
+# Run
+agentwire portal start
+# Open https://localhost:8765
+```
 
-**Important for Ubuntu 24.04+ users:** Ubuntu's externally-managed Python requires using a virtual environment. See the Ubuntu installation instructions below.
+**Requirements:** Python 3.10+, tmux, ffmpeg, Claude Code or OpenCode
 
-
-### Platform-Specific Installation
+<details>
+<summary><strong>Platform-specific instructions</strong></summary>
 
 **macOS:**
-
 ```bash
-# Install dependencies
 brew install tmux ffmpeg
-
-# If Python < 3.10, upgrade via pyenv
-brew install pyenv
-pyenv install 3.12.0
-pyenv global 3.12.0
-
-# Install AgentWire
 pip install agentwire-dev
 ```
 
 **Ubuntu/Debian:**
-
 ```bash
-# Install dependencies
-sudo apt update
-sudo apt install tmux ffmpeg python3-pip
-
-# For Ubuntu 24.04+ (recommended approach):
-# Create venv to avoid externally-managed error
-python3 -m venv ~/.agentwire-venv
-source ~/.agentwire-venv/bin/activate
-echo 'source ~/.agentwire-venv/bin/activate' >> ~/.bashrc
-
-# Install AgentWire
+sudo apt install tmux ffmpeg python3-pip python3-venv
+python3 -m venv ~/.agentwire-venv && source ~/.agentwire-venv/bin/activate
 pip install agentwire-dev
 ```
 
-**WSL2:**
+**WSL2:** Same as Ubuntu. Audio is limited; use as remote worker with portal on Windows host.
 
+</details>
+
+---
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **Voice Control** | Push-to-talk from any device on your network |
+| **Multi-Session** | Run multiple agents on different projects simultaneously |
+| **Git Worktrees** | Same project, multiple branches, parallel agents |
+| **Remote Machines** | SSH into GPU servers and talk to agents there |
+| **Worker Orchestration** | Spawn worker panes, coordinate tasks, voice commands |
+| **Safety Hooks** | 300+ dangerous commands blocked (rm -rf, force push, etc.) |
+| **TTS Responses** | Agents talk back via browser audio |
+| **Session Roles** | Leader/worker patterns for multi-agent workflows |
+
+---
+
+## How It Works
+
+**1. Create a session:**
 ```bash
-# Same as Ubuntu
-sudo apt install tmux ffmpeg python3-pip
-pip install agentwire-dev
-
-# Note: Audio support limited in WSL
-# Recommended: Use as remote worker with portal on Windows host
+agentwire new -s myproject -p ~/projects/myproject
 ```
 
-### Setup & Run
+**2. Open the portal:**
+Visit `https://localhost:8765` on your phone/tablet/laptop
 
-```bash
-# Interactive setup (configures audio, creates config)
-agentwire init
+**3. Talk:**
+Hold the mic button, speak your request, release. The transcription goes to Claude Code.
 
-# Generate SSL certs (required for browser mic access)
-agentwire generate-certs
+**4. Listen:**
+Agent responses are spoken back via TTS (optional, requires GPU for self-hosted or RunPod).
 
-# Start the portal
-agentwire portal start
+---
 
-# Open in browser
-# https://localhost:8765
-```
+## Multi-Agent Orchestration
 
-**Optional:** Configure OpenCode as your AI agent:
-
-```bash
-# Install OpenCode
-npm install -g @opencode-ai/cli
-
-# Configure AgentWire to use OpenCode
-cat > ~/.agentwire/config.yaml << 'EOF'
-agent:
-  command: "opencode"
-EOF
-```
-
-**Expected Install Time:**
-- **First time:** 20-30 minutes (including dependency installation, configuration)
-- **Subsequent installs:** 5 minutes (if dependencies already present)
-
-### Common First-Time Issues
-
-| Issue | Solution |
-|-------|----------|
-| "Python 3.X.X not in '>=3.10'" | Upgrade Python (see platform instructions above) |
-| "externally-managed-environment" (Ubuntu) | Use venv approach (see Ubuntu instructions above) |
-| "agentwire: command not found" | Add to PATH: `export PATH="$HOME/.local/bin:$PATH"` |
-| "ffmpeg not found" | Install ffmpeg (see platform commands above) |
-| SSL warnings in browser | Run `agentwire generate-certs`, then accept cert in browser |
-
-**Full troubleshooting guide:** See `docs/TROUBLESHOOTING.md` after installation
-
-## CLI Commands
-
-```bash
-# Setup & Diagnostics
-agentwire init              # Interactive setup wizard
-agentwire generate-certs    # Generate SSL certificates
-agentwire doctor            # Auto-diagnose and fix common issues
-agentwire network status    # Check service health
-
-# Portal (web server)
-agentwire portal start      # Start in background (tmux)
-agentwire portal stop       # Stop the portal
-agentwire portal status     # Check if running
-
-# TTS Server (self-hosted, requires GPU)
-agentwire tts start         # Start local TTS server
-agentwire tts stop          # Stop TTS server
-agentwire tts status        # Check if running
-
-# STT Server (speech-to-text)
-agentwire stt start         # Start STT server
-agentwire stt stop          # Stop STT server
-agentwire stt status        # Check if running
-
-# Voice
-agentwire say "Hello"              # Speak (auto-routes to browser or local)
-agentwire say -s api "Done"        # Send TTS to specific session
-agentwire alert "Status update"    # Text notification to parent (no audio)
-agentwire alert --to main "Done"   # Text notification to specific session
-agentwire listen start             # Start recording voice input
-agentwire listen stop              # Stop and send transcription
-
-# Voice Cloning
-agentwire voiceclone start         # Start recording voice sample
-agentwire voiceclone stop name     # Stop and upload as voice clone
-agentwire voiceclone list          # List available voices
-agentwire voiceclone delete name   # Delete a voice clone
-
-# Session Management
-agentwire list                         # List all tmux sessions
-agentwire new -s <name> [-p path] [-f] # Create new Claude session
-agentwire output -s <session> [-n 100] # Read session output
-agentwire info -s <session>            # Get session info (cwd, panes)
-agentwire kill -s <session>            # Kill session (clean shutdown)
-agentwire send -s <session> "prompt"   # Send prompt to session
-agentwire send-keys -s <session> keys  # Send raw keys (with pauses)
-agentwire recreate -s <session>        # Destroy and recreate session
-agentwire fork -s <session>            # Fork into new worktree
-
-# Pane Management (workers)
-agentwire spawn --roles worker    # Spawn worker pane in current session
-agentwire split -s <session>      # Add terminal pane(s)
-agentwire jump --pane <N>         # Focus a pane
-agentwire detach -s <session>     # Move pane to its own session
-agentwire resize -s <session>     # Resize window to fit largest client
-
-# Safety & Security
-agentwire safety check "command"  # Test if command would be blocked
-agentwire safety status           # Show pattern counts and recent blocks
-agentwire safety logs --tail 20   # Query audit logs
-agentwire safety install          # Install damage control hooks
-agentwire hooks install           # Install Claude Code permission hook
-agentwire hooks uninstall         # Remove Claude Code permission hook
-agentwire hooks status            # Check hook installation status
-
-# Remote Machines & Tunnels
-agentwire machine list            # List registered machines
-agentwire machine add <id>        # Add a machine
-agentwire machine remove <id>     # Remove a machine
-agentwire tunnels up              # Create SSH tunnels for services
-agentwire tunnels down            # Tear down tunnels
-agentwire tunnels status          # Check tunnel health
-
-# Session History
-agentwire history list            # List conversation history
-agentwire history show <id>       # Show session details
-agentwire history resume <id>     # Resume session (forks)
-
-# Roles & Projects
-agentwire roles list              # List available roles
-agentwire roles show <name>       # Show role details
-agentwire projects list           # Discover projects
-
-# Development
-agentwire dev                     # Start agentwire session
-agentwire rebuild                 # Reinstall from source
-agentwire uninstall               # Uninstall the tool
-```
-
-## Configuration
-
-Run `agentwire init` for interactive setup, or create `~/.agentwire/config.yaml`:
+AgentWire supports leader/worker patterns for complex tasks:
 
 ```yaml
-server:
-  host: "0.0.0.0"
-  port: 8765
-
-projects:
-  dir: "~/projects"
-  worktrees:
-    enabled: true
-
-tts:
-  backend: "runpod"  # runpod | chatterbox | none
-  runpod_endpoint_id: "your-endpoint-id"
-  runpod_api_key: "your-api-key"
-
-agent:
-  command: "claude --dangerously-skip-permissions"  # or "opencode"
-```
-
-**Project configuration:** Create `.agentwire.yml` in your project directory:
-
-```yaml
-type: "standard"  # Universal session type
+# .agentwire.yml in your project
+type: standard
 roles:
-  - agentwire
+  - leader
 ```
 
-## Session Types
-
-AgentWire supports multiple AI agents and session types:
-
-### Universal Types (Recommended)
-- **standard** - Full automation, no permission prompts
-- **worker** - No AskUserQuestion, no voice, focused execution
-- **voice** - Voice with permission prompts, user approval
-- **bare** - Terminal only, no agent
-
-### Agent-Specific Types
-- **Claude Code:** `claude-bypass`, `claude-prompted`, `claude-restricted`
-- **OpenCode:** `opencode-bypass`, `opencode-prompted`, `opencode-restricted`
-
-### Simple Session
+**Leader sessions** can spawn workers:
+```bash
+agentwire spawn --roles worker  # Creates a worker pane
+agentwire send --pane 1 "Implement the auth module"
 ```
-myapp -> ~/projects/myapp/
-```
-Single agent working on a project.
 
-### Worktree Session
-```
-myapp/feature-auth -> ~/projects/myapp-worktrees/feature-auth/
-```
-Multiple agents working on the same project in parallel, each on their own branch.
+Workers execute tasks autonomously while the leader coordinates.
 
-### Remote Session
-```
-ml@gpu-server -> SSH to gpu-server, session "ml"
-```
-Agent running on a remote machine.
+---
 
-## Safety & Security
+## Safety
 
-AgentWire includes damage control hooks that protect against dangerous operations across all sessions (both Claude Code and OpenCode).
+AgentWire blocks dangerous operations before they execute:
 
-### What's Protected
-
-**300+ dangerous command patterns:**
-- Destructive operations: `rm -rf`, `git push --force`, `git reset --hard`
-- Cloud platforms: AWS, GCP, Firebase, Vercel, Netlify, Cloudflare
-- Databases: SQL DROP/TRUNCATE, Redis FLUSHALL, MongoDB dropDatabase
-- Containers: Docker/Kubernetes destructive operations
-- Infrastructure: Terraform destroy, Pulumi destroy
-
-**Sensitive file protection:**
-- **Zero-access paths** (no operations): `.env`, SSH keys, credentials, API tokens
-- **Read-only paths**: System configs, lock files
-- **No-delete paths**: `.git/`, `README.md`, mission files
-
-### Usage
+- `rm -rf /`, `git push --force`, `git reset --hard`
+- Cloud CLI destructive ops (AWS, GCP, Firebase, Vercel)
+- Database drops, Redis flushes, container nukes
+- Sensitive file access (.env, SSH keys, credentials)
 
 ```bash
-# Test if command would be blocked
-agentwire safety check "rm -rf /tmp"
-# → ✗ Decision: BLOCK (rm with recursive or force flags)
+agentwire safety check "rm -rf /"
+# → ✗ BLOCKED: rm with recursive or force flags
 
-# Check system status
 agentwire safety status
-# → Shows pattern counts, recent blocks, audit log location
-
-# Query audit logs
-agentwire safety logs --tail 20
-# → Shows recent blocked/allowed operations with timestamps
-
-# Install hooks (first time setup)
-agentwire safety install
+# → 312 patterns loaded, 47 blocks today
 ```
 
-### How It Works
+All decisions logged for audit trails.
 
-PreToolUse hooks intercept Bash, Edit, and Write operations before execution:
-- **Blocked** → Operation prevented, security message shown
-- **Allowed** → Operation proceeds normally
-- **Ask** → User confirmation required (for risky but valid operations)
+---
 
-All decisions are logged to `~/.agentwire/logs/damage-control/` for audit trails.
+## Voice Configuration
 
-## Voice Integration
-
-AgentWire provides TTS via the `agentwire say` command with automatic audio routing:
-
-```bash
-# In sessions, Claude (or users) can trigger TTS:
-agentwire say "Hello world"  # Automatically routes to browser or local speakers
-```
-
-**How it works:**
-- `agentwire say` automatically detects if a browser is connected to the session
-- If connected: streams audio to browser (tablet/phone/laptop)
-- If not connected: plays audio locally (Mac speakers)
-- Session detection uses `AGENTWIRE_SESSION` env var (set automatically when session is created)
-- For remote machines, configure portal URL in `~/.agentwire/portal_url`
-
-
-TTS requires a GPU server running Chatterbox. We recommend RunPod:
+**TTS (Text-to-Speech):** Requires GPU. Options:
 
 ```yaml
-# In config.yaml
+# ~/.agentwire/config.yaml
 tts:
-  backend: "runpod"
-  runpod_endpoint_id: "your-endpoint-id"
-  runpod_api_key: "your-api-key"
+  backend: "runpod"  # Recommended: RunPod serverless
+  runpod_endpoint_id: "your-endpoint"
+  runpod_api_key: "your-key"
 ```
 
-See `docs/runpod-tts.md` for RunPod setup, or use `agentwire tts start` if self-hosting on your own GPU.
+Or self-host with `agentwire tts start` on a GPU machine.
 
-Or run with TTS disabled (text-only):
+**STT (Speech-to-Text):** Runs locally on macOS via WhisperKit. Linux uses faster-whisper server.
+
+<details>
+<summary><strong>Disable voice (text-only mode)</strong></summary>
 
 ```yaml
 tts:
   backend: "none"
 ```
 
-## STT (Speech-to-Text)
+You can still use the portal for session management without voice.
 
-**Default (macOS):** STT runs locally using WhisperKit (Apple's CoreML-optimized Whisper). Fast and private - no server needed.
+</details>
 
-**Requirements for local STT:**
-- macOS with Apple Silicon (M1/M2/M3)
-- [whisperkit-cli](https://github.com/argmaxinc/WhisperKit): `brew install whisperkit-cli`
-- A WhisperKit model (e.g., via [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper))
+---
 
-**Default model path:** `~/Library/Application Support/MacWhisper/models/whisperkit/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930`
+## CLI Reference
 
-**Alternative (Linux/cross-platform):** Run the STT server with faster-whisper:
+<details>
+<summary><strong>Session Management</strong></summary>
 
 ```bash
-pip install agentwire-dev[stt]
-agentwire stt start
+agentwire list                    # List sessions
+agentwire new -s <name> -p <path> # Create session
+agentwire kill -s <name>          # Kill session
+agentwire send -s <name> "prompt" # Send to session
+agentwire output -s <name>        # Read output
 ```
 
-## Architecture
+</details>
 
-```
-Phone/Tablet ──► AgentWire Portal ──► tmux session
-   (voice)          (WebSocket)         (Claude Code)
-     │                   │                    │
-     │    push-to-talk   │   transcription    │
-     │◄─────────────────►│◄──────────────────►│
-     │    TTS audio      │   agent output     │
-```
-
-## Development
+<details>
+<summary><strong>Worker Panes</strong></summary>
 
 ```bash
-# Clone
-git clone https://github.com/dotdevdotdev/agentwire-dev
-cd agentwire-dev
-
-# Install with uv
-uv venv && uv pip install -e .
-
-# Run in dev mode (picks up source changes)
-agentwire portal start --dev
-
-# After structural changes (pyproject.toml, new files)
-agentwire rebuild
+agentwire spawn --roles worker    # Spawn worker in current session
+agentwire send --pane 1 "task"    # Send to worker
+agentwire output --pane 1         # Read worker output
+agentwire kill --pane 1           # Kill worker
 ```
 
-## Contributing
+</details>
 
-Contributions welcome! Please open an issue first to discuss changes.
+<details>
+<summary><strong>Voice Commands</strong></summary>
 
-- [Report bugs](https://github.com/dotdevdotdev/agentwire-dev/issues)
-- [Request features](https://github.com/dotdevdotdev/agentwire-dev/issues)
+```bash
+agentwire say "Hello"             # TTS (auto-routes to browser)
+agentwire alert "Done"            # Text notification (no audio)
+agentwire listen start/stop       # Voice recording
+agentwire voiceclone list         # Custom voices
+```
+
+</details>
+
+<details>
+<summary><strong>Remote Machines</strong></summary>
+
+```bash
+agentwire machine add gpu --host 10.0.0.5 --user dev
+agentwire new -s ml@gpu           # Create session on remote
+agentwire tunnels up              # SSH tunnels for services
+```
+
+</details>
+
+<details>
+<summary><strong>Safety & Diagnostics</strong></summary>
+
+```bash
+agentwire doctor                  # Auto-diagnose issues
+agentwire safety status           # Check protection status
+agentwire hooks install           # Install Claude Code hooks
+agentwire network status          # Service health check
+```
+
+</details>
+
+---
 
 ## Documentation
 
-- `docs/TROUBLESHOOTING.md` - Common issues and solutions
-- `docs/PORTAL.md` - Portal modes and API
-- `docs/remote-machines.md` - Multi-machine setup
-- `docs/runpod-tts.md` - RunPod TTS setup
-- `docs/tts-self-hosted.md` - Self-hosted TTS
-- `docs/security/damage-control.md` - Safety hooks
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Portal API](docs/PORTAL.md)
+- [Remote Machines](docs/remote-machines.md)
+- [RunPod TTS Setup](docs/runpod-tts.md)
+- [Self-Hosted TTS](docs/tts-self-hosted.md)
+- [Safety Hooks](docs/security/damage-control.md)
+
+---
+
+## Community
+
+- [Discord](https://discord.gg/bspFZNTdUr) - Chat, support, feature requests
+- [Issues](https://github.com/dotdevdotdev/agentwire-dev/issues) - Bug reports
+- [Website](https://agentwire.dev) - Docs and demos
+
+---
 
 ## License
 
-AgentWire is dual-licensed:
+**Dual-licensed:**
+- [AGPL v3](LICENSE) - Free for open source
+- Commercial license available - [contact us](mailto:dev@dotdev.dev)
 
-- **Open Source:** [AGPL v3](LICENSE) - Free for open source projects
-- **Commercial:** Contact us for a commercial license if AGPL doesn't work for your use case
+---
 
-See [CLA.md](CLA.md) for contributor agreement.
+<p align="center">
+  <strong>AgentWire: For people who have better things to do.</strong>
+</p>
