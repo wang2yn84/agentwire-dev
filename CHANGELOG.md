@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-02-03
+
+### Added
+
+- Persistent STT server (`agentwire stt start`) to eliminate cold start delays - transcriptions now complete in ~0.3-0.5s instead of 3-5s
+- STT server uses faster-whisper with openai-whisper fallback, supports model selection via `--model` flag
+- `listen.py` now tries STT server first, falls back to whisperkit-cli if unavailable
+
+### Changed
+
+- Default STT port changed from 8100 to 8101 to avoid conflict with TTS server
+
+### Fixed
+
+- Email body text contrast improved (`#d0d0d0` → `#e8e8e8`) for better readability on dark backgrounds
+
 ## [1.1.0] - 2026-02-01
 
 ### Added
