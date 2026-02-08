@@ -180,11 +180,20 @@ All in `~/.agentwire/`:
 |------|---------|
 | `config.yaml` | Main config (see structure below) |
 | `machines.json` | Remote machines registry |
+| `scripts/` | Machine-specific helper scripts (TTS management, startup, etc.) |
 | `voices/` | Custom TTS voice samples |
 | `uploads/` | Uploaded images for cross-machine sharing |
 | `logs/` | Audit logs for damage-control |
 
 Per-session config (type, roles, voice) lives in `.agentwire.yml` in each project directory.
+
+### Machine Scripts (`~/.agentwire/scripts/`)
+
+Each machine has a `~/.agentwire/scripts/` directory for machine-specific helper scripts (TTS management, startup hooks, service wrappers, etc.). This is the standard location — agents should look here first and put new scripts here.
+
+Scripts in `~/bin/` should symlink to `~/.agentwire/scripts/` so they're callable from PATH but the source of truth is in one place.
+
+These scripts are **not** managed by agentwire — they're local to each machine and not version controlled. They exist because different machines have different roles (GPU server runs TTS, Mac runs the portal, etc.) and need different glue scripts.
 
 ### config.yaml Structure
 
