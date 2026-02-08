@@ -991,11 +991,11 @@ def _start_tts_local(args, venv_override: str | None = None) -> int:
         print(f"Create it with: cd {source_dir} && uv venv {venv_name}", file=sys.stderr)
         return 1
 
-    # Build command with venv
+    # Build command using venv python directly (avoids broken activate scripts and conda interference)
+    venv_python = source_dir / venv_name / "bin" / "python"
     tts_cmd = (
         f"cd {source_dir} && "
-        f"source {venv_name}/bin/activate && "
-        f"python -m agentwire tts serve --host {host} --port {port} --backend {backend} --venv {venv}"
+        f"{venv_python} -m agentwire tts serve --host {host} --port {port} --backend {backend} --venv {venv}"
     )
 
     print(f"Starting TTS server on {host}:{port} (backend: {backend}, venv: {venv})...")
@@ -6682,6 +6682,7 @@ def cmd_ensure(args) -> int:
     dry_run = getattr(args, 'dry_run', False)
     wait_lock = getattr(args, 'wait_lock', False)
     lock_timeout = getattr(args, 'lock_timeout', 60)
+    skip_if_locked = getattr(args, 'skip_if_locked', False)
     json_mode = getattr(args, 'json', False)
 
     # Parse session target
@@ -6776,8 +6777,12 @@ def cmd_ensure(args) -> int:
                 args, session, task, ctx, shell, project_path, timeout, json_mode
             )
     except LockConflict as e:
+        if skip_if_locked:
+            return 0
         return _output_result(False, json_mode, str(e), exit_code=ENSURE_EXIT_LOCK_CONFLICT)
     except LockTimeout as e:
+        if skip_if_locked:
+            return 0
         return _output_result(False, json_mode, str(e), exit_code=ENSURE_EXIT_LOCK_CONFLICT)
 
 
@@ -8003,6 +8008,7 @@ def main() -> int:
     ensure_parser.add_argument("--dry-run", action="store_true", help="Show what would execute without running")
     ensure_parser.add_argument("--wait-lock", action="store_true", help="Wait for lock instead of failing if locked")
     ensure_parser.add_argument("--lock-timeout", type=int, default=60, help="Max time to wait for lock (default: 60s)")
+    ensure_parser.add_argument("--skip-if-locked", action="store_true", help="Exit 0 silently if session is locked (for cron use cases)")
     ensure_parser.add_argument("--json", action="store_true", help="Output JSON")
     ensure_parser.set_defaults(func=cmd_ensure)
 

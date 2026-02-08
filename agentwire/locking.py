@@ -100,6 +100,15 @@ def session_lock(
                             f"Timeout waiting for lock on session '{session}' "
                             f"after {timeout:.1f}s"
                         )
+                    # Check if the lock holder is still alive
+                    holder_pid = get_lock_holder(session)
+                    if holder_pid is not None and not _is_process_running(holder_pid):
+                        # Stale lock from a dead process — clean it up
+                        remove_lock(session)
+                        # Close our current file handle (the old lock file is gone)
+                        lock_file.close()
+                        lock_file = open(lock_path, "w")
+                        continue  # Retry immediately
                     time.sleep(poll_interval)
         else:
             # Non-blocking - fail immediately if locked
