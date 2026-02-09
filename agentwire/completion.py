@@ -187,44 +187,28 @@ def clear_task_context(session: str) -> None:
             pass
 
 
-def write_completion_signal(session: str, status: str, summary_file: str) -> Path:
-    """Write completion signal file (called by hook).
-
-    Args:
-        session: tmux session name
-        status: Task status from summary
-        summary_file: Path to summary file
-
-    Returns:
-        Path to the completion signal file
-    """
-    TASKS_DIR.mkdir(parents=True, exist_ok=True)
-
-    signal = {
-        "completed_at": datetime.now().isoformat(),
-        "status": status,
-        "summary_file": summary_file,
-    }
-
-    complete_file = TASKS_DIR / f"{session}.complete"
-    complete_file.write_text(json.dumps(signal, indent=2))
-    return complete_file
-
-
 def wait_for_completion_signal(
     session: str,
     timeout: float = 300.0,
     poll_interval: float = 2.0,
+    summary_path: Path | None = None,
 ) -> dict:
-    """Wait for completion signal from hook.
+    """Wait for task completion by polling the summary file directly.
+
+    Primary detection: polls for the summary file the agent writes after
+    receiving the summary prompt. When found, parses it and returns the result.
+
+    Fallback: also checks for the legacy .complete signal file in case the
+    hook writes one (e.g. manual trigger).
 
     Args:
         session: tmux session name
         timeout: Maximum seconds to wait
         poll_interval: Seconds between checks
+        summary_path: Path to the summary .md file the agent will write
 
     Returns:
-        Completion signal dict with status and summary_file
+        Dict with 'status', 'summary', 'summary_file' keys
 
     Raises:
         CompletionTimeout: If timeout exceeded
@@ -233,6 +217,21 @@ def wait_for_completion_signal(
     start_time = time.time()
 
     while True:
+        # Primary: check if the agent has written the summary file
+        if summary_path and summary_path.exists() and summary_path.stat().st_size > 0:
+            # Give a moment for the file to be fully written
+            time.sleep(0.5)
+            try:
+                result = parse_summary_file(summary_path)
+                return {
+                    "status": result.status,
+                    "summary": result.summary,
+                    "summary_file": str(summary_path),
+                }
+            except CompletionError:
+                pass  # File may be partially written, retry
+
+        # Fallback: check for legacy .complete signal file
         if complete_file.exists():
             try:
                 signal = json.loads(complete_file.read_text())
@@ -401,18 +400,26 @@ def wait_for_file(
 
 
 def parse_summary_file(path: Path) -> SummaryResult:
-    """Parse a task summary file with YAML front matter.
+    """Parse a task summary file.
 
-    Expected format:
+    Supports two formats:
+
+    1. YAML front matter (from Python SYSTEM_SUMMARY_PROMPT):
         ---
         status: complete
         summary: Did the thing
         files_modified:
           - path/to/file
-        blockers: []
         ---
 
-        Additional notes here...
+    2. Markdown headings (from hook summary prompt):
+        # Task Summary
+        ## Status
+        complete
+        ## What Was Done
+        Description here
+        ## Notes
+        Extra context
 
     Args:
         path: Path to the summary file
@@ -434,9 +441,8 @@ def parse_summary_file(path: Path) -> SummaryResult:
     files_modified: list[str] = []
     blockers: list[str] = []
 
-    # Parse YAML front matter
     if content.startswith("---"):
-        # Find closing ---
+        # Parse YAML front matter format
         end_match = re.search(r"\n---\s*\n", content[3:])
         if end_match:
             yaml_content = content[3:3 + end_match.start()]
@@ -465,10 +471,31 @@ def parse_summary_file(path: Path) -> SummaryResult:
                         files_modified.append(item)
                     elif current_list == "blockers":
                         blockers.append(item)
+    else:
+        # Parse markdown heading format (## Status, ## What Was Done, etc.)
+        sections: dict[str, list[str]] = {}
+        current_section: str | None = None
 
-    # Validate status
+        for line in content.split("\n"):
+            stripped = line.strip()
+            heading = re.match(r"^#{1,3}\s+(.+)", stripped)
+            if heading:
+                current_section = heading.group(1).lower()
+                continue
+            if current_section and stripped:
+                sections.setdefault(current_section, []).append(stripped)
+
+        if "status" in sections:
+            status = sections["status"][0].strip().lower()
+        if "what was done" in sections:
+            summary = " ".join(sections["what was done"])
+        elif "summary" in sections:
+            summary = " ".join(sections["summary"])
+
+    # Validate status — also accept "error" as "failed"
+    if status == "error":
+        status = "failed"
     if status not in ("complete", "incomplete", "failed"):
-        # Default to incomplete if status is unrecognized
         status = "incomplete"
 
     return SummaryResult(

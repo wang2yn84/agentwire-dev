@@ -6667,7 +6667,6 @@ def cmd_ensure(args) -> int:
         CompletionTimeout,
         generate_summary_filename,
         get_summary_prompt,
-        parse_summary_file,
         status_to_exit_code,
         wait_for_file,
         wait_for_idle,
@@ -6800,15 +6799,14 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
     Uses hook-based completion detection:
     1. Write task context file (tells hook a scheduled task is running)
     2. Send task prompt
-    3. Hook handles: first idle → send summary prompt, second idle → write completion signal
-    4. Wait for completion signal file
-    5. Read and parse summary
+    3. Hook handles: first idle → send summary prompt
+    4. Poll for summary file (agent writes it after receiving summary prompt)
+    5. Parse summary and return result
     """
     from .completion import (
         CompletionTimeout,
         clear_task_context,
         generate_summary_filename,
-        parse_summary_file,
         status_to_exit_code,
         wait_for_completion_signal,
         write_task_context,
@@ -6893,7 +6891,7 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
         clear_task_context(session)
 
         # Write task context for hook coordination
-        # Hook will: first idle → send summary prompt, second idle → write completion signal
+        # Hook will: first idle → send summary prompt (ensure polls for summary file directly)
         write_task_context(
             session=session,
             task_name=task.name,
@@ -6910,11 +6908,16 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
 
         # Wait for completion signal from hook
         if not json_mode:
-            print("Waiting for task completion (hook-based)...")
+            print("Waiting for task completion...")
 
         try:
-            signal = wait_for_completion_signal(session, timeout=timeout)
+            signal = wait_for_completion_signal(
+                session, timeout=timeout, summary_path=summary_path
+            )
             last_status = signal.get("status", "incomplete")
+            last_summary = signal.get("summary", "")
+            ctx.status = last_status
+            ctx.summary = last_summary
         except CompletionTimeout:
             # Don't clear task context here — the hook may still need it.
             # Hook cleans up after itself (exit_on_complete kills session).
@@ -6930,17 +6933,6 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
 
         # Clean up task context
         clear_task_context(session)
-
-        # Parse summary file
-        try:
-            result = parse_summary_file(summary_path)
-            last_status = result.status
-            last_summary = result.summary
-            ctx.status = result.status
-            ctx.summary = result.summary
-        except Exception as e:
-            last_status = "incomplete"
-            last_summary = f"Failed to parse summary: {e}"
 
         if not json_mode:
             print(f"Task status: {last_status}")

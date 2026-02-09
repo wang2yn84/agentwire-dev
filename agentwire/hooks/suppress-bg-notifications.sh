@@ -190,12 +190,8 @@ complete | incomplete | error
           $AGENTWIRE send -s "$tmux_session" "$instruction" >/dev/null 2>&1 &
           echo "[$(date -Iseconds)] TASK: summary prompt sent" >> "$dlog"
         else
-          # Second+ idle: task complete, write completion signal and optionally exit
-          echo "[$(date -Iseconds)] TASK: second idle, writing completion signal" >> "$dlog"
-
-          # Write completion signal file
-          complete_file="$HOME/.agentwire/tasks/${tmux_session}.complete"
-          echo "{\"completed_at\":\"$(date -Iseconds)\",\"status\":\"complete\",\"summary_file\":\"${summary_file}\"}" > "$complete_file"
+          # Second+ idle: optionally exit session (ensure polls summary file directly)
+          echo "[$(date -Iseconds)] TASK: second idle" >> "$dlog"
 
           if [[ "$exit_on_complete" == "true" ]]; then
             echo "[$(date -Iseconds)] TASK: exit_on_complete=true, sending /exit" >> "$dlog"
