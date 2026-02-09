@@ -211,8 +211,9 @@ complete | incomplete | error
       ) &
     else
       # No task context file - check if this might be a scheduled task that lost its context
-      # Look for recent task summary files in the project directory
-      recent_summary=$(find "${cwd}/.agentwire" -name "task-summary-*.md" -mmin -5 2>/dev/null | head -1)
+      # Look for recent task summary files scoped to THIS session (avoids false matches
+      # when multiple sessions share the same project directory)
+      recent_summary=$(find "${cwd}/.agentwire" -name "task-summary-${tmux_session}-*.md" -mmin -5 2>/dev/null | head -1)
 
       if [[ -n "$recent_summary" ]]; then
         log "No task context but found recent summary file, cleaning up session"

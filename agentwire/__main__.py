@@ -6872,8 +6872,8 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
         except TemplateError as e:
             return _output_result(False, json_mode, str(e), exit_code=ENSURE_EXIT_PRE_FAILURE)
 
-        # Generate summary filename
-        summary_filename = generate_summary_filename(task.name)
+        # Generate summary filename (scoped to session to avoid collisions)
+        summary_filename = generate_summary_filename(session, task.name)
         summary_path = project_path / summary_filename
         ctx.summary_file = summary_filename
 

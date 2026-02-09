@@ -66,17 +66,21 @@ Status meanings:
 Write the file now."""
 
 
-def generate_summary_filename(task_name: str) -> str:
-    """Generate a timestamped summary filename.
+def generate_summary_filename(session: str, task_name: str) -> str:
+    """Generate a session-scoped timestamped summary filename.
+
+    Includes session name so multiple sessions sharing a project directory
+    don't collide on summary files or trigger false TASK-ORPHAN detection.
 
     Args:
-        task_name: Task name (for context, not used in filename currently)
+        session: tmux session name
+        task_name: Task name (for context)
 
     Returns:
-        Relative path like .agentwire/task-summary-2024-01-15T07-00-00.md
+        Relative path like .agentwire/task-summary-mysession-2024-01-15T07-00-00.md
     """
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    return f".agentwire/task-summary-{timestamp}.md"
+    return f".agentwire/task-summary-{session}-{timestamp}.md"
 
 
 # =============================================================================
