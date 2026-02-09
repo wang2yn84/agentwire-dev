@@ -6908,7 +6908,9 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
             signal = wait_for_completion_signal(session, timeout=timeout)
             last_status = signal.get("status", "incomplete")
         except CompletionTimeout:
-            clear_task_context(session)
+            # Don't clear task context here — the hook may still need it.
+            # Hook cleans up after itself (exit_on_complete kills session).
+            # Task context files are cleared at the START of next run.
             last_status = "incomplete"
             last_summary = "Timeout waiting for task completion"
             if attempt < max_attempts:
