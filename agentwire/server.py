@@ -2808,7 +2808,7 @@ projects:
                 session.played_says = set(list(session.played_says)[-25:])
 
             # Count chunks for the response (speak() does the actual chunking)
-            from .tts.chunker import chunk_text
+            from .utils.chunker import chunk_text
             chunks = chunk_text(text)
             chunk_count = len(chunks)
 
@@ -3735,7 +3735,7 @@ projects:
 
         try:
             # Split long text into sentence-sized chunks for better TTS quality
-            from .tts.chunker import chunk_text
+            from .utils.chunker import chunk_text
             chunks = chunk_text(text)
 
             any_sent = False

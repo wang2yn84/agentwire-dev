@@ -598,7 +598,7 @@ def say(text: str, session: str | None = None, voice: str | None = None) -> str:
     # Say command doesn't return JSON, run without --json
     data = run_agentwire_cmd(args, json_output=False)
     if data.get("success"):
-        from .tts.chunker import chunk_text
+        from .utils.chunker import chunk_text
         chunks = chunk_text(text)
         if len(chunks) > 1:
             return f"Queued speech ({len(chunks)} chunks)."

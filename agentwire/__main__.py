@@ -2000,7 +2000,7 @@ def cmd_say(args) -> int:
             return _remote_say(text, actual_session, portal_url)
 
     # No portal connections — chunk locally for better TTS quality
-    from .tts.chunker import chunk_text
+    from .utils.chunker import chunk_text
     chunks = chunk_text(text)
 
     for chunk in chunks:
