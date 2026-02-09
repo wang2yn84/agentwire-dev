@@ -3728,39 +3728,38 @@ projects:
         await self.broadcast_dashboard("tts_start", {"session": session_name, "text": text})
 
         try:
-            # Generate audio via TTS server HTTP call
-            logger.info(f"[{session_name}] TTS voice: {voice}")
-            audio_data = await self._tts_generate(
-                text=text,
-                voice=voice,
-                exaggeration=exaggeration,
-                cfg_weight=cfg_weight,
-            )
+            # Split long text into sentence-sized chunks for better TTS quality
+            from .tts.chunker import chunk_text
+            chunks = chunk_text(text)
 
-            if audio_data:
-                # Prepend silence to prevent first syllable cutoff
-                audio_data = self._prepend_silence(audio_data, ms=300)
-                audio_b64 = base64.b64encode(audio_data).decode()
-                logger.info(f"[{session_name}] Broadcasting audio ({len(audio_b64)} bytes b64)")
+            any_sent = False
+            for chunk in chunks:
+                logger.info(f"[{session_name}] TTS voice: {voice}")
+                audio_data = await self._tts_generate(
+                    text=chunk,
+                    voice=voice,
+                    exaggeration=exaggeration,
+                    cfg_weight=cfg_weight,
+                )
 
-                # Send audio to session clients only (terminal/monitor/chat windows for this session)
-                # These have dedicated WebSocket connections to /ws/{session}
-                await self._broadcast(session, {"type": "audio", "session": session_name, "data": audio_b64})
+                if audio_data:
+                    audio_data = self._prepend_silence(audio_data, ms=300)
+                    audio_b64 = base64.b64encode(audio_data).decode()
+                    logger.info(f"[{session_name}] Broadcasting audio chunk ({len(audio_b64)} bytes b64)")
 
-                # Notify dashboard that audio is playing (for activity indicators)
-                # but DON'T send the actual audio data - prevents double playback
-                # when user has both dashboard and session window open, or multiple dashboards
-                await self.broadcast_dashboard("audio_playing", {"session": session_name})
+                    await self._broadcast(session, {"type": "audio", "session": session_name, "data": audio_b64})
+                    await self.broadcast_dashboard("audio_playing", {"session": session_name})
 
-                # Estimate audio duration and schedule audio_done notification
-                # WAV header: 44 bytes, then 16-bit stereo 24kHz = 96000 bytes/sec
-                audio_bytes = len(audio_data)
-                duration_sec = max(0.5, (audio_bytes - 44) / 96000)
-                asyncio.create_task(self._send_audio_done_delayed(session_name, duration_sec))
-                return True
-            else:
-                logger.warning(f"[{session_name}] TTS returned no audio data")
-                return False
+                    # Estimate audio duration and schedule audio_done notification
+                    # WAV header: 44 bytes, then 16-bit stereo 24kHz = 96000 bytes/sec
+                    audio_bytes = len(audio_data)
+                    duration_sec = max(0.5, (audio_bytes - 44) / 96000)
+                    asyncio.create_task(self._send_audio_done_delayed(session_name, duration_sec))
+                    any_sent = True
+                else:
+                    logger.warning(f"[{session_name}] TTS returned no audio data for chunk")
+
+            return any_sent
 
         except Exception as e:
             logger.error(f"TTS failed for {session_name}: {e}")
