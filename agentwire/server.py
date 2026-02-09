@@ -2807,12 +2807,18 @@ projects:
             if len(session.played_says) > 50:
                 session.played_says = set(list(session.played_says)[-25:])
 
-            logger.info(f"[{name}] API say: {text[:50]}...")
+            # Count chunks for the response (speak() does the actual chunking)
+            from .tts.chunker import chunk_text
+            chunks = chunk_text(text)
+            chunk_count = len(chunks)
+
+            logger.info(f"[{name}] API say: {text[:50]}... ({chunk_count} chunk(s))")
 
             # Generate and broadcast TTS in background (don't block the API response)
+            # speak() handles chunking sequentially — guaranteed playback order
             asyncio.create_task(self.speak(name, text))
 
-            return web.json_response({"success": True})
+            return web.json_response({"success": True, "chunks": chunk_count})
 
         except Exception as e:
             logger.error(f"Say API failed: {e}")

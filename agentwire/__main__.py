@@ -1990,27 +1990,24 @@ def cmd_say(args) -> int:
     # Handle voice notifications
     _handle_voice_notifications(text, voice, args, session)
 
-    # Split long text into sentence-sized chunks for better TTS quality
-    from .tts.chunker import chunk_text
-    chunks = chunk_text(text)
-
-    # Check portal connections once
-    portal_url = None
-    has_connections = False
-    actual_session = session
+    # Try portal first if we have a session
+    # Portal handles chunking internally (sequential generation + broadcast)
     if session:
         portal_url = _get_portal_url()
         has_connections, actual_session = _check_portal_connections(session, portal_url)
 
-    # Route each chunk through the same path
-    for chunk in chunks:
         if has_connections:
-            result = _remote_say(chunk, actual_session, portal_url)
-        else:
-            result = _local_say_runpod(
-                chunk, voice, exaggeration, cfg_weight, tts_config,
-                backend=backend, instruct=instruct, language=language, stream=stream
-            )
+            return _remote_say(text, actual_session, portal_url)
+
+    # No portal connections — chunk locally for better TTS quality
+    from .tts.chunker import chunk_text
+    chunks = chunk_text(text)
+
+    for chunk in chunks:
+        result = _local_say_runpod(
+            chunk, voice, exaggeration, cfg_weight, tts_config,
+            backend=backend, instruct=instruct, language=language, stream=stream
+        )
         if result != 0:
             return result
 
