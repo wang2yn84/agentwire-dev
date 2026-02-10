@@ -39,6 +39,12 @@ __version__ = "0.1.0"
 
 logger = logging.getLogger(__name__)
 
+# Paste chunking: large inputs (pastes) are written in chunks with delays
+# to avoid flooding the PTY buffer and freezing the agent session.
+PASTE_THRESHOLD = 64    # bytes — above this, chunk the write
+PASTE_CHUNK_SIZE = 128  # bytes per write
+PASTE_CHUNK_DELAY = 0.01  # seconds between chunks
+
 
 def _is_allowed_in_restricted_mode(tool_name: str, tool_input: dict) -> bool:
     """Check if command is allowed in restricted mode.
@@ -1183,13 +1189,25 @@ class AgentWireServer:
                                         filtered_data = re.sub(r'\x1b\[[0-9;]*c', '', filtered_data)  # Generic DA
 
                                         if filtered_data:
-                                            if master_fd is not None:
-                                                # Local: write to PTY master
-                                                os.write(master_fd, filtered_data.encode())
-                                            elif proc.stdin:
-                                                # Remote: write to subprocess stdin
-                                                proc.stdin.write(filtered_data.encode())
-                                                await proc.stdin.drain()
+                                            data_bytes = filtered_data.encode()
+                                            if len(data_bytes) <= PASTE_THRESHOLD:
+                                                # Normal keystroke — write immediately
+                                                if master_fd is not None:
+                                                    os.write(master_fd, data_bytes)
+                                                elif proc.stdin:
+                                                    proc.stdin.write(data_bytes)
+                                                    await proc.stdin.drain()
+                                            else:
+                                                # Paste detected — chunk writes to avoid flooding PTY
+                                                for i in range(0, len(data_bytes), PASTE_CHUNK_SIZE):
+                                                    chunk = data_bytes[i:i + PASTE_CHUNK_SIZE]
+                                                    if master_fd is not None:
+                                                        os.write(master_fd, chunk)
+                                                    elif proc.stdin:
+                                                        proc.stdin.write(chunk)
+                                                        await proc.stdin.drain()
+                                                    if i + PASTE_CHUNK_SIZE < len(data_bytes):
+                                                        await asyncio.sleep(PASTE_CHUNK_DELAY)
 
                                 elif msg_type == "resize":
                                     # Terminal resize
