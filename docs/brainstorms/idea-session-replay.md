@@ -1,247 +1,173 @@
-# Idea: Session Replay & Audit Trail
+# Session Replay: Time-Travel for Agent Sessions
 
-> Structured capture of agent actions for debugging, review, and learning
+> Record, replay, and learn from agent sessions like watching a coding stream.
 
 ## Problem
 
-When agents work, their actions are ephemeral:
+When agents work autonomously (especially overnight or during meetings), you return to:
+- A completed task with no visibility into *how* it was done
+- A failed session where you need to debug what went wrong
+- Worker panes that already exited, taking their context with them
 
-- **Debugging**: "Why did the agent do that?" - scroll through terminal output
-- **Review**: "What exactly changed?" - manually diff files
-- **Learning**: "What worked well?" - no structured record
-- **Compliance**: "Who changed what when?" - hope git history is enough
+You have summaries and git diffs, but no way to understand the *journey*. The decision-making process, the rabbit holes, the recoveries—all lost.
 
-Terminal output captures text but not intent. Git captures file changes but not reasoning.
+## Proposed Solution
 
-## Why This Matters
+**Session Replay** records everything happening in a session and lets you play it back at variable speeds, like watching a coding stream.
 
-1. **Debugging** - When workers fail, understanding why requires piecing together fragments
-2. **Trust** - Users want to verify agent actions, especially for sensitive operations
-3. **Improvement** - Can't optimize what you can't measure
-4. **Handoff** - Sharing context with colleagues requires explaining what happened
-5. **Compliance** - Some environments need audit trails
+### What Gets Recorded
 
-## Proposed Solution: Action Log
+1. **Terminal output** - Full ANSI output with timestamps (already captured via tmux)
+2. **Voice events** - TTS utterances and user voice input with timestamps
+3. **Agent state transitions** - Idle, working, thinking indicators
+4. **Worker lifecycle** - Spawn, task assignment, completion, exit
+5. **Tool calls** - Which tools were invoked (file reads, edits, bash commands)
 
-Structured capture of agent actions, queryable and replayable.
-
-### 1. What Gets Captured
+### Recording Format
 
 ```yaml
-# ~/.agentwire/logs/sessions/{session}/{timestamp}.jsonl
-{"ts": "2024-01-15T10:30:00", "type": "file_read", "path": "src/auth.ts", "lines": 150}
-{"ts": "2024-01-15T10:30:05", "type": "file_write", "path": "src/auth.ts", "diff_lines": 12}
-{"ts": "2024-01-15T10:30:10", "type": "command", "cmd": "npm test", "exit_code": 0}
-{"ts": "2024-01-15T10:30:15", "type": "tool_call", "tool": "grep", "args": {"pattern": "login"}}
-{"ts": "2024-01-15T10:30:20", "type": "decision", "summary": "Using JWT instead of sessions"}
+# ~/.agentwire/recordings/{session}-{timestamp}.replay
+metadata:
+  session: myproject
+  started: 2025-02-03T10:00:00Z
+  ended: 2025-02-03T10:45:00Z
+  duration_seconds: 2700
+  worker_count: 3
+
+events:
+  - ts: 0
+    type: voice_in
+    text: "Add user authentication to the API"
+
+  - ts: 2
+    type: voice_out
+    text: "I'll spawn two workers for this - one for the auth middleware, one for the routes"
+
+  - ts: 5
+    type: worker_spawn
+    pane: 1
+    task: "Auth middleware implementation"
+
+  - ts: 5
+    type: worker_spawn
+    pane: 2
+    task: "Auth route handlers"
+
+  - ts: 8
+    type: terminal
+    pane: 1
+    output: "Reading src/middleware/..."
+
+  # ... thousands of events
 ```
 
-### 2. Capture Levels
+### Playback Interface
+
+```bash
+# CLI playback (terminal-based)
+agentwire replay myproject-20250203-100000
+agentwire replay --speed 4x myproject-20250203-100000  # Fast forward
+agentwire replay --skip-idle myproject-20250203-100000  # Skip waiting periods
+
+# Jump to interesting moments
+agentwire replay --at 15:30 myproject-20250203-100000
+agentwire replay --event "worker_error" myproject-20250203-100000
+```
+
+Portal web UI playback:
+- Timeline scrubber showing activity density
+- Speed controls (1x, 2x, 4x, 8x)
+- Event markers (worker spawns, errors, completions)
+- Picture-in-picture for multiple worker panes
+- Voice playback with waveform visualization
+
+### Smart Features
+
+**Activity heatmap** - Timeline shows where the action was. Skip long idle periods.
+
+**Event search** - "Show me when it edited auth.ts" jumps to that moment.
+
+**Branch comparison** - Compare two replay sessions that took different approaches.
+
+**Annotated exports** - Export as markdown with screenshots at key moments for documentation.
+
+## Implementation Considerations
+
+### Recording (Low Overhead)
+
+Recording should be nearly free:
+- tmux already buffers output; periodically dump to file
+- Voice events already flow through the portal; tap the stream
+- Worker lifecycle events already exist; add a recorder hook
+
+```python
+# In portal/server.py
+class ReplayRecorder:
+    def __init__(self, session_name: str):
+        self.events = []
+        self.start_time = time.time()
+
+    def record(self, event_type: str, data: dict):
+        self.events.append({
+            "ts": time.time() - self.start_time,
+            "type": event_type,
+            **data
+        })
+
+    def save(self):
+        # Compress and save to ~/.agentwire/recordings/
+```
+
+### Playback Engine
+
+Terminal playback could use a simple approach:
+- Parse events chronologically
+- Print terminal output with appropriate delays (scaled by playback speed)
+- Display voice text inline or speak it
+- Show worker status in a header bar
+
+### Storage Management
+
+Recordings can get large. Mitigation:
+- Compress with zstd (terminal output compresses well)
+- Configurable retention (keep last N days/GB)
+- Automatic cleanup of successful short sessions
+- Keep failed/long sessions longer (more interesting)
 
 ```yaml
-# .agentwire.yml
-logging:
-  level: standard  # minimal | standard | verbose
+# config.yaml
+replay:
+  enabled: true
   retention_days: 30
+  max_storage_gb: 10
+  keep_failures: true  # Always keep failed sessions
 ```
 
-| Level | Captures |
-|-------|----------|
-| `minimal` | Commands, file writes, errors |
-| `standard` | + file reads, tool calls, decisions |
-| `verbose` | + full file contents, command output |
+## Potential Challenges
 
-### 3. CLI Commands
+1. **Storage size** - Long sessions with verbose output could be large
+   - Mitigation: Compression, sampling for very long sessions, configurable detail levels
 
-```bash
-# View recent actions
-agentwire replay -s session              # Last 50 actions
-agentwire replay -s session --since 1h   # Last hour
-agentwire replay -s session --type file_write  # Only writes
+2. **Privacy** - Recordings might capture secrets typed in terminal
+   - Mitigation: Optional recording, auto-redact patterns, encrypted storage
 
-# Export for sharing
-agentwire replay -s session --export replay.json
+3. **Playback fidelity** - ANSI escape sequences, terminal dimensions
+   - Mitigation: Record terminal dimensions, use xterm.js for faithful replay
 
-# Search across sessions
-agentwire replay --grep "auth" --since 24h
+4. **Multi-pane complexity** - Showing 4+ worker panes simultaneously
+   - Mitigation: Focus mode (one pane at a time) + overview mode (all panes small)
 
-# Summarize session activity
-agentwire replay -s session --summary
-```
+## Use Cases
 
-### 4. Replay Output
+- **Morning catch-up**: "What did the overnight task do?" Watch at 8x speed.
+- **Debugging failures**: Scrub to the error, see what led up to it.
+- **Learning**: New team member watches how the agent approaches problems.
+- **Demos**: Record a session, export as annotated video for stakeholders.
+- **Prompt improvement**: See where agents get confused, improve instructions.
 
-```
-$ agentwire replay -s myproject --since 30m
+## Future Extensions
 
-Session: myproject (30 minutes of activity)
-
-10:30:00  📖 READ   src/auth.ts (150 lines)
-10:30:05  ✏️  WRITE  src/auth.ts (+12 lines)
-10:30:10  ⚡ RUN    npm test → success
-10:30:15  🔍 GREP   pattern="login" (5 matches)
-10:30:20  💭 DECIDE "Using JWT instead of sessions"
-10:31:00  📖 READ   package.json
-10:31:05  ⚡ RUN    npm install jsonwebtoken → success
-10:32:00  ✏️  WRITE  src/middleware/jwt.ts (new file, 45 lines)
-
-Summary: 2 files read, 2 files written, 2 commands run
-```
-
-### 5. Integration Points
-
-**Hook-based capture** (non-invasive):
-
-```python
-# In session send/output handlers
-def log_action(session: str, action: dict):
-    log_path = Path.home() / ".agentwire/logs/sessions" / session
-    log_path.mkdir(parents=True, exist_ok=True)
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    with open(log_path / f"{today}.jsonl", "a") as f:
-        f.write(json.dumps(action) + "\n")
-```
-
-**MCP tool wrapper** (for detailed capture):
-
-```python
-# Wrap tool calls to capture inputs/outputs
-original_tool = mcp.get_tool("grep")
-
-@mcp.tool()
-def grep_with_logging(*args, **kwargs):
-    log_action(session, {"type": "tool_call", "tool": "grep", "args": kwargs})
-    return original_tool(*args, **kwargs)
-```
-
-## Action Types
-
-| Type | Description | Captured Data |
-|------|-------------|---------------|
-| `file_read` | Agent reads a file | path, line count |
-| `file_write` | Agent writes/edits file | path, diff size, before/after hash |
-| `command` | Shell command executed | cmd, exit code, duration |
-| `tool_call` | MCP tool invoked | tool name, arguments |
-| `decision` | Agent makes a choice | summary text |
-| `error` | Something failed | error type, message |
-| `spawn` | Worker spawned | pane, roles |
-| `idle` | Session went idle | duration |
-
-## MCP Tools
-
-```python
-@mcp.tool()
-def replay_list(session: str, since: str = "1h", limit: int = 50) -> str:
-    """List recent actions in a session.
-    
-    Args:
-        session: Session name
-        since: Time window (1h, 30m, 24h)
-        limit: Max actions to return
-    """
-
-@mcp.tool()
-def replay_summary(session: str, since: str = "24h") -> str:
-    """Get activity summary for a session.
-    
-    Returns counts of reads, writes, commands, errors.
-    """
-
-@mcp.tool()
-def replay_search(pattern: str, since: str = "24h") -> str:
-    """Search actions across all sessions.
-    
-    Useful for finding when/where something happened.
-    """
-```
-
-## Storage & Retention
-
-```
-~/.agentwire/logs/
-├── sessions/
-│   ├── myproject/
-│   │   ├── 2024-01-15.jsonl
-│   │   └── 2024-01-16.jsonl
-│   └── api-server/
-│       └── 2024-01-15.jsonl
-└── index.sqlite  # Optional: for fast search
-```
-
-**Retention policy**:
-- Default: 30 days
-- Configurable per-project
-- Auto-cleanup via `agentwire cleanup --logs`
-
-**Size estimates**:
-- ~1KB per action (standard level)
-- ~100 actions per hour of active work
-- ~2.4MB per day of heavy use
-- ~72MB per month
-
-## Privacy Considerations
-
-- File contents only captured at `verbose` level
-- Secrets in commands should be redacted
-- Users control what's logged
-- Local storage only (not sent anywhere)
-
-## Example Use Cases
-
-### Debugging a Failed Worker
-
-```bash
-$ agentwire replay -s myproject --pane 2 --type error
-
-10:45:23  ❌ ERROR  command "npm test" failed (exit 1)
-10:45:30  ❌ ERROR  file write failed: permission denied
-10:46:00  ❌ ERROR  tool "grep" timeout after 30s
-
-$ agentwire replay -s myproject --pane 2 --before "10:45:23" --limit 10
-# Shows what happened leading up to the error
-```
-
-### Reviewing What Changed
-
-```bash
-$ agentwire replay -s myproject --type file_write --since 2h
-
-10:30:05  ✏️  WRITE  src/auth.ts (+12 lines)
-10:32:00  ✏️  WRITE  src/middleware/jwt.ts (new, 45 lines)
-10:35:00  ✏️  WRITE  tests/auth.test.ts (+20 lines)
-
-# Compare with git
-$ git diff HEAD~1 --stat
-```
-
-### Sharing Context
-
-```bash
-$ agentwire replay -s myproject --since 4h --export handoff.json
-$ agentwire replay --import handoff.json --summary
-
-# Colleague can see exactly what you did
-```
-
-## Success Criteria
-
-1. Actions logged automatically without agent changes
-2. `replay` command shows clear, scannable history
-3. Errors are easy to trace back to root cause
-4. Storage stays reasonable (<100MB/month typical)
-5. Search finds relevant actions quickly
-
-## Non-Goals
-
-- **Full terminal recording** - Use asciinema for that
-- **Video replay** - Just structured actions
-- **Remote sync** - Local logs only
-- **Real-time streaming** - Query after the fact
-
-## Implementation Phases
-
-1. **Phase 1**: Basic logging (file_write, command, error)
-2. **Phase 2**: CLI replay command with filtering
-3. **Phase 3**: MCP tools for agents to query history
-4. **Phase 4**: Search index for cross-session queries
+- **Shared replays** - Upload to a URL for team viewing
+- **AI-generated summaries** - "This session added auth in 3 phases: middleware, routes, tests"
+- **Replay diffing** - Compare two approaches to the same task
+- **Training data** - Use successful sessions to fine-tune agent behavior
