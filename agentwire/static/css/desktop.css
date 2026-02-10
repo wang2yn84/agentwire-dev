@@ -425,7 +425,7 @@ body {
 .taskbar-btn {
     padding: 6px 12px;
     background: var(--background);
-    border: 1px solid var(--chrome-border);
+    border: 1px solid var(--accent);
     border-radius: 4px;
     cursor: pointer;
     display: flex;
@@ -435,12 +435,11 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--text);
+    color: var(--accent);
 }
 
 .taskbar-btn:hover {
     background: var(--hover);
-    border-color: var(--accent);
 }
 
 .taskbar-btn.active {
@@ -450,7 +449,9 @@ body {
 }
 
 .taskbar-btn.minimized {
-    opacity: 0.5;
+    background: var(--background);
+    border: 1px solid var(--accent);
+    color: var(--accent);
 }
 
 .taskbar-icon {
@@ -1059,6 +1060,11 @@ body {
     opacity: 0.6;
 }
 
+/* Hide fullscreen button — session windows always maximize */
+.winbox .wb-full {
+    display: none;
+}
+
 .winbox .wb-close:hover,
 .winbox .wb-min:hover,
 .winbox .wb-max:hover,
@@ -1080,6 +1086,53 @@ body {
 .winbox.max {
     top: var(--menu-height) !important;
     height: calc(100% - var(--menu-height) - var(--taskbar-height)) !important;
+}
+
+/* Hide WinBox's built-in minimize bars — we use taskbar tabs instead */
+.winbox.min {
+    display: none !important;
+}
+
+/* Override WinBox no-move: restore pointer-events and show grab cursor */
+.winbox .wb-header {
+    cursor: grab !important;
+}
+
+.winbox .wb-title {
+    pointer-events: auto !important;
+    cursor: grab !important;
+}
+
+/* Tiled window styling — tight borders, smooth repositioning */
+.winbox.tiled {
+    border-radius: 2px !important;
+    transition: left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+
+/* Tile overlay — shown during drag, covers desktop area */
+.tile-overlay {
+    position: fixed;
+    top: var(--menu-height);
+    left: 0;
+    right: 0;
+    bottom: var(--taskbar-height);
+    z-index: 99999;
+    pointer-events: none;
+}
+
+.tile-overlay.hidden {
+    display: none;
+}
+
+/* Tile preview highlight — shows where window will land */
+.tile-preview {
+    position: absolute;
+    background: rgba(74, 222, 128, 0.12);
+    border: 2px solid rgba(74, 222, 128, 0.4);
+    border-radius: 8px;
+    transition: all 0.15s ease;
+    pointer-events: none;
+    display: none;
 }
 
 /* ListWindow component */
@@ -2159,17 +2212,10 @@ body {
     /* Reduce window control button size for better fit */
     .winbox .wb-close,
     .winbox .wb-min,
-    .winbox .wb-max,
-    .winbox .wb-full {
+    .winbox .wb-max {
         width: 28px;
         height: 28px;
         background-size: 12px;
-    }
-
-    /* Hide fullscreen and maximize buttons - enforce single-window mode */
-    .winbox .wb-full,
-    .winbox .wb-max {
-        display: none;
     }
 
     /* Reduce header padding */

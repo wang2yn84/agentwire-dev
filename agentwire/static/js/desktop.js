@@ -8,15 +8,16 @@
  */
 
 import { desktop } from './desktop-manager.js';
+import { tileManager } from './tile-manager.js';
 import { SessionWindow } from './session-window.js';
 import { openSessionsWindow } from './windows/sessions-window.js';
 import { openMachinesWindow } from './windows/machines-window.js';
 import { openConfigWindow } from './windows/config-window.js';
 import { openProjectsWindow } from './windows/projects-window.js';
 
-// State - track open SessionWindows
+// State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
-let windowCounter = 0;  // For cascading positions
+const listWindows = new Map();     // windowId -> ListWindow instance
 
 // Global PTT state
 let globalPttState = 'idle';  // idle | recording | processing
@@ -98,6 +99,16 @@ async function init() {
 
     await desktop.connect();
     updateConnectionStatus(true);
+
+    // Initialize tile manager for drag-to-tile window management
+    tileManager.init();
+
+    // Trigger terminal resize after a window is tiled
+    desktop.on('window_tiled', ({ id }) => {
+        if (sessionWindows.has(id)) {
+            sessionWindows.get(id)._handleResizeAfterAnimation();
+        }
+    });
 
     // Set initial voice indicator state
     updateVoiceIndicator('idle');
@@ -184,8 +195,9 @@ function setupPageUnload() {
         // Disconnect main WebSocket
         desktop.disconnect();
 
-        // Close all session windows (which closes their WebSockets)
+        // Close all windows
         sessionWindows.forEach(sw => sw.close());
+        listWindows.forEach(lw => lw.close());
     });
 }
 
@@ -193,18 +205,18 @@ function setupPageUnload() {
 function setupMenuListeners() {
     // Left side menu items
     document.getElementById('machinesMenu')?.addEventListener('click', () => {
-        openMachinesWindow();
+        openListWindowWithTaskbar('machines', openMachinesWindow);
     });
     document.getElementById('projectsMenu')?.addEventListener('click', () => {
-        openProjectsWindow();
+        openListWindowWithTaskbar('projects', openProjectsWindow);
     });
     document.getElementById('sessionsMenu')?.addEventListener('click', () => {
-        openSessionsWindow();
+        openListWindowWithTaskbar('sessions', openSessionsWindow);
     });
 
     // Right side settings dropdown items
     document.getElementById('configMenuItem')?.addEventListener('click', () => {
-        openConfigWindow();
+        openListWindowWithTaskbar('config', openConfigWindow);
         closeSettingsDropdown();
     });
     document.getElementById('resetWindowsMenuItem')?.addEventListener('click', () => {
@@ -301,21 +313,28 @@ function updateVoiceIndicator(state) {
 export function openSessionTerminal(session, mode, machine = null) {
     const id = machine ? `${session}@${machine}` : session;
 
-    // Check if already open
+    // Check if already open — restore if minimized, otherwise focus
     if (sessionWindows.has(id)) {
-        sessionWindows.get(id).focus();
+        const existing = sessionWindows.get(id);
+        if (existing.isMinimized) {
+            if (!desktop.isTiled(id)) {
+                desktop.minimizeAllExcept(id);
+            }
+            existing.restore();
+        } else {
+            existing.focus();
+        }
         return;
     }
 
-    // Calculate cascade position
-    const offset = (windowCounter++ % 10) * 30;
+    // Minimize all other session windows before opening new one
+    desktop.minimizeAllExcept(null);
 
     const sw = new SessionWindow({
         session,
         mode,
         machine,
         root: elements.desktopArea,
-        position: { x: 50 + offset, y: 50 + offset },
         onClose: (win) => {
             sessionWindows.delete(id);
             removeTaskbarButton(id);
@@ -331,20 +350,80 @@ export function openSessionTerminal(session, mode, machine = null) {
     addTaskbarButton(id, sw);
 }
 
+/**
+ * Open a list window with taskbar integration.
+ * Handles restore-if-minimized, taskbar button creation/cleanup.
+ *
+ * @param {string} id - Window identifier (matches ListWindow id)
+ * @param {Function} openFn - The open function (e.g., openSessionsWindow)
+ */
+function openListWindowWithTaskbar(id, openFn) {
+    // Already tracked — restore if minimized, otherwise focus
+    if (listWindows.has(id)) {
+        const lw = listWindows.get(id);
+        if (lw.winbox) {
+            if (lw.isMinimized) {
+                if (!desktop.isTiled(id)) {
+                    desktop.minimizeAllExcept(id);
+                }
+                lw.restore();
+            } else {
+                lw.winbox.focus();
+            }
+            return;
+        }
+        // Winbox gone (was closed) — remove stale entry
+        listWindows.delete(id);
+        removeTaskbarButton(id);
+    }
+
+    // Minimize all before opening
+    desktop.minimizeAllExcept(null);
+
+    const lw = openFn();
+    if (!lw) return;
+
+    listWindows.set(id, lw);
+
+    // Patch cleanup to also remove taskbar button
+    const originalCleanup = lw._cleanup;
+    lw._cleanup = () => {
+        if (originalCleanup) originalCleanup();
+        listWindows.delete(id);
+        removeTaskbarButton(id);
+    };
+
+    addTaskbarButton(id, lw);
+}
+
 // Taskbar management
-function addTaskbarButton(id, sessionWindow) {
+function addTaskbarButton(id, windowInstance) {
     const btn = document.createElement('div');
     btn.className = 'taskbar-btn active';
     btn.dataset.session = id;
-    btn.innerHTML = `<span>📟</span> ${id}`;
+    // Use window title if available, otherwise capitalize id
+    btn.textContent = windowInstance.title || windowInstance.session || id;
     btn.addEventListener('click', () => {
-        if (sessionWindow.isMinimized) {
-            sessionWindow.restore();
+        if (windowInstance.isMinimized) {
+            // Skip minimizeAllExcept for tiled windows — they restore to their tile position
+            if (!desktop.isTiled(id)) {
+                desktop.minimizeAllExcept(id);
+            }
+            windowInstance.restore();
         } else {
-            sessionWindow.focus();
+            // Minimize this window
+            windowInstance.minimize();
         }
     });
     elements.taskbarWindows.appendChild(btn);
+
+    // Listen for minimize events to update tab styling
+    desktop.on('window_minimized', ({ id: minimizedId }) => {
+        if (minimizedId === id) {
+            btn.classList.remove('active');
+            btn.classList.add('minimized');
+        }
+    });
 }
 
 function removeTaskbarButton(id) {
@@ -354,7 +433,13 @@ function removeTaskbarButton(id) {
 
 function updateTaskbarActive(id) {
     elements.taskbarWindows.querySelectorAll('.taskbar-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.session === id);
+        if (btn.dataset.session === id) {
+            btn.classList.add('active');
+            btn.classList.remove('minimized');
+        } else {
+            btn.classList.remove('active');
+            btn.classList.add('minimized');
+        }
     });
 }
 

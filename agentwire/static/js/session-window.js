@@ -17,7 +17,6 @@ export class SessionWindow {
      * @param {'monitor'|'terminal'} options.mode - Window mode
      * @param {string|null} options.machine - Remote machine ID (optional)
      * @param {HTMLElement} options.root - Parent element for WinBox
-     * @param {Object} options.position - Initial position {x, y}
      * @param {Function} options.onClose - Callback when window closes
      * @param {Function} options.onFocus - Callback when window gains focus
      */
@@ -26,7 +25,6 @@ export class SessionWindow {
         this.mode = options.mode || 'terminal';
         this.machine = options.machine || null;
         this.root = options.root || document.body;
-        this.position = options.position || { x: 50, y: 50 };
         this.onCloseCallback = options.onClose || null;
         this.onFocusCallback = options.onFocus || null;
 
@@ -323,27 +321,17 @@ export class SessionWindow {
 
     _createWinBox(container) {
         const title = `${this.sessionId} (${this.mode})`;
-        const windowId = `session_${this.sessionId}_${this.mode}`;
-
-        // Load saved position/size (null on mobile)
-        const savedState = desktop.loadWindowState(windowId);
-        const x = savedState?.x ?? this.position.x;
-        const y = savedState?.y ?? this.position.y;
-        const width = savedState?.width ?? 700;
-        const height = savedState?.height ?? 500;
 
         this.winbox = new WinBox({
             title: title,
             icon: getSessionIconByName(this.session),
             mount: container,
             root: this.root,
-            x: x,
-            y: y,
-            width: width,
-            height: height,
+            width: '100%',
+            height: '100%',
             minwidth: 400,
             minheight: 300,
-            class: ['session-window'],
+            class: ['session-window', 'no-full', 'no-resize', 'no-move'],
             onclose: () => {
                 // WinBox is closing, clean up our resources
                 // Set winbox to null first to prevent recursive close
@@ -356,36 +344,41 @@ export class SessionWindow {
                     this.onFocusCallback(this);
                 }
             },
-            onmove: () => {
-                this._saveWindowState(windowId);
-            },
             onresize: () => {
                 this._handleResize();
-                this._saveWindowState(windowId);
             },
             onmaximize: () => {
                 // WinBox animates maximize - wait for animation to complete
                 this._handleResizeAfterAnimation();
-            },
-            onfullscreen: () => {
-                // Browser fullscreen uses fullscreenchange event, not CSS transitions
-                this._handleFullscreenResize();
+                // Update taskbar tab to active style
+                if (this.onFocusCallback) {
+                    this.onFocusCallback(this);
+                }
             },
             onminimize: () => {
-                // Optionally disconnect on minimize to save resources
-                // For now, keep connection alive
+                // Update taskbar tab to minimized style
+                desktop.emit('window_minimized', { id: this.sessionId });
             },
             onrestore: () => {
-                // Restore from maximize/minimize animates
+                // Emit restored event so tile manager can re-apply position
+                desktop.emit('window_restored', { id: this.sessionId });
+                // Restore from minimize animates
                 this._handleResizeAfterAnimation();
                 // Reconnect if disconnected
                 if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
                     this._connectWebSocket();
                 }
+                // Update taskbar tab to active style
+                if (this.onFocusCallback) {
+                    this.onFocusCallback(this);
+                }
             },
         });
 
-        // Register with desktop manager for window management (auto-maximize on mobile, etc.)
+        // Always open maximized
+        this.winbox.maximize();
+
+        // Register with desktop manager for window management
         desktop.registerWindow(this.sessionId, this.winbox);
     }
 
@@ -543,58 +536,6 @@ export class SessionWindow {
                 }
             });
         }
-    }
-
-    /**
-     * Save window position/size to localStorage (skip on mobile).
-     * @param {string} windowId - Unique window identifier
-     */
-    _saveWindowState(windowId) {
-        if (!this.winbox || desktop.isNarrowViewport()) return;
-
-        desktop.saveWindowState(windowId, {
-            x: this.winbox.x,
-            y: this.winbox.y,
-            width: this.winbox.width,
-            height: this.winbox.height
-        });
-    }
-
-    _handleFullscreenResize() {
-        // Handle browser fullscreen - uses fullscreenchange event, not CSS transitions
-        if (this.mode !== 'terminal' || !this.fitAddon || !this.terminal) return;
-
-        const doFit = () => {
-            try {
-                const fontFamily = '"FiraMono Nerd Font Mono", Menlo, Monaco, "Courier New", monospace';
-                const fontSize = 14;
-                this.terminal.options.fontFamily = fontFamily;
-                this.terminal.options.fontSize = fontSize;
-                this.fitAddon.fit();
-                this._sendResize();
-            } catch (err) {
-                console.error('[SessionWindow] Fullscreen fit error:', err);
-            }
-        };
-
-        // fullscreenchange fires AFTER the browser completes the fullscreen transition
-        const onFullscreenChange = () => {
-            document.removeEventListener('fullscreenchange', onFullscreenChange);
-
-            // Multiple fits with increasing delays to ensure it sticks
-            setTimeout(doFit, 50);
-            setTimeout(doFit, 150);
-            setTimeout(doFit, 300);
-        };
-
-        document.addEventListener('fullscreenchange', onFullscreenChange);
-
-        // Fallback: if fullscreenchange doesn't fire within 1s, force fit
-        setTimeout(() => {
-            document.removeEventListener('fullscreenchange', onFullscreenChange);
-            doFit();
-            setTimeout(doFit, 200);
-        }, 1000);
     }
 
     _handleResizeAfterAnimation() {

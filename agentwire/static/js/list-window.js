@@ -18,10 +18,6 @@ export class ListWindow {
      * @param {Function} [options.onItemAction] - Handler for item actions: function(action, item, event)
      * @param {string} [options.emptyMessage='No items'] - Message when list is empty
      * @param {HTMLElement} [options.root] - Root element for WinBox (defaults to document body)
-     * @param {number} [options.width=400] - Window width
-     * @param {number} [options.height=500] - Window height
-     * @param {number} [options.x] - Window X position
-     * @param {number} [options.y] - Window Y position
      */
     constructor(options) {
         this.id = options.id;
@@ -32,10 +28,6 @@ export class ListWindow {
         this.onItemAction = options.onItemAction || (() => {});
         this.emptyMessage = options.emptyMessage || 'No items';
         this.root = options.root || document.body;
-        this.width = options.width || 400;
-        this.height = options.height || 500;
-        this.x = options.x;
-        this.y = options.y;
 
         this.winbox = null;
         this.container = null;
@@ -73,50 +65,37 @@ export class ListWindow {
         const refreshBtn = this.container.querySelector('.list-refresh-btn');
         refreshBtn.addEventListener('click', () => this.refresh());
 
-        // Load saved state or calculate cascade position
-        const savedState = desktop.loadWindowState(this.id);
-        let x, y, width, height;
-
-        if (savedState) {
-            x = savedState.x;
-            y = savedState.y;
-            width = savedState.width || this.width;
-            height = savedState.height || this.height;
-        } else {
-            const existingWindows = document.querySelectorAll('.winbox').length;
-            const offset = existingWindows * 30;
-            x = this.x ?? (100 + offset);
-            y = this.y ?? (80 + offset);
-            width = this.width;
-            height = this.height;
-        }
-
-        // Create WinBox
+        // Create WinBox — always maximized, no dragging/resizing
         this.winbox = new WinBox({
             title: this.title,
             icon: this.icon,
             mount: this.container,
             root: this.root,
-            x: x,
-            y: y,
-            width: width,
-            height: height,
+            width: '100%',
+            height: '100%',
             minwidth: 300,
             minheight: 200,
-            class: ['list-window-box'],
+            class: ['list-window-box', 'no-full', 'no-resize', 'no-move'],
             onclose: () => this._onClose(),
             onfocus: () => {
                 desktop.setActiveWindow(this.id);
             },
-            onmove: (x, y) => {
-                this._saveState();
+            onmaximize: () => {
+                desktop.setActiveWindow(this.id);
             },
-            onresize: (width, height) => {
-                this._saveState();
+            onminimize: () => {
+                desktop.emit('window_minimized', { id: this.id });
+            },
+            onrestore: () => {
+                desktop.emit('window_restored', { id: this.id });
+                desktop.setActiveWindow(this.id);
             }
         });
 
-        // Register with desktop manager (triggers auto-minimize on narrow viewports)
+        // Always open maximized
+        this.winbox.maximize();
+
+        // Register with desktop manager
         desktop.registerWindow(this.id, this.winbox);
 
         // Initial data fetch (with loading indicator)
@@ -132,6 +111,31 @@ export class ListWindow {
         if (this.winbox) {
             this.winbox.close();
         }
+    }
+
+    /**
+     * Minimize the window.
+     */
+    minimize() {
+        if (this.winbox) {
+            this.winbox.minimize();
+        }
+    }
+
+    /**
+     * Restore the window from minimized state.
+     */
+    restore() {
+        if (this.winbox) {
+            this.winbox.restore();
+        }
+    }
+
+    /**
+     * Check if window is minimized.
+     */
+    get isMinimized() {
+        return this.winbox ? this.winbox.min : false;
     }
 
     /**
@@ -262,17 +266,4 @@ export class ListWindow {
         this.contentEl = null;
     }
 
-    /**
-     * Save current window state to localStorage
-     */
-    _saveState() {
-        if (!this.winbox || desktop.isNarrowViewport()) return;
-
-        desktop.saveWindowState(this.id, {
-            x: this.winbox.x,
-            y: this.winbox.y,
-            width: this.winbox.width,
-            height: this.winbox.height
-        });
-    }
 }

@@ -47,6 +47,9 @@ class DesktopManager {
         /** @type {string|null} */
         this.activeWindow = null;
 
+        /** @type {Map<string, string>} windowId -> zone string for tiled windows */
+        this.tileStates = new Map();
+
         /** @type {AudioContext|null} */
         this._audioContext = null;
 
@@ -323,19 +326,17 @@ class DesktopManager {
 
     /**
      * Register a window with the manager.
-     * On narrow viewports (< 600px), auto-minimizes other windows and maximizes the new one.
+     * Auto-minimizes other windows and maximizes the new one.
      * @param {string} id - Window identifier
      * @param {WinBox} winbox - WinBox instance
      */
     registerWindow(id, winbox) {
         this.windows.set(id, winbox);
 
-        // On narrow viewports, use single-window mode: minimize others, maximize this one
-        if (this.isNarrowViewport()) {
-            this.minimizeAllExcept(id);
-            if (winbox && !winbox.max) {
-                this._safeWinBoxOp(winbox, 'maximize', id);
-            }
+        // Always use single-window mode: minimize others, maximize this one
+        this.minimizeAllExcept(id);
+        if (winbox && !winbox.max) {
+            this._safeWinBoxOp(winbox, 'maximize', id);
         }
 
         this.emit('window_registered', { id, winbox });
@@ -347,7 +348,9 @@ class DesktopManager {
      */
     minimizeAllExcept(exceptId = null) {
         for (const [windowId, winbox] of this.windows) {
-            if (windowId !== exceptId && winbox && !winbox.min) {
+            if (windowId === exceptId) continue;
+            if (this.tileStates.has(windowId)) continue;  // Skip tiled windows
+            if (winbox && !winbox.min) {
                 this._safeWinBoxOp(winbox, 'minimize', windowId);
             }
         }
@@ -359,6 +362,7 @@ class DesktopManager {
      */
     unregisterWindow(id) {
         this.windows.delete(id);
+        this.tileStates.delete(id);
         if (this.activeWindow === id) {
             this.activeWindow = null;
         }
@@ -470,6 +474,15 @@ class DesktopManager {
     }
 
     /**
+     * Check if a window is tiled.
+     * @param {string} id - Window identifier
+     * @returns {boolean}
+     */
+    isTiled(id) {
+        return this.tileStates.has(id);
+    }
+
+    /**
      * Get all registered windows.
      * @returns {Map<string, WinBox>}
      */
@@ -485,13 +498,18 @@ class DesktopManager {
     setActiveWindow(id) {
         this.activeWindow = id;
 
-        // On narrow viewports, enforce single-window mode when a window gains focus
-        if (id && this.isNarrowViewport()) {
+        if (id) {
             const winbox = this.windows.get(id);
             if (winbox) {
-                this.minimizeAllExcept(id);
-                if (!winbox.max) {
-                    this._safeWinBoxOp(winbox, 'maximize', id);
+                if (this.tileStates.has(id)) {
+                    // Tiled window: just focus, don't minimize others or maximize
+                    this._safeWinBoxOp(winbox, 'focus', id);
+                } else {
+                    // Normal: minimize non-tiled others, maximize this
+                    this.minimizeAllExcept(id);
+                    if (!winbox.max) {
+                        this._safeWinBoxOp(winbox, 'maximize', id);
+                    }
                 }
             }
         }
