@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-02-10
+
+### Added
+
+- Drag-to-tile window management for side-by-side session workflows
+- Auto-chunk long TTS messages into separate audio segments for sequential playback
+- Redesigned onboarding flow that asks 3 questions then spawns Claude for setup
+
+### Fixed
+
+- Chunk pasted terminal input to prevent PTY buffer flooding and session freezes
+- Poll summary file directly instead of relying on two-idle completion signal
+- Move TTS chunker to utils to avoid torch import in MCP server
+- Namespace task summary files by session to prevent cross-session collisions
+- Don't clear task context on ensure timeout (race condition)
+- Stale lock detection in `--wait-lock` + add `--skip-if-locked`
+- Use STT server when configured instead of always falling back to WhisperKit
+
 ## [1.2.0] - 2026-02-03
 
 ### Added
@@ -112,4 +130,6 @@ Initial public release of AgentWire.
 [1.0.0]: https://github.com/dotdevdotdev/agentwire-dev/releases/tag/v1.0.0
 
 [1.1.0]: https://github.com/dotdevdotdev/agentwire-dev/compare/v1.0.0...v1.1.0
-[Unreleased]: https://github.com/dotdevdotdev/agentwire-dev/compare/v1.1.0...HEAD
+[1.2.0]: https://github.com/dotdevdotdev/agentwire-dev/compare/v1.1.0...v1.2.0
+[1.3.0]: https://github.com/dotdevdotdev/agentwire-dev/compare/v1.2.0...v1.3.0
+[Unreleased]: https://github.com/dotdevdotdev/agentwire-dev/compare/v1.3.0...HEAD

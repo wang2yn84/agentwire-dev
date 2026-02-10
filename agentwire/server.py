@@ -35,7 +35,7 @@ from .config import Config, load_config
 from .worktree import parse_session_name
 from .cached_status import CachedStatusChecker
 
-__version__ = "0.1.0"
+__version__ = "1.3.0"
 
 logger = logging.getLogger(__name__)
 
