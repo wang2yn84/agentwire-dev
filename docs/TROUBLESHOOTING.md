@@ -363,7 +363,7 @@ agentwire hooks install
 
 ```bash
 # Claude Code
-ls ~/.claude/hooks/suppress-bg-notifications.sh
+ls ~/.claude/hooks/idle-handler.sh
 
 # OpenCode
 ls ~/.config/opencode/plugin/agentwire-notify.ts

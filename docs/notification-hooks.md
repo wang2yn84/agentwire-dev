@@ -63,7 +63,7 @@ Add to `~/.claude/settings.json`:
 
 ## Current Implementation: AgentWire Integration
 
-`~/.claude/hooks/suppress-bg-notifications.sh` uses a two-pass idle system for worker panes.
+`~/.claude/hooks/idle-handler.sh` uses a two-pass idle system for worker panes.
 
 **Two-Pass Idle System:**
 

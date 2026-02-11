@@ -5416,7 +5416,7 @@ def cmd_doctor(args) -> int:
         print("     Run: agentwire hooks install")
 
     # Check Claude Code idle notification hook
-    idle_hook = CLAUDE_HOOKS_DIR / "suppress-bg-notifications.sh"
+    idle_hook = CLAUDE_HOOKS_DIR / "idle-handler.sh"
     if idle_hook.exists():
         print(f"  [ok] Idle notification hook: {idle_hook}")
     else:

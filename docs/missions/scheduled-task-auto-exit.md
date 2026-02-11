@@ -58,7 +58,7 @@ class Task:
 
 ### 2. Update Hook Logic
 
-In `~/.claude/hooks/suppress-bg-notifications.sh`, after writing completion signal on second idle:
+In `~/.claude/hooks/idle-handler.sh`, after writing completion signal on second idle:
 
 ```bash
 # Read exit_on_complete from task context

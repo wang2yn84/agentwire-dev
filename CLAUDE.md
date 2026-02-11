@@ -377,7 +377,7 @@ worker panes
 5. Worker auto-exits
 
 **Both Claude Code and OpenCode** support idle notifications:
-- Claude Code: via `~/.claude/hooks/suppress-bg-notifications.sh`
+- Claude Code: via `~/.claude/hooks/idle-handler.sh`
 - OpenCode: via `~/.config/opencode/plugin/agentwire-notify.ts`
 
 **Creating a project with roles:**
@@ -437,7 +437,7 @@ agentwire hooks install
 agentwire doctor
 ```
 
-The hook lives at `~/.claude/hooks/suppress-bg-notifications.sh` and fires on `idle_prompt` notifications.
+The hook lives at `~/.claude/hooks/idle-handler.sh` and fires on `idle_prompt` notifications.
 
 **OpenCode** - Install the plugin:
 
