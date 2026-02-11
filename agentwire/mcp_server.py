@@ -588,6 +588,21 @@ def say(text: str, session: str | None = None, voice: str | None = None) -> str:
     Returns:
         Success message or error description.
     """
+    # Quick TTS health check — fail fast if server is unreachable
+    try:
+        from .config import load_config as load_typed_config
+        from .network import NetworkContext
+        import urllib.request
+
+        cfg = load_typed_config()
+        if cfg.tts.backend not in ("runpod", "none"):
+            ctx = NetworkContext.from_config()
+            tts_url = ctx.get_service_url("tts", use_tunnel=True)
+            urllib.request.urlopen(f"{tts_url}/health", timeout=3)
+    except Exception as e:
+        url = locals().get("tts_url", "unknown")
+        return f"TTS server unreachable at {url}: {e}"
+
     args = ["say"]
     if session:
         args.extend(["-s", session])
