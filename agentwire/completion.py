@@ -80,7 +80,7 @@ def generate_summary_filename(session: str, task_name: str) -> str:
         Relative path like .agentwire/task-summary-mysession-2024-01-15T07-00-00.md
     """
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    return f".agentwire/task-summary-{session}-{timestamp}.md"
+    return f".agentwire/task-summary-{session}-{task_name}-{timestamp}.md"
 
 
 # =============================================================================

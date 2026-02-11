@@ -6900,6 +6900,18 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
             exit_on_complete=task.exit_on_complete,
         )
 
+        # Find previous summaries for this task to give the agent context
+        summary_glob = f".agentwire/task-summary-{session}-{task.name}-*.md"
+        prev_summaries = sorted(
+            project_path.glob(summary_glob),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )[:5]
+        if prev_summaries:
+            prompt += "\n\nPrevious task summaries (consider them when generating your output):"
+            for p in prev_summaries:
+                prompt += f"\n- {p}"
+
         if not json_mode:
             print("Sending task prompt...")
 
