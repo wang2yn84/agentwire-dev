@@ -198,6 +198,10 @@ complete | incomplete | error
             sleep 1
             $AGENTWIRE send -s "$tmux_session" "/exit" >/dev/null 2>&1
 
+            # Clean up task context file so it doesn't haunt future sessions
+            rm "$task_context_file" 2>/dev/null
+            echo "[$(date -Iseconds)] TASK: cleaned up task context" >> "$dlog"
+
             # Wait for Claude to exit, then kill the tmux session
             sleep 3
             echo "[$(date -Iseconds)] TASK: killing tmux session" >> "$dlog"
@@ -219,6 +223,11 @@ complete | incomplete | error
           echo "[$(date -Iseconds)] TASK-ORPHAN: found summary at $recent_summary, exiting session" >> "$dlog"
           sleep 1
           $AGENTWIRE send -s "$tmux_session" "/exit" >/dev/null 2>&1
+
+          # Clean up orphan summary so it doesn't trigger again
+          rm "$recent_summary" 2>/dev/null
+          echo "[$(date -Iseconds)] TASK-ORPHAN: cleaned up orphan summary" >> "$dlog"
+
           sleep 3
           echo "[$(date -Iseconds)] TASK-ORPHAN: killing tmux session" >> "$dlog"
           tmux kill-session -t "$tmux_session" 2>/dev/null &
