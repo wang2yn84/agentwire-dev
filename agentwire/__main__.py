@@ -331,6 +331,32 @@ def tmux_session_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def _get_session_project_path(session: str) -> Path | None:
+    """Get a session's project path from its tmux working directory.
+
+    Queries tmux for the session's actual working directory. Falls back to
+    deriving it from the session name if the session isn't running.
+
+    Returns:
+        Path to the project directory, or None if not determinable.
+    """
+    # Try to get the actual working directory from tmux
+    if tmux_session_exists(session):
+        result = subprocess.run(
+            ["tmux", "display-message", "-t", session, "-p", "#{pane_current_path}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return Path(result.stdout.strip())
+
+    # Fallback: derive from session name
+    config = load_config()
+    projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
+    project, _, _ = parse_session_name(session)
+    return projects_dir / project
+
+
 def tmux_session_has_agent(name: str) -> bool:
     """Check if a tmux session has an agent running (not just a bare shell).
 
@@ -6698,14 +6724,11 @@ def cmd_ensure(args) -> int:
     if machine_id:
         return _output_result(False, json_mode, "Remote sessions not yet supported for ensure", exit_code=ENSURE_EXIT_SESSION_ERROR)
 
-    # Find project path from --project flag, or derive from session name
+    # Find project path from --project flag, or session's working directory
     if hasattr(args, 'project') and args.project:
         project_path = Path(args.project).expanduser().resolve()
     else:
-        config = load_config()
-        projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
-        project, branch, _ = parse_session_name(session_name)
-        project_path = projects_dir / project
+        project_path = _get_session_project_path(session)
 
     if not project_path.exists():
         return _output_result(False, json_mode, f"Project path not found: {project_path}", exit_code=ENSURE_EXIT_SESSION_ERROR)
@@ -7089,18 +7112,13 @@ def cmd_task_list(args) -> int:
     session = getattr(args, 'session', None)
     json_mode = getattr(args, 'json', False)
 
-    # Find project path
-    config = load_config()
-    projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
-
+    # Find project path from session's working directory or cwd
     if session:
-        project, _, _ = parse_session_name(session)
-        project_path = projects_dir / project
+        project_path = _get_session_project_path(session)
     else:
-        # Use current directory
         project_path = Path.cwd()
 
-    if not project_path.exists():
+    if not project_path or not project_path.exists():
         return _output_result(False, json_mode, f"Project path not found: {project_path}")
 
     tasks = list_tasks(project_path)
@@ -7138,13 +7156,9 @@ def cmd_task_show(args) -> int:
         session = None
         task_name = task_arg
 
-    # Find project path
-    config = load_config()
-    projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
-
+    # Find project path from session's working directory or cwd
     if session:
-        project, _, _ = parse_session_name(session)
-        project_path = projects_dir / project
+        project_path = _get_session_project_path(session)
     else:
         project_path = Path.cwd()
 
@@ -7226,13 +7240,9 @@ def cmd_task_validate(args) -> int:
         session = None
         task_name = task_arg
 
-    # Find project path
-    config = load_config()
-    projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
-
+    # Find project path from session's working directory or cwd
     if session:
-        project, _, _ = parse_session_name(session)
-        project_path = projects_dir / project
+        project_path = _get_session_project_path(session)
     else:
         project_path = Path.cwd()
 
