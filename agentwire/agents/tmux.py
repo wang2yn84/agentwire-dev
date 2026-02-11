@@ -338,30 +338,59 @@ class TmuxAgent(AgentBackend):
 
     def send_input(self, name: str, text: str) -> bool:
         """Send input to a tmux session (text + Enter)."""
+        import os
+        import tempfile
         import time
         session_name, machine = self._parse_session_name(name)
 
+        use_buffer = len(text) > 10 or "\n" in text
+
         if machine:
-            # Use base64 encoding for safe transmission of complex text
-            import base64
-            encoded = base64.b64encode(text.encode()).decode()
-            cmd = (
-                f"echo {shlex.quote(encoded)} | base64 -d | "
-                f"xargs -0 tmux send-keys -t {shlex.quote(session_name)} -l && "
-                f"sleep 0.2 && "
-                f"tmux send-keys -t {shlex.quote(session_name)} Enter"
-            )
+            if use_buffer:
+                # Use base64 + load-buffer on remote to avoid PTY flooding
+                import base64
+                encoded = base64.b64encode(text.encode()).decode()
+                cmd = (
+                    f"echo {shlex.quote(encoded)} | base64 -d > /tmp/aw-send-$$.txt && "
+                    f"tmux load-buffer /tmp/aw-send-$$.txt && "
+                    f"tmux paste-buffer -t {shlex.quote(session_name)} && "
+                    f"rm -f /tmp/aw-send-$$.txt && "
+                    f"sleep 0.2 && "
+                    f"tmux send-keys -t {shlex.quote(session_name)} Enter"
+                )
+            else:
+                cmd = (
+                    f"tmux send-keys -t {shlex.quote(session_name)} -l {shlex.quote(text)} && "
+                    f"sleep 0.2 && "
+                    f"tmux send-keys -t {shlex.quote(session_name)} Enter"
+                )
             result = self._run_remote(machine, cmd)
         else:
-            # Send text literally (no special char interpretation)
-            result = self._run_local([
-                "tmux", "send-keys",
-                "-t", session_name,
-                "-l", text,
-            ])
-            if result.returncode != 0:
-                logger.error(f"Failed to send input: {result.stderr}")
-                return False
+            if use_buffer:
+                # Write to temp file, load into tmux buffer, paste as single unit
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                    f.write(text)
+                    temp_path = f.name
+                try:
+                    result = self._run_local(["tmux", "load-buffer", temp_path])
+                    if result.returncode != 0:
+                        logger.error(f"Failed to load buffer: {result.stderr}")
+                        return False
+                    result = self._run_local(["tmux", "paste-buffer", "-t", session_name])
+                    if result.returncode != 0:
+                        logger.error(f"Failed to paste buffer: {result.stderr}")
+                        return False
+                finally:
+                    os.unlink(temp_path)
+            else:
+                result = self._run_local([
+                    "tmux", "send-keys",
+                    "-t", session_name,
+                    "-l", text,
+                ])
+                if result.returncode != 0:
+                    logger.error(f"Failed to send input: {result.stderr}")
+                    return False
 
             # Small delay before Enter
             time.sleep(0.2)

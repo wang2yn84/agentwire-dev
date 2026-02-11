@@ -80,6 +80,7 @@ include = [
     # Web assets and templates required at runtime
     "agentwire/templates/**/*.html",
     "agentwire/templates/**/*.txt",
+    "agentwire/templates/**/*.conf",
     "agentwire/static/**/*",
     # Role/prompt content bundled with the CLI
     "agentwire/roles/*.md",

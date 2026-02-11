@@ -2597,14 +2597,26 @@ def cmd_send(args) -> int:
                 print(f"Machine '{machine_id}' not found in machines.json", file=sys.stderr)
             return 1
 
-        # Build remote command
+        # Build remote command — use load-buffer for anything non-trivial
         quoted_session = shlex.quote(session)
-        quoted_prompt = shlex.quote(prompt)
+        use_buffer = len(prompt) > 10 or "\n" in prompt
 
-        # Send text, sleep, send Enter
-        cmd = f"tmux send-keys -t {quoted_session} {quoted_prompt} && sleep 0.5 && tmux send-keys -t {quoted_session} Enter"
+        if use_buffer:
+            import base64
+            encoded = base64.b64encode(prompt.encode()).decode()
+            cmd = (
+                f"echo {shlex.quote(encoded)} | base64 -d > /tmp/aw-send-$$.txt && "
+                f"tmux load-buffer /tmp/aw-send-$$.txt && "
+                f"tmux paste-buffer -t {quoted_session} && "
+                f"rm -f /tmp/aw-send-$$.txt && "
+                f"sleep 0.5 && "
+                f"tmux send-keys -t {quoted_session} Enter"
+            )
+        else:
+            quoted_prompt = shlex.quote(prompt)
+            cmd = f"tmux send-keys -t {quoted_session} -l {quoted_prompt} && sleep 0.5 && tmux send-keys -t {quoted_session} Enter"
 
-        # For multi-line text, add another Enter
+        # For multi-line text, Claude Code shows "[Pasted text...]" and waits for Enter
         if "\n" in prompt or len(prompt) > 200:
             cmd += f" && sleep 0.5 && tmux send-keys -t {quoted_session} Enter"
 
@@ -2635,13 +2647,26 @@ def cmd_send(args) -> int:
             print(f"Session '{session}' not found", file=sys.stderr)
         return 1
 
-    # Send the prompt via tmux send-keys (text first, then Enter after delay)
-    subprocess.run(
-        ["tmux", "send-keys", "-t", session, prompt],
-        check=True
-    )
+    # Send the prompt — use load-buffer for anything non-trivial to avoid PTY flooding
+    use_buffer = len(prompt) > 10 or "\n" in prompt
 
-    # Wait for text to be fully entered before pressing Enter
+    if use_buffer:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(prompt)
+            temp_path = f.name
+        try:
+            subprocess.run(["tmux", "load-buffer", temp_path], check=True)
+            subprocess.run(["tmux", "paste-buffer", "-t", session], check=True)
+        finally:
+            os.unlink(temp_path)
+    else:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session, "-l", prompt],
+            check=True
+        )
+
+    # Wait for text to be displayed before pressing Enter
     time.sleep(0.5)
 
     subprocess.run(

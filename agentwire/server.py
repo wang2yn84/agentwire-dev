@@ -1720,9 +1720,10 @@ class AgentWireServer:
                     if not path:
                         continue
 
-                    normalized = normalize_path(path)
-                    if normalized not in seen_normalized:
-                        seen_normalized.add(normalized)
+                    machine = project.get("machine", "local")
+                    dedup_key = f"{machine}:{normalize_path(path)}"
+                    if dedup_key not in seen_normalized:
+                        seen_normalized.add(dedup_key)
                         deduped_projects.append(project)
                     else:
                         # Prefer local version over remote for same project

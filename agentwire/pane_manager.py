@@ -271,7 +271,7 @@ def send_to_pane(session: str | None, pane_index: int, text: str, enter: bool = 
 
     # For multi-line or long text, use load-buffer + paste-buffer
     # This ensures text is pasted as a single unit, not character-by-character
-    if "\n" in text or len(text) > 200:
+    if "\n" in text or len(text) > 10:
         # Write text to temp file, load into tmux buffer, paste
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
             f.write(text)
@@ -289,7 +289,7 @@ def send_to_pane(session: str | None, pane_index: int, text: str, enter: bool = 
 
     if enter:
         # Wait for text to be displayed before sending Enter
-        wait_time = 0.5 if len(text) < 200 else 1.0
+        wait_time = 0.5 if len(text) < 10 else 1.0
         time.sleep(wait_time)
         run_command(["tmux", "send-keys", "-t", target, "Enter"], timeout=5)
 

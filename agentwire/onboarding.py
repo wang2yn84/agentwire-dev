@@ -374,6 +374,65 @@ services:
             print_info("Run 'agentwire generate-certs' later, or Claude will help")
 
     # ─────────────────────────────────────────────────────────────
+    # tmux Configuration
+    # ─────────────────────────────────────────────────────────────
+    print_header("4. tmux Configuration")
+
+    tmux_conf_path = Path.home() / ".tmux.conf"
+    bundled_conf = Path(__file__).parent / "templates" / "tmux.conf"
+
+    if tmux_conf_path.exists():
+        print(f"Found existing tmux config at {tmux_conf_path}")
+        print()
+        tmux_choice = prompt_choice(
+            "AgentWire includes a recommended tmux config with mouse scroll,\n"
+            "50k line history, vi copy mode, and a status bar with git/CPU/RAM.",
+            [
+                ("skip", "Keep my existing config (no changes)"),
+                ("backup", "Install recommended config (backs up existing to .tmux.conf.bak)"),
+                ("show", "Show the recommended config (I'll merge manually)"),
+            ],
+            default=1,
+        )
+    else:
+        print("No tmux config found. AgentWire includes a recommended config with:")
+        print(f"  {CYAN}•{RESET} Mouse scroll through agent output")
+        print(f"  {CYAN}•{RESET} 50k line scrollback buffer")
+        print(f"  {CYAN}•{RESET} Vi copy mode (v to select, y to yank)")
+        print(f"  {CYAN}•{RESET} Status bar with git branch, CPU/RAM, working dir")
+        print(f"  {CYAN}•{RESET} Click/drag disabled (prevents accidental agent interaction)")
+        print()
+        tmux_choice = prompt_choice(
+            "",
+            [
+                ("backup", "Install recommended config"),
+                ("skip", "Skip (I'll configure tmux myself)"),
+            ],
+            default=1,
+        )
+
+    if tmux_choice == "backup":
+        if tmux_conf_path.exists():
+            backup_path = tmux_conf_path.with_suffix(".conf.bak")
+            import shutil as _shutil
+            _shutil.copy2(tmux_conf_path, backup_path)
+            print_success(f"Backed up existing config to {backup_path}")
+        tmux_conf_path.write_text(bundled_conf.read_text())
+        print_success(f"Installed recommended tmux config to {tmux_conf_path}")
+        print_info("Reload with: tmux source-file ~/.tmux.conf")
+        print_info("Tip: In iTerm2, hold Option (Alt) to bypass tmux mouse for native selection")
+    elif tmux_choice == "show":
+        print()
+        print(f"{DIM}{'─' * 60}{RESET}")
+        print(bundled_conf.read_text())
+        print(f"{DIM}{'─' * 60}{RESET}")
+        print()
+        print_info(f"Config file: {bundled_conf}")
+        print_info("Copy to ~/.tmux.conf when ready")
+    else:
+        print_info("Skipped tmux configuration")
+
+    # ─────────────────────────────────────────────────────────────
     # Summary
     # ─────────────────────────────────────────────────────────────
     print_header("Basic Setup Complete!")

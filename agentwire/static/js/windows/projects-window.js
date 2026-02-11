@@ -219,6 +219,7 @@ function renderProjectItem(project) {
         id: project.name,
         iconUrl: project.iconUrl,
         name: project.name,
+        machineTag: project.machine ? `@${project.machine}` : null,
         meta: metaParts.join(' '),
         actions: [
             {
