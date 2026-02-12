@@ -150,6 +150,19 @@ class UploadsConfig:
 
 
 @dataclass
+class AppsConfig:
+    """App windows directory for agent-generated HTML content."""
+
+    dir: Path = field(
+        default_factory=lambda: Path.home() / ".agentwire" / "apps"
+    )
+    max_size_mb: int = 10
+
+    def __post_init__(self):
+        self.dir = _expand_path(self.dir) or self.dir
+
+
+@dataclass
 class PortalConfig:
     """Portal connection settings (for remote machines)."""
 
@@ -213,6 +226,7 @@ class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
     machines: MachinesConfig = field(default_factory=MachinesConfig)
     uploads: UploadsConfig = field(default_factory=UploadsConfig)
+    apps: AppsConfig = field(default_factory=AppsConfig)
     portal: PortalConfig = field(default_factory=PortalConfig)
     services: ServicesConfig = field(default_factory=ServicesConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
@@ -349,6 +363,13 @@ def _dict_to_config(data: dict) -> Config:
         cleanup_days=uploads_data.get("cleanup_days", 7),
     )
 
+    # Apps
+    apps_data = data.get("apps", {})
+    apps = AppsConfig(
+        dir=apps_data.get("dir", "~/.agentwire/apps"),
+        max_size_mb=apps_data.get("max_size_mb", 10),
+    )
+
     # Portal
     portal_data = data.get("portal", {})
     portal = PortalConfig(
@@ -400,6 +421,7 @@ def _dict_to_config(data: dict) -> Config:
         agent=agent,
         machines=machines,
         uploads=uploads,
+        apps=apps,
         portal=portal,
         services=services,
         notifications=notifications,

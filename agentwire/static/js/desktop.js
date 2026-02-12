@@ -10,6 +10,7 @@
 import { desktop } from './desktop-manager.js';
 import { tileManager } from './tile-manager.js';
 import { SessionWindow } from './session-window.js';
+import { AppWindow } from './app-window.js';
 import { openSessionsWindow } from './windows/sessions-window.js';
 import { openMachinesWindow } from './windows/machines-window.js';
 import { openConfigWindow } from './windows/config-window.js';
@@ -17,6 +18,7 @@ import { openProjectsWindow } from './windows/projects-window.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
+const appWindows = new Map();      // appId -> AppWindow instance
 const listWindows = new Map();     // windowId -> ListWindow instance
 
 // Global PTT state
@@ -118,6 +120,8 @@ async function init() {
             const panelMap = { sessions: openSessionsWindow, machines: openMachinesWindow, projects: openProjectsWindow, config: openConfigWindow };
             const openFn = panelMap[msg.panel];
             if (openFn) openListWindowWithTaskbar(msg.panel, openFn);
+        } else if (msg.window_type === 'app') {
+            openAppWindow(msg.url, msg.title || 'App', msg.app_id);
         }
     });
 
@@ -233,6 +237,7 @@ function setupPageUnload() {
 
         // Close all windows
         sessionWindows.forEach(sw => sw.close());
+        appWindows.forEach(aw => aw.close());
         listWindows.forEach(lw => lw.close());
     });
 }
@@ -384,6 +389,50 @@ export function openSessionTerminal(session, mode, machine = null) {
     sw.open();
     sessionWindows.set(id, sw);
     addTaskbarButton(id, sw);
+}
+
+/**
+ * Open an app window (agent-generated HTML or external URL).
+ *
+ * @param {string} url - URL or filename to load
+ * @param {string} title - Window title
+ * @param {string|null} appId - Optional explicit window ID
+ */
+export function openAppWindow(url, title = 'App', appId = null) {
+    const id = appId || `app-${url.replace(/[\/\.]/g, '-')}`;
+
+    // Check if already open — restore if minimized, otherwise focus
+    if (appWindows.has(id)) {
+        const existing = appWindows.get(id);
+        if (existing.isMinimized) {
+            if (!desktop.isTiled(id)) {
+                desktop.minimizeAllExcept(id);
+            }
+            existing.restore();
+        } else {
+            existing.focus();
+        }
+        return;
+    }
+
+    const aw = new AppWindow({
+        url,
+        title,
+        appId: id,
+        root: elements.desktopArea,
+        onClose: () => {
+            appWindows.delete(id);
+            removeTaskbarButton(id);
+        },
+        onFocus: () => {
+            updateTaskbarActive(id);
+            desktop.setActiveWindow(id);
+        },
+    });
+
+    aw.open();
+    appWindows.set(id, aw);
+    addTaskbarButton(id, aw);
 }
 
 /**

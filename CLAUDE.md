@@ -81,6 +81,10 @@ agentwire voiceclone stop name  # stop and save as voice clone
 agentwire voiceclone list       # list available voices
 agentwire voiceclone delete name # delete a voice clone
 
+# App windows (agent visual canvas)
+agentwire open <url> --title "T"  # open URL or local file as app window
+agentwire open dashboard.html     # open from ~/.agentwire/apps/
+
 # Email notifications
 agentwire email --to addr --subject "Subject" --body "Body"
 agentwire email --body "msg" # uses default_to from config
@@ -238,20 +242,22 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire tts status` | `tts_status()` |
 | `agentwire stt status` | `stt_status()` |
 
-### Desktop/Portal UI (8 tools)
+### Desktop/Portal UI (10 tools)
 
 | Action | MCP Tool |
 |--------|----------|
 | List open windows | `desktop_windows_list()` |
 | Open session window | `desktop_open_session(session="...", mode="monitor")` |
 | Open panel | `desktop_open_panel(panel_type="sessions")` |
+| Open app window (URL/file) | `desktop_open_app(url="...", title="...")` |
+| Write HTML + open as app | `desktop_write_app(filename="...", html_content="...", title="...")` |
 | Close window | `desktop_close_window(window_id="...")` |
 | Focus window | `desktop_focus_window(window_id="...")` |
 | Tile window | `desktop_tile_window(window_id="...", zone="left")` |
 | Minimize all | `desktop_minimize_all()` |
 | Multi-window layout | `desktop_layout(windows=[{id: "...", zone: "left"}])` |
 
-**64 tools total.** When to use CLI vs MCP:
+**65 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
@@ -268,6 +274,7 @@ All in `~/.agentwire/`:
 | `scripts/` | Machine-specific helper scripts (TTS management, startup, etc.) |
 | `voices/` | Custom TTS voice samples |
 | `uploads/` | Uploaded images for cross-machine sharing |
+| `apps/` | Agent-generated HTML for app windows |
 | `logs/` | Audit logs for damage-control |
 
 Per-session config (type, roles, voice) lives in `.agentwire.yml` in each project directory.
@@ -335,6 +342,10 @@ uploads:
   dir: "~/.agentwire/uploads"
   max_size_mb: 10
   cleanup_days: 7
+
+apps:
+  dir: "~/.agentwire/apps"
+  max_size_mb: 10
 
 portal:
   url: "https://localhost:8765"
@@ -592,6 +603,24 @@ agentwire kill --pane 1
 | **Terminal** | xterm.js | Interactive terminal, attaches via `tmux attach` |
 
 **Important:** Monitor mode must use a simple `<pre>` element, NOT xterm.js. xterm.js requires precise container dimensions for its fit addon to work correctly. Since monitor mode just displays captured text output, a `<pre>` element with `white-space: pre-wrap` and ANSI-to-HTML conversion is simpler and more reliable.
+
+### App Windows
+
+Agents can display HTML content in sandboxed iframe windows on the portal desktop.
+
+**Agent workflow (MCP):**
+```python
+# Write HTML and open in one step
+desktop_write_app(filename="dashboard.html", html_content="<h1>Hello</h1>", title="Dashboard")
+
+# Or open an existing file or external URL
+desktop_open_app(url="dashboard.html", title="Dashboard")
+desktop_open_app(url="https://example.com", title="External")
+```
+
+**Files served from:** `~/.agentwire/apps/` via `/apps/` route.
+
+**Sandboxing:** Local files get `allow-scripts allow-same-origin`. External URLs get `allow-scripts allow-forms allow-popups` (no same-origin).
 
 ## Docs
 

@@ -215,6 +215,11 @@ class AgentWireServer:
         self.app.router.add_post("/api/desktop/window/tile", self.api_desktop_tile)
         self.app.router.add_post("/api/desktop/window/minimize-all", self.api_desktop_minimize_all)
         self.app.router.add_post("/api/desktop/layout", self.api_desktop_layout)
+        # App windows: upload and serve agent-generated HTML
+        self.app.router.add_post("/api/apps/upload", self.api_apps_upload)
+        apps_dir = self.config.apps.dir
+        apps_dir.mkdir(parents=True, exist_ok=True)
+        self.app.router.add_static("/apps", apps_dir)
         self.app.router.add_static("/static", Path(__file__).parent / "static")
 
     async def init_backends(self):
@@ -841,6 +846,18 @@ class AgentWireServer:
                 "window_type": "panel",
                 "panel": panel,
             })
+        elif window_type == "app":
+            url = data.get("url")
+            title = data.get("title", "App")
+            if not url:
+                return web.json_response({"success": False, "error": "url required"}, status=400)
+            window_id = data.get("app_id") or f"app-{url.replace('/', '-').replace('.', '-')}"
+            await self.broadcast_dashboard("desktop_open_window", {
+                "window_type": "app",
+                "url": url,
+                "title": title,
+                "app_id": window_id,
+            })
         else:
             return web.json_response({"success": False, "error": f"unknown type: {window_type}"}, status=400)
 
@@ -904,6 +921,55 @@ class AgentWireServer:
             "windows": windows,
         })
         return web.json_response({"success": True})
+
+    async def api_apps_upload(self, request):
+        """POST /api/apps/upload — write HTML content to the apps directory."""
+        try:
+            data = await request.json()
+            filename = data.get("filename")
+            content = data.get("content")
+
+            if not filename or not content:
+                return web.json_response(
+                    {"success": False, "error": "filename and content required"}, status=400
+                )
+
+            # Sanitize filename — only allow safe characters
+            import re
+            if not re.match(r'^[a-zA-Z0-9_\-][a-zA-Z0-9_\-\.]*\.html$', filename):
+                return web.json_response(
+                    {"success": False, "error": "filename must be alphanumeric with .html extension"},
+                    status=400,
+                )
+
+            # Check size
+            max_bytes = self.config.apps.max_size_mb * 1024 * 1024
+            if len(content.encode('utf-8')) > max_bytes:
+                return web.json_response(
+                    {"success": False, "error": f"content too large (max {self.config.apps.max_size_mb}MB)"},
+                    status=400,
+                )
+
+            # Ensure apps directory exists
+            apps_dir = self.config.apps.dir
+            apps_dir.mkdir(parents=True, exist_ok=True)
+
+            # Write file atomically (write to temp, rename)
+            filepath = apps_dir / filename
+            tmp_path = filepath.with_suffix('.tmp')
+            tmp_path.write_text(content, encoding='utf-8')
+            tmp_path.rename(filepath)
+
+            logger.info(f"App written: {filepath}")
+            return web.json_response({
+                "success": True,
+                "path": str(filepath),
+                "url": f"/apps/{filename}",
+            })
+
+        except Exception as e:
+            logger.error(f"App upload failed: {e}")
+            return web.json_response({"success": False, "error": str(e)}, status=500)
 
     async def broadcast_dashboard(self, msg_type: str, data: dict):
         """Broadcast a message to all connected dashboard clients."""
