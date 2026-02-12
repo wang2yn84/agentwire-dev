@@ -369,7 +369,7 @@ def send_email(
         response = resend.Emails.send(params)
         message_id = response.get("id") if isinstance(response, dict) else str(response)
         return EmailResult(success=True, message_id=message_id)
-    except resend.ResendError as e:
+    except resend.exceptions.ResendError as e:
         return EmailResult(success=False, error=str(e))
     except Exception as e:
         return EmailResult(success=False, error=f"Unexpected error: {e}")

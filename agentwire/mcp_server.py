@@ -105,6 +105,12 @@ def run_agentwire_cmd(
         if json_output and result.stdout.strip():
             try:
                 data = json.loads(result.stdout)
+                # Handle JSON arrays (e.g., history list returns [...])
+                if isinstance(data, list):
+                    return {
+                        "success": result.returncode == 0,
+                        "items": data,
+                    }
                 # If the response is valid JSON but doesn't have 'success',
                 # wrap it with success based on return code
                 if "success" not in data:
@@ -1053,21 +1059,22 @@ def session_recreate(session: str) -> str:
 
 
 @mcp.tool()
-def session_fork(session: str) -> str:
+def session_fork(session: str, target: str) -> str:
     """Fork a session into a new worktree.
 
     Creates a new session based on an existing one, with its own
     git worktree for isolated work.
 
     Args:
-        session: Session name to fork
+        session: Source session name (project or project/branch)
+        target: Target session name (must include branch: project/new-branch)
 
     Returns:
         Success message or error description.
     """
-    data = run_agentwire_cmd(["fork", "-s", session], timeout=120)
+    data = run_agentwire_cmd(["fork", "-s", session, "-t", target], timeout=120)
     if data.get("success"):
-        forked = data.get("session", "unknown")
+        forked = data.get("session", target)
         return f"Session '{session}' forked to '{forked}'."
     return f"Failed to fork session: {data.get('error', 'Unknown error')}"
 
@@ -1264,16 +1271,18 @@ def history_list(project: str | None = None, limit: int = 20) -> str:
     if not data.get("success"):
         return f"Failed to list history: {data.get('error', 'Unknown error')}"
 
-    sessions = data.get("sessions", [])
+    # CLI returns a JSON array, which run_agentwire_cmd wraps as {"items": [...]}
+    sessions = data.get("items", data.get("sessions", []))
     if not sessions:
         return "No session history found."
 
     lines = ["Session history:"]
     for s in sessions:
-        sid = s.get("id", "unknown")
-        name = s.get("name", "")
-        started = s.get("started", "")
-        lines.append(f"  - {sid}: {name} ({started})")
+        sid = s.get("sessionId", s.get("id", "unknown"))
+        first_msg = s.get("firstMessage", "")
+        count = s.get("messageCount", 0)
+        preview = (first_msg[:60] + "...") if len(first_msg) > 60 else first_msg
+        lines.append(f"  - {sid}: {preview} ({count} messages)")
 
     return "\n".join(lines)
 
@@ -1292,10 +1301,20 @@ def history_show(session_id: str) -> str:
     if not data.get("success"):
         return f"Failed to show session: {data.get('error', 'Unknown error')}"
 
-    lines = [f"Session: {session_id}"]
-    for key in ["name", "project", "started", "ended", "duration", "type"]:
-        if val := data.get(key):
-            lines.append(f"  {key}: {val}")
+    lines = [f"Session: {data.get('sessionId', session_id)}"]
+    if first_msg := data.get("firstMessage"):
+        preview = (first_msg[:80] + "...") if len(first_msg) > 80 else first_msg
+        lines.append(f"  First message: {preview}")
+    if branch := data.get("gitBranch"):
+        lines.append(f"  Branch: {branch}")
+    if count := data.get("messageCount"):
+        lines.append(f"  Messages: {count}")
+    if timestamps := data.get("timestamps"):
+        if start := timestamps.get("start"):
+            from datetime import datetime
+            lines.append(f"  Started: {datetime.fromtimestamp(start / 1000).strftime('%Y-%m-%d %H:%M')}")
+    if summaries := data.get("summaries"):
+        lines.append(f"  Summaries: {len(summaries)}")
 
     return "\n".join(lines)
 
@@ -1360,8 +1379,11 @@ def lock_clean() -> str:
     """
     data = run_agentwire_cmd(["lock", "clean"])
     if data.get("success"):
-        removed = data.get("removed", 0)
-        return f"Cleaned {removed} stale lock(s)."
+        removed = data.get("removed", [])
+        count = data.get("count", len(removed) if isinstance(removed, list) else removed)
+        if isinstance(removed, list) and removed:
+            return f"Cleaned {count} stale lock(s): {', '.join(removed)}"
+        return f"Cleaned {count} stale lock(s)."
     return f"Failed to clean locks: {data.get('error', 'Unknown error')}"
 
 
@@ -1502,17 +1524,6 @@ def listen_cancel() -> str:
     return f"Failed to cancel recording: {data.get('error', 'Unknown error')}"
 
 
-@mcp.tool()
-def listen_toggle() -> str:
-    """Toggle voice recording (start if not recording, stop if recording).
-
-    Returns:
-        Status message indicating whether recording started or stopped.
-    """
-    data = run_agentwire_cmd(["listen", "toggle"], json_output=False)
-    if data.get("success"):
-        return data.get("output", "Recording toggled.")
-    return f"Failed to toggle recording: {data.get('error', 'Unknown error')}"
 
 
 # =============================================================================
@@ -1556,13 +1567,15 @@ def network_status() -> str:
     """Show complete network health at a glance.
 
     Checks machine connectivity, service health, and tunnel status.
+    Note: exits non-zero when issues are detected, but the output is still useful.
 
     Returns:
         Network status report.
     """
     data = run_agentwire_cmd(["network", "status"], json_output=False, timeout=60)
-    if data.get("success"):
-        return data.get("output", "Network status check complete.")
+    output = data.get("output", "")
+    if output:
+        return output
     return f"Failed to check network: {data.get('error', 'Unknown error')}"
 
 

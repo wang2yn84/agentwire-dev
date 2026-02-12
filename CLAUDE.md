@@ -187,7 +187,6 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire listen start` | `listen_start()` |
 | `agentwire listen stop` | `listen_stop()` |
 | `agentwire listen cancel` | `listen_cancel()` |
-| `agentwire listen toggle` | `listen_toggle()` |
 | `agentwire voiceclone start` | `voiceclone_start()` |
 | `agentwire voiceclone stop name` | `voiceclone_stop(name="...")` |
 | `agentwire voiceclone cancel` | `voiceclone_cancel()` |
