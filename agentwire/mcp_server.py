@@ -1009,6 +1009,760 @@ def task_run(session: str, task: str, timeout: int = 300) -> str:
 
 
 # =============================================================================
+# Session Management (Extended)
+# =============================================================================
+
+
+@mcp.tool()
+def session_send_keys(session: str, keys: list[str]) -> str:
+    """Send raw keys to a session without automatic Enter.
+
+    Useful for sending control sequences like Ctrl-C, Escape, Enter,
+    arrow keys, etc. Each key group is sent with a brief pause between.
+
+    Args:
+        session: Session name (can include @machine suffix for remote)
+        keys: List of key groups to send (e.g., ["Ctrl-C", "Enter"])
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["send-keys", "-s", session] + keys
+    data = run_agentwire_cmd(args, json_output=False)
+    if data.get("success"):
+        return f"Sent {len(keys)} key group(s) to '{session}'."
+    return f"Failed to send keys: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def session_recreate(session: str) -> str:
+    """Destroy and recreate a session with a fresh worktree.
+
+    Useful when a session is in a bad state and needs a clean start.
+
+    Args:
+        session: Session name to recreate
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["recreate", "-s", session], timeout=180)
+    if data.get("success"):
+        return f"Session '{session}' recreated with fresh worktree."
+    return f"Failed to recreate session: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def session_fork(session: str) -> str:
+    """Fork a session into a new worktree.
+
+    Creates a new session based on an existing one, with its own
+    git worktree for isolated work.
+
+    Args:
+        session: Session name to fork
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["fork", "-s", session], timeout=120)
+    if data.get("success"):
+        forked = data.get("session", "unknown")
+        return f"Session '{session}' forked to '{forked}'."
+    return f"Failed to fork session: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Pane Layout Tools
+# =============================================================================
+
+
+@mcp.tool()
+def pane_split(session: str | None = None, count: int = 1) -> str:
+    """Add terminal pane(s) to a session with even vertical layout.
+
+    Args:
+        session: Session name (defaults to current session if in tmux)
+        count: Number of panes to add (default: 1)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["split", "-n", str(count)]
+    if session:
+        args.extend(["-s", session])
+
+    data = run_agentwire_cmd(args, json_output=False)
+    if data.get("success"):
+        return f"Added {count} terminal pane(s)."
+    return f"Failed to split panes: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def pane_detach(session: str, pane: int, target: str) -> str:
+    """Move a pane to its own session.
+
+    Detaches a pane from its current session and creates a new
+    session for it.
+
+    Args:
+        session: Source session name
+        pane: Pane index to detach
+        target: Target session name (created if doesn't exist)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["detach", "--pane", str(pane), "-s", target, "--source", session]
+    data = run_agentwire_cmd(args, json_output=False)
+    if data.get("success"):
+        return f"Pane {pane} detached from '{session}' to '{target}'."
+    return f"Failed to detach pane: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def pane_jump(session: str | None = None, pane: int = 0) -> str:
+    """Focus a specific pane in tmux.
+
+    Args:
+        session: Session name (defaults to current session if in tmux)
+        pane: Pane index to focus (default: 0)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["jump", "--pane", str(pane)]
+    if session:
+        args.extend(["-s", session])
+
+    data = run_agentwire_cmd(args)
+    if data.get("success"):
+        return f"Focused pane {pane}."
+    return f"Failed to focus pane: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def pane_resize(session: str | None = None) -> str:
+    """Resize tmux window to fit the largest client.
+
+    Args:
+        session: Session name (defaults to current session if in tmux)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["resize"]
+    if session:
+        args.extend(["-s", session])
+
+    data = run_agentwire_cmd(args)
+    if data.get("success"):
+        return "Window resized to fit largest client."
+    return f"Failed to resize: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Voice Cloning Tools
+# =============================================================================
+
+
+@mcp.tool()
+def voiceclone_start() -> str:
+    """Start recording a voice sample for cloning.
+
+    Records audio from the microphone to create a custom TTS voice.
+    Call voiceclone_stop() with a name to save, or voiceclone_cancel() to discard.
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["voiceclone", "start"], json_output=False)
+    if data.get("success"):
+        return "Voice recording started. Speak clearly for 10-30 seconds, then call voiceclone_stop() with a name."
+    return f"Failed to start recording: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def voiceclone_stop(name: str) -> str:
+    """Stop recording and save as a named voice clone.
+
+    Args:
+        name: Name for the cloned voice (used with say() voice parameter)
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["voiceclone", "stop", name], json_output=False)
+    if data.get("success"):
+        return f"Voice clone '{name}' saved. Use with: say(text='...', voice='{name}')"
+    return f"Failed to save voice clone: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def voiceclone_cancel() -> str:
+    """Cancel the current voice recording without saving.
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["voiceclone", "cancel"], json_output=False)
+    if data.get("success"):
+        return "Voice recording cancelled."
+    return f"Failed to cancel recording: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def voiceclone_list() -> str:
+    """List all cloned voices.
+
+    Returns:
+        List of cloned voice names that can be used with say().
+    """
+    data = run_agentwire_cmd(["voiceclone", "list"])
+    if not data.get("success"):
+        return f"Failed to list voice clones: {data.get('error', 'Unknown error')}"
+    return format_voices(data)
+
+
+@mcp.tool()
+def voiceclone_delete(name: str) -> str:
+    """Delete a cloned voice.
+
+    Args:
+        name: Name of the voice clone to delete
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["voiceclone", "delete", name], json_output=False)
+    if data.get("success"):
+        return f"Voice clone '{name}' deleted."
+    return f"Failed to delete voice clone: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# History Tools
+# =============================================================================
+
+
+@mcp.tool()
+def history_list(project: str | None = None, limit: int = 20) -> str:
+    """List conversation history for sessions.
+
+    Args:
+        project: Filter by project path (optional)
+        limit: Maximum number of results (default: 20)
+
+    Returns:
+        List of past sessions with IDs and timestamps.
+    """
+    args = ["history", "list", "-n", str(limit)]
+    if project:
+        args.extend(["--project", project])
+
+    data = run_agentwire_cmd(args)
+    if not data.get("success"):
+        return f"Failed to list history: {data.get('error', 'Unknown error')}"
+
+    sessions = data.get("sessions", [])
+    if not sessions:
+        return "No session history found."
+
+    lines = ["Session history:"]
+    for s in sessions:
+        sid = s.get("id", "unknown")
+        name = s.get("name", "")
+        started = s.get("started", "")
+        lines.append(f"  - {sid}: {name} ({started})")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def history_show(session_id: str) -> str:
+    """Show details of a past session.
+
+    Args:
+        session_id: Session ID from history_list
+
+    Returns:
+        Session details including commands and duration.
+    """
+    data = run_agentwire_cmd(["history", "show", session_id])
+    if not data.get("success"):
+        return f"Failed to show session: {data.get('error', 'Unknown error')}"
+
+    lines = [f"Session: {session_id}"]
+    for key in ["name", "project", "started", "ended", "duration", "type"]:
+        if val := data.get(key):
+            lines.append(f"  {key}: {val}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def history_resume(session_id: str, project: str) -> str:
+    """Resume a past session (always creates a fork).
+
+    Args:
+        session_id: Session ID from history_list
+        project: Project path for the resumed session
+
+    Returns:
+        Success message with new session name or error.
+    """
+    data = run_agentwire_cmd(
+        ["history", "resume", session_id, "--project", project],
+        timeout=120,
+    )
+    if data.get("success"):
+        new_session = data.get("session", "unknown")
+        return f"Session resumed as '{new_session}'."
+    return f"Failed to resume session: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Lock Management Tools
+# =============================================================================
+
+
+@mcp.tool()
+def lock_list() -> str:
+    """List all active task locks.
+
+    Returns:
+        List of locks with session names and timestamps.
+    """
+    data = run_agentwire_cmd(["lock", "list"])
+    if not data.get("success"):
+        return f"Failed to list locks: {data.get('error', 'Unknown error')}"
+
+    locks = data.get("locks", [])
+    if not locks:
+        return "No active locks."
+
+    lines = ["Active locks:"]
+    for lock in locks:
+        session = lock.get("session", "unknown")
+        acquired = lock.get("acquired", "")
+        pid = lock.get("pid", "")
+        lines.append(f"  - {session}: acquired {acquired} (pid: {pid})")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def lock_clean() -> str:
+    """Remove stale locks (from dead processes).
+
+    Returns:
+        Number of stale locks removed or error.
+    """
+    data = run_agentwire_cmd(["lock", "clean"])
+    if data.get("success"):
+        removed = data.get("removed", 0)
+        return f"Cleaned {removed} stale lock(s)."
+    return f"Failed to clean locks: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def lock_remove(session: str) -> str:
+    """Force-remove a specific lock.
+
+    Args:
+        session: Session name whose lock to remove
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["lock", "remove", session])
+    if data.get("success"):
+        return f"Lock for '{session}' removed."
+    return f"Failed to remove lock: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Notification Tools
+# =============================================================================
+
+
+@mcp.tool()
+def email_send(
+    body: str,
+    to: str | None = None,
+    subject: str | None = None,
+) -> str:
+    """Send a branded email notification via Resend.
+
+    Supports markdown in the body. Uses the HTML email template.
+
+    Args:
+        body: Email body (markdown supported)
+        to: Recipient email address (default: from config)
+        subject: Email subject line (optional)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["email", "--body", body]
+    if to:
+        args.extend(["--to", to])
+    if subject:
+        args.extend(["--subject", subject])
+
+    data = run_agentwire_cmd(args, json_output=False)
+    if data.get("success"):
+        return "Email sent."
+    return f"Failed to send email: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def session_notify(event: str, session: str | None = None) -> str:
+    """Notify portal of session/pane state changes.
+
+    Args:
+        event: Event type (e.g., 'session_idle', 'session_active')
+        session: Session name (optional, auto-detected if in tmux)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["notify", event]
+    if session:
+        args.extend(["-s", session])
+
+    data = run_agentwire_cmd(args)
+    if data.get("success"):
+        return f"Notification '{event}' sent."
+    return f"Failed to send notification: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Tunnel Tools
+# =============================================================================
+
+
+@mcp.tool()
+def tunnels_up() -> str:
+    """Create all required SSH tunnels for remote services.
+
+    Reads tunnel requirements from config and creates SSH tunnels
+    to reach remote services (TTS, portal, etc.).
+
+    Returns:
+        Status of tunnel creation.
+    """
+    data = run_agentwire_cmd(["tunnels", "up"], json_output=False, timeout=60)
+    if data.get("success"):
+        return data.get("output", "Tunnels created.")
+    return f"Failed to create tunnels: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def tunnels_down() -> str:
+    """Tear down all SSH tunnels.
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["tunnels", "down"], json_output=False)
+    if data.get("success"):
+        return data.get("output", "Tunnels torn down.")
+    return f"Failed to tear down tunnels: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def tunnels_status() -> str:
+    """Show SSH tunnel health.
+
+    Returns:
+        Status of all configured tunnels.
+    """
+    data = run_agentwire_cmd(["tunnels", "status"], json_output=False)
+    if data.get("success"):
+        return data.get("output", "No tunnels configured.")
+    return f"Failed to check tunnel status: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Listen Tools (Extended)
+# =============================================================================
+
+
+@mcp.tool()
+def listen_cancel() -> str:
+    """Cancel the current voice recording without transcribing.
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["listen", "cancel"], json_output=False)
+    if data.get("success"):
+        return "Recording cancelled."
+    return f"Failed to cancel recording: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def listen_toggle() -> str:
+    """Toggle voice recording (start if not recording, stop if recording).
+
+    Returns:
+        Status message indicating whether recording started or stopped.
+    """
+    data = run_agentwire_cmd(["listen", "toggle"], json_output=False)
+    if data.get("success"):
+        return data.get("output", "Recording toggled.")
+    return f"Failed to toggle recording: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Task Tools (Extended)
+# =============================================================================
+
+
+@mcp.tool()
+def task_validate(session: str, task: str) -> str:
+    """Validate a task configuration for errors.
+
+    Args:
+        session: Session name
+        task: Task name from .agentwire.yml
+
+    Returns:
+        Validation results with any issues found.
+    """
+    data = run_agentwire_cmd(["task", "validate", f"{session}/{task}"])
+    if not data.get("success"):
+        return f"Failed to validate task: {data.get('error', 'Unknown error')}"
+
+    issues = data.get("issues", [])
+    if not issues:
+        return f"Task '{task}' is valid."
+
+    lines = [f"Task '{task}' has {len(issues)} issue(s):"]
+    for issue in issues:
+        lines.append(f"  - {issue}")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Network Tools
+# =============================================================================
+
+
+@mcp.tool()
+def network_status() -> str:
+    """Show complete network health at a glance.
+
+    Checks machine connectivity, service health, and tunnel status.
+
+    Returns:
+        Network status report.
+    """
+    data = run_agentwire_cmd(["network", "status"], json_output=False, timeout=60)
+    if data.get("success"):
+        return data.get("output", "Network status check complete.")
+    return f"Failed to check network: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# Desktop/Portal UI Control Tools
+# =============================================================================
+
+
+def _portal_request(method: str, path: str, body: dict | None = None) -> dict:
+    """Make an HTTP request to the portal API.
+
+    Args:
+        method: HTTP method (GET or POST)
+        path: API path (e.g., /api/desktop/windows)
+        body: Request body for POST requests
+
+    Returns:
+        Response data as dict.
+    """
+    import requests
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    url = f"{get_portal_url()}{path}"
+    try:
+        if method == "GET":
+            resp = requests.get(url, verify=False, timeout=10)
+        else:
+            resp = requests.post(url, json=body or {}, verify=False, timeout=10)
+
+        if resp.status_code != 200:
+            return {"success": False, "error": f"HTTP {resp.status_code}"}
+        return resp.json()
+    except requests.exceptions.ConnectionError:
+        return {"success": False, "error": "Portal not reachable. Is it running?"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+def desktop_windows_list() -> str:
+    """List all open windows in the portal desktop.
+
+    Returns:
+        List of open windows with IDs, types, and positions.
+    """
+    data = _portal_request("GET", "/api/desktop/windows")
+    if not data.get("success", True):
+        return f"Failed to list windows: {data.get('error', 'Unknown error')}"
+
+    windows = data.get("windows", [])
+    if not windows:
+        return "No windows open."
+
+    lines = ["Open windows:"]
+    for w in windows:
+        wid = w.get("id", "unknown")
+        wtype = w.get("type", "unknown")
+        title = w.get("title", "")
+        zone = w.get("zone", "")
+        zone_str = f" [{zone}]" if zone else ""
+        lines.append(f"  - {wid}: {title} ({wtype}){zone_str}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def desktop_open_session(session: str, mode: str = "monitor") -> str:
+    """Open a session window in the portal desktop.
+
+    Args:
+        session: Session name to open
+        mode: Window mode - 'monitor' (read-only) or 'terminal' (interactive)
+
+    Returns:
+        Window ID of the opened window or error.
+    """
+    data = _portal_request("POST", "/api/desktop/window/open", {
+        "type": "session",
+        "session": session,
+        "mode": mode,
+    })
+    if data.get("success"):
+        wid = data.get("window_id", "unknown")
+        return f"Opened {mode} window for '{session}' (id: {wid})."
+    return f"Failed to open window: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def desktop_open_panel(panel_type: str) -> str:
+    """Open a panel window in the portal desktop.
+
+    Args:
+        panel_type: Panel to open - 'sessions', 'machines', 'projects', or 'config'
+
+    Returns:
+        Window ID of the opened panel or error.
+    """
+    data = _portal_request("POST", "/api/desktop/window/open", {
+        "type": "panel",
+        "panel": panel_type,
+    })
+    if data.get("success"):
+        wid = data.get("window_id", "unknown")
+        return f"Opened '{panel_type}' panel (id: {wid})."
+    return f"Failed to open panel: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def desktop_close_window(window_id: str) -> str:
+    """Close a window in the portal desktop.
+
+    Args:
+        window_id: Window ID from desktop_windows_list
+
+    Returns:
+        Success message or error description.
+    """
+    data = _portal_request("POST", "/api/desktop/window/close", {
+        "window_id": window_id,
+    })
+    if data.get("success"):
+        return f"Window '{window_id}' closed."
+    return f"Failed to close window: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def desktop_focus_window(window_id: str) -> str:
+    """Bring a window to the front in the portal desktop.
+
+    Args:
+        window_id: Window ID from desktop_windows_list
+
+    Returns:
+        Success message or error description.
+    """
+    data = _portal_request("POST", "/api/desktop/window/focus", {
+        "window_id": window_id,
+    })
+    if data.get("success"):
+        return f"Window '{window_id}' focused."
+    return f"Failed to focus window: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def desktop_tile_window(window_id: str, zone: str) -> str:
+    """Tile a window to a specific zone in the portal desktop.
+
+    Args:
+        window_id: Window ID from desktop_windows_list
+        zone: Tile zone - 'left', 'right', 'top', 'bottom',
+              'top-left', 'top-right', 'bottom-left', 'bottom-right'
+
+    Returns:
+        Success message or error description.
+    """
+    data = _portal_request("POST", "/api/desktop/window/tile", {
+        "window_id": window_id,
+        "zone": zone,
+    })
+    if data.get("success"):
+        return f"Window '{window_id}' tiled to {zone}."
+    return f"Failed to tile window: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def desktop_minimize_all() -> str:
+    """Minimize all windows in the portal desktop.
+
+    Returns:
+        Success message or error description.
+    """
+    data = _portal_request("POST", "/api/desktop/window/minimize-all")
+    if data.get("success"):
+        return "All windows minimized."
+    return f"Failed to minimize windows: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def desktop_layout(windows: list[dict]) -> str:
+    """Apply a multi-window layout to the portal desktop.
+
+    Tiles multiple windows at once for side-by-side or grid layouts.
+
+    Args:
+        windows: List of window placements, each with 'id' and 'zone' keys.
+                 Example: [{"id": "win-1", "zone": "left"}, {"id": "win-2", "zone": "right"}]
+
+    Returns:
+        Success message or error description.
+    """
+    data = _portal_request("POST", "/api/desktop/layout", {
+        "windows": windows,
+    })
+    if data.get("success"):
+        return f"Layout applied to {len(windows)} window(s)."
+    return f"Failed to apply layout: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
 # Server Entry Point
 # =============================================================================
 

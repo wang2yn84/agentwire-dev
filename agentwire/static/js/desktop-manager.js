@@ -280,6 +280,50 @@ class DesktopManager {
                 this.emit('audio_ended', { session: msg.session });
                 break;
 
+            // Desktop UI control (from MCP agents via portal API)
+            case 'desktop_report_windows': {
+                // Server asking us to report our open windows
+                const windows = [];
+                for (const [id, winbox] of this.windows) {
+                    windows.push({
+                        id,
+                        title: winbox.title || id,
+                        type: this.tileStates.has(id) ? 'tiled' : (winbox.max ? 'maximized' : 'normal'),
+                        zone: this.tileStates.get(id) || null,
+                        minimized: !!winbox.min,
+                    });
+                }
+                this.send('desktop_windows_report', {
+                    request_id: msg.request_id,
+                    windows,
+                });
+                break;
+            }
+
+            case 'desktop_open_window':
+                this.emit('desktop_open_window', msg);
+                break;
+
+            case 'desktop_close_window':
+                this.emit('desktop_close_window', { window_id: msg.window_id });
+                break;
+
+            case 'desktop_focus_window':
+                this.emit('desktop_focus_window', { window_id: msg.window_id });
+                break;
+
+            case 'desktop_tile_window':
+                this.emit('desktop_tile_window', { window_id: msg.window_id, zone: msg.zone });
+                break;
+
+            case 'desktop_minimize_all':
+                this.emit('desktop_minimize_all', {});
+                break;
+
+            case 'desktop_apply_layout':
+                this.emit('desktop_apply_layout', { windows: msg.windows });
+                break;
+
             default:
                 // Unknown message types are silently ignored
         }

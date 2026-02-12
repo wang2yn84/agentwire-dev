@@ -110,6 +110,42 @@ async function init() {
         }
     });
 
+    // Desktop UI control (from MCP agents via portal API)
+    desktop.on('desktop_open_window', (msg) => {
+        if (msg.window_type === 'session') {
+            openSessionTerminal(msg.session, msg.mode || 'monitor');
+        } else if (msg.window_type === 'panel') {
+            const panelMap = { sessions: openSessionsWindow, machines: openMachinesWindow, projects: openProjectsWindow, config: openConfigWindow };
+            const openFn = panelMap[msg.panel];
+            if (openFn) openListWindowWithTaskbar(msg.panel, openFn);
+        }
+    });
+
+    desktop.on('desktop_close_window', ({ window_id }) => {
+        const winbox = desktop.getWindow(window_id);
+        if (winbox) winbox.close();
+    });
+
+    desktop.on('desktop_focus_window', ({ window_id }) => {
+        desktop.setActiveWindow(window_id);
+    });
+
+    desktop.on('desktop_tile_window', ({ window_id, zone }) => {
+        tileManager._tileWindow(window_id, zone);
+    });
+
+    desktop.on('desktop_minimize_all', () => {
+        desktop.minimizeAllExcept(null);
+    });
+
+    desktop.on('desktop_apply_layout', ({ windows }) => {
+        for (const w of windows) {
+            if (w.id && w.zone) {
+                tileManager._tileWindow(w.id, w.zone);
+            }
+        }
+    });
+
     // Set initial voice indicator state
     updateVoiceIndicator('idle');
 
