@@ -3706,11 +3706,23 @@ def cmd_split(args) -> int:
         print("Error: Not in a tmux session and no --session specified")
         return 1
 
+    # Verify session exists
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", session],
+        capture_output=True
+    )
+    if check.returncode != 0:
+        print(f"Error: Session '{session}' not found")
+        return 1
+
     # Add panes
-    for _ in range(count):
-        subprocess.run([
+    for i in range(count):
+        result = subprocess.run([
             "tmux", "split-window", "-v", "-t", session, "-c", cwd
-        ], capture_output=True)
+        ], capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Error: Failed to split pane: {result.stderr.strip()}")
+            return 1
 
     # Apply main-top layout: orchestrator (pane 0) at top with 60%, workers below
     pane_manager._apply_main_top_layout(session)
@@ -3750,17 +3762,30 @@ def cmd_detach(args) -> int:
     )
     session_exists = result.returncode == 0
 
+    # Verify source session exists
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", source_session],
+        capture_output=True
+    )
+    if check.returncode != 0:
+        print(f"Error: Session '{source_session}' not found")
+        return 1
+
     # Move pane to new session
     if session_exists:
         # Move to existing session
-        subprocess.run([
+        result = subprocess.run([
             "tmux", "move-pane", "-s", f"{source_session}:{pane_index}", "-t", f"{new_session}:"
-        ], capture_output=True)
+        ], capture_output=True, text=True)
     else:
         # Break pane into new session
-        subprocess.run([
+        result = subprocess.run([
             "tmux", "break-pane", "-d", "-s", f"{source_session}:{pane_index}", "-t", f"{new_session}:"
-        ], capture_output=True)
+        ], capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Error: Failed to detach pane {pane_index}: {result.stderr.strip()}")
+        return 1
 
     # Re-align remaining panes with main-top layout
     pane_manager._apply_main_top_layout(source_session)

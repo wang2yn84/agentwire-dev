@@ -1102,7 +1102,7 @@ def pane_split(session: str | None = None, count: int = 1) -> str:
     data = run_agentwire_cmd(args, json_output=False)
     if data.get("success"):
         return f"Added {count} terminal pane(s)."
-    return f"Failed to split panes: {data.get('error', 'Unknown error')}"
+    return f"Failed to split panes: {data.get('error') or data.get('output') or 'Unknown error'}"
 
 
 @mcp.tool()
@@ -1124,7 +1124,7 @@ def pane_detach(session: str, pane: int, target: str) -> str:
     data = run_agentwire_cmd(args, json_output=False)
     if data.get("success"):
         return f"Pane {pane} detached from '{session}' to '{target}'."
-    return f"Failed to detach pane: {data.get('error', 'Unknown error')}"
+    return f"Failed to detach pane: {data.get('error') or data.get('output') or 'Unknown error'}"
 
 
 @mcp.tool()

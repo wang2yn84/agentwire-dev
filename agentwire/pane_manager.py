@@ -278,14 +278,20 @@ def send_to_pane(session: str | None, pane_index: int, text: str, enter: bool = 
             temp_path = f.name
 
         try:
-            run_command(["tmux", "load-buffer", temp_path], timeout=5)
-            run_command(["tmux", "paste-buffer", "-t", target], timeout=5)
+            result = run_command(["tmux", "load-buffer", temp_path], timeout=5)
+            if not result.success:
+                raise RuntimeError(f"Failed to load buffer: {result.stderr.strip()}")
+            result = run_command(["tmux", "paste-buffer", "-t", target], timeout=5)
+            if not result.success:
+                raise RuntimeError(f"Pane {pane_index} not found: {result.stderr.strip()}")
         finally:
             import os
             os.unlink(temp_path)
     else:
         # Short single-line text: send-keys is fine
-        run_command(["tmux", "send-keys", "-t", target, text], timeout=5)
+        result = run_command(["tmux", "send-keys", "-t", target, text], timeout=5)
+        if not result.success:
+            raise RuntimeError(f"Pane {pane_index} not found: {result.stderr.strip()}")
 
     if enter:
         # Wait for text to be displayed before sending Enter
@@ -347,7 +353,9 @@ def kill_pane(session: str | None, pane_index: int) -> None:
             raise RuntimeError("Not in tmux session and no session specified")
 
     target = f"{session}:0.{pane_index}"
-    run_command(["tmux", "kill-pane", "-t", target], timeout=5)
+    result = run_command(["tmux", "kill-pane", "-t", target], timeout=5)
+    if not result.success:
+        raise RuntimeError(f"Pane {pane_index} not found: {result.stderr.strip()}")
 
 
 def focus_pane(session: str | None, pane_index: int) -> None:
