@@ -474,7 +474,7 @@ worker panes
 
 **Both Claude Code and OpenCode** support idle notifications:
 - Claude Code: via `~/.claude/hooks/idle-handler.sh`
-- OpenCode: via `~/.config/opencode/plugin/agentwire-notify.ts`
+- OpenCode: via `~/.config/opencode/plugins/agentwire-notify.ts`
 
 **Creating a project with roles:**
 
@@ -538,16 +538,22 @@ The hook lives at `~/.claude/hooks/idle-handler.sh` and fires on `idle_prompt` n
 **OpenCode** - Install the plugin:
 
 ```bash
-# Create plugin directory
-mkdir -p ~/.config/opencode/plugin
+# Create plugins directory (plural — OpenCode v1.1.63+ requires this)
+mkdir -p ~/.config/opencode/plugins
 
 # Copy the plugin from agentwire source
-cp ~/projects/agentwire-dev/opencode-plugin/agentwire-notify.ts ~/.config/opencode/plugin/
+cp ~/projects/agentwire-dev/opencode-plugin/agentwire-notify.ts ~/.config/opencode/plugins/
 
 # Restart OpenCode to load the plugin
 ```
 
-The plugin lives at `~/.config/opencode/plugin/agentwire-notify.ts` and fires on `session.idle` events.
+The plugin lives at `~/.config/opencode/plugins/agentwire-notify.ts` and fires on `session.idle` events.
+
+**Plugin gotchas:**
+- Directory is `plugins/` (plural), NOT `plugin/` (singular)
+- Do NOT use `import type { Plugin } from "@opencode-ai/plugin"` — silently breaks loading
+- Use `: any` for event handler params: `event: async ({ event }: any) => { ... }`
+- Plugins show in `/status` even when broken — use debug logging to verify execution
 
 ### Queue Processor
 

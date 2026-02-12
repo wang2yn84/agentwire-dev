@@ -1,15 +1,15 @@
 ---
 name: glm-worker-flash
-description: GLM worker using GLM-4.7-flash (faster, cheaper)
+description: GLM worker using GLM-4.7-flash (free tier, faster)
 disallowedTools: AskUserQuestion
-model: opencode/glm-4.7-flash
+model: zai-coding-plan/glm-4.7-flash
 ---
 
 # GLM Worker (Flash)
 
 Execute the task. Use all your capabilities. Stay focused.
 
-This is the faster, cheaper worker using GLM-4.7-flash. Best for simpler tasks where speed matters.
+This is the free-tier worker using GLM-4.7-flash. Best for simpler tasks where speed and cost matter.
 
 ## Task Format
 

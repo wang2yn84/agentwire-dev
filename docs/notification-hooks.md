@@ -134,7 +134,7 @@ parent: main  # Notify parent session when idle (orchestrator only)
 
 ## OpenCode Support
 
-OpenCode uses a plugin at `~/.config/opencode/plugin/agentwire-notify.ts`:
+OpenCode uses a plugin at `~/.config/opencode/plugins/agentwire-notify.ts`:
 - Listens for `session.idle` events
 - Same two-pass idle logic as Claude Code hook
 - Uses `sessionID` from event for unique summary file identification

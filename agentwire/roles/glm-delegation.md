@@ -1,14 +1,14 @@
 ---
 name: glm-delegation
-description: Guide for delegating tasks to GLM-4.7/OpenCode workers as focused executors
+description: Guide for delegating tasks to GLM-5/OpenCode workers as focused executors
 model: inherit
 ---
 
-# GLM-4.7 Task Delegation
+# GLM-5 Task Delegation
 
 **This role defines your worker type: GLM/OpenCode workers ONLY.**
 
-**GLM is a focused task executor.** It uses all its capabilities to complete tasks but needs clear guidance on goals and constraints. Your job is to provide clear goals and explicit constraints, then let GLM figure out the details.
+**GLM-5 is a capable task executor.** It's a frontier-class model (77.8% SWE-bench, 67.8 MCP-Atlas) that handles complex coding tasks, multi-file changes, and tool orchestration. Give it clear goals with context, and it will execute well.
 
 This role supplements `leader` with GLM-specific spawn patterns, task templates, and communication techniques.
 
@@ -66,41 +66,40 @@ Workers output structured exit summaries. Look for:
 ─── ERROR ───     (failed)
 ```
 
-### API Concurrency Limits (CRITICAL)
+### API Concurrency Limits
 
-**GLM/Z.ai supports max 3 concurrent requests, but quality degrades at 3.**
+**Z.AI coding plan supports concurrent requests, but quality may degrade with too many.**
 
 | Workers | Quality | Recommendation |
 |---------|---------|----------------|
 | 1 | Best | Complex multi-step tasks |
 | 2 | Good | **Standard tasks (use this)** |
-| 3 | ~50% degraded | Avoid |
+| 3 | Acceptable | OK for simple/independent tasks |
 
-**Rule: Spawn max 2 GLM workers at a time.** Wait for them to complete before spawning more. If a task needs more than 2 workers, run them in sequential waves of 2.
+**Rule: Default to 2 GLM workers.** For simple independent tasks, 3 is fine. Wait for completion before spawning more.
 
 ---
 
 ## Core Philosophy
 
-### GLM vs Claude: Communication Style
+### GLM-5 vs Claude: Communication Style
 
-| Claude | GLM |
-|--------|-----|
-| Infers intent from minimal context | Benefits from explicit context |
-| Handles ambiguity well | Needs clearer boundaries |
-| Can judge "good enough" vs "perfect" | May need guidance on when to stop |
-| Natural language tasks work well | Benefits from structured requirements |
+| Claude | GLM-5 |
+|--------|-------|
+| Infers intent from minimal context | Strong inference, still benefits from explicit context |
+| Handles ambiguity well | Good with ambiguity, better with structure |
+| Natural language tasks work well | Structured requirements get best results |
 | Standard web search tools | Uses `zai-web-search_webSearchPrime` for web research |
 
-**Both agents can:** Use all their tools, make autonomous decisions, research, explore codebase, and complete tasks. The difference is communication style and tool access, not capabilities.
+**GLM-5 is frontier-class.** It scores 77.8% on SWE-bench (approaching Opus), 67.8 on MCP-Atlas (tool use), and handles multi-file coding tasks well. The main difference from Claude is communication style, not capability.
 
-### Treat GLM Like a Junior Dev
+### Treat GLM-5 Like a Mid-Level Engineer
 
-- Spell everything out
-- Don't assume knowledge
-- Give exact file paths
-- List steps in order
-- Define done explicitly
+- Give clear goals and context
+- Provide file paths (absolute preferred)
+- Define success criteria
+- Let it figure out the implementation details
+- Trust its tool use and codebase exploration
 
 ### Workers Are Disposable
 
@@ -119,36 +118,36 @@ agentwire_pane_send(pane=1, message="[improved task based on what failed]")
 
 ## Task Communication
 
-### Explicit Instructions Required
+### Structured Instructions Get Best Results
 
-GLM requires structured instructions. Use the task template from Quick Reference.
+GLM-5 can infer intent, but structured instructions consistently produce better output. Use the task template from Quick Reference.
 
 **Key principles:**
-- Front-load critical rules (GLM weighs the start heavily)
-- Use firm language: "MUST", "STRICTLY", not "please try"
-- Absolute paths always
-- Explicit numbered steps
+- Front-load critical rules
+- Use firm language: "MUST", "STRICTLY"
+- Absolute paths preferred
+- Explicit steps for multi-file tasks
+- Define success criteria
 
-**GLM vs Claude examples:**
+**GLM-5 task example:**
+```
+TASK: Add JWT authentication to the API
 
-**GLM (literal executor):**
-```
-TASK: Add JWT authentication
-FILES: /absolute/path/to/auth/jwt.py
-STEPS:
-1. Read models/user.py
-2. Create jwt.py with token generation
-3. Add login/logout to routes/auth.py
+FILES:
+- /absolute/path/to/auth/jwt.py (create)
+- /absolute/path/to/routes/auth.py (modify)
+
+CONTEXT: Check models/user.py for the User model.
+
+REQUIREMENTS:
+- Token generation with 24h expiry
+- Login/logout endpoints
+- Verify middleware
+
+SUCCESS: Login returns JWT, protected routes reject invalid tokens
 ```
 
-**Claude (collaborator):**
-```
-Add JWT authentication to the API.
-We need login/logout endpoints and a verify middleware.
-Check the existing user model for context.
-```
-
-GLM cannot infer from context like Claude can - you must be explicit.
+GLM-5 handles the implementation details — you provide goals and constraints.
 
 ---
 
@@ -170,24 +169,19 @@ Worker 3: Add API call to LoginForm (submit handler)
 
 ### Sizing Tasks
 
-**Remember: Max 2 GLM workers due to API limits.** Batch related work into fewer workers.
+GLM-5 handles larger tasks than GLM-4.7 did. Give it multi-file work confidently.
 
 | Task Size | Workers | Strategy |
 |-----------|---------|----------|
-| One function | 1 | Single worker |
-| One component | 1 | Single worker |
-| One feature | 2 | Parallel workers, batch related files |
-| Full page | 3 waves | Sequential waves of 2 workers each |
+| Single function/fix | 1 | Single worker |
+| Feature (2-5 files) | 1-2 | Single worker or parallel split |
+| Large feature (5+ files) | 2-3 | Parallel workers by concern |
+| Full module | 2-3 waves | Sequential waves |
 
 **Example - Building 6 components:**
 ```
-# WRONG - exceeds limit
-# 6 spawns at once → too many concurrent
-
-# RIGHT - batch into 3 waves of 2
-Wave 1: 2 workers (Hero + Features)
-Wave 2: 2 workers (Pricing + Footer)
-Wave 3: 2 workers (Nav + CTA)
+Wave 1: 2 workers (Hero + Features, Pricing + Footer)
+Wave 2: 1 worker (Nav + CTA — simple enough for one)
 ```
 
 ### Dependencies
@@ -422,16 +416,12 @@ agentwire_say(text="Feature complete, tested in Chrome")
 
 ## Remember
 
-**GLM workers are tools, not collaborators.**
+**GLM-5 workers are capable executors.**
 
 Your job:
-1. Break work into tiny, explicit pieces
-2. Write crystal-clear instructions
-3. Verify each piece works
-4. Iterate until done
+1. Break work into clear, scoped tasks
+2. Provide structured instructions with context
+3. Verify output and iterate if needed
+4. Trust GLM-5 to handle implementation details
 
-The quality of output = quality of your instructions.
-
-Bad instructions → bad code → wasted time
-
-Good instructions → working code → fast iteration
+GLM-5 is frontier-class — give it real tasks, not micro-steps.

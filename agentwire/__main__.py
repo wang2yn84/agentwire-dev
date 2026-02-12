@@ -5564,12 +5564,20 @@ def cmd_doctor(args) -> int:
 
     # Check OpenCode plugin
     print("\nChecking OpenCode plugin...")
-    opencode_plugin = Path.home() / ".config" / "opencode" / "plugin" / "agentwire-notify.ts"
-    if opencode_plugin.exists():
-        print(f"  [ok] OpenCode plugin: {opencode_plugin}")
+    # Check both directories — plugins/ (plural, v1.1.63+) takes priority
+    opencode_plugins_dir = Path.home() / ".config" / "opencode" / "plugins"
+    opencode_plugin_dir = Path.home() / ".config" / "opencode" / "plugin"
+    opencode_plugin_new = opencode_plugins_dir / "agentwire-notify.ts"
+    opencode_plugin_old = opencode_plugin_dir / "agentwire-notify.ts"
+    if opencode_plugin_new.exists():
+        print(f"  [ok] OpenCode plugin: {opencode_plugin_new}")
+    elif opencode_plugin_old.exists():
+        print(f"  [!!] OpenCode plugin found at old path: {opencode_plugin_old}")
+        print(f"     Move to {opencode_plugins_dir}/ (plural) for OpenCode v1.1.63+")
+        issues_found += 1
     else:
         print("  [..] OpenCode plugin: not found (required for OpenCode worker notifications)")
-        print("     Copy from agentwire source or install manually.")
+        print(f"     Copy from agentwire source to {opencode_plugins_dir}/")
 
     # Check queue processor
     queue_processor = Path.home() / ".agentwire" / "queue-processor.sh"

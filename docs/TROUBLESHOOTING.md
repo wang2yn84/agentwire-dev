@@ -366,7 +366,7 @@ agentwire hooks install
 ls ~/.claude/hooks/idle-handler.sh
 
 # OpenCode
-ls ~/.config/opencode/plugin/agentwire-notify.ts
+ls ~/.config/opencode/plugins/agentwire-notify.ts
 ```
 
 **Verify parent is configured:**

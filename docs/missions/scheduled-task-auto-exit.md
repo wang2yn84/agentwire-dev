@@ -86,7 +86,7 @@ task_context = {
 
 ### 4. Update OpenCode Plugin
 
-Same logic in `~/.config/opencode/plugin/agentwire-notify.ts` for OpenCode sessions.
+Same logic in `~/.config/opencode/plugins/agentwire-notify.ts` for OpenCode sessions.
 
 ## CLI Override (Optional)
 
