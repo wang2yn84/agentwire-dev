@@ -1,26 +1,26 @@
 /**
- * app-window.js
+ * artifact-window.js
  *
- * AppWindow class — displays agent-generated HTML or external URLs
+ * ArtifactWindow class — displays agent-generated HTML or external URLs
  * in a sandboxed iframe within a WinBox window.
  */
 
 import { desktop } from './desktop-manager.js';
 
-export class AppWindow {
+export class ArtifactWindow {
     /**
      * @param {Object} options
-     * @param {string} options.url - URL to load (relative /apps/... or absolute https://...)
+     * @param {string} options.url - URL to load (relative /artifacts/... or absolute https://...)
      * @param {string} options.title - Window title
-     * @param {string} options.appId - Unique window identifier
+     * @param {string} options.artifactId - Unique window identifier
      * @param {HTMLElement} options.root - Parent element for WinBox
      * @param {Function} options.onClose - Callback when window closes
      * @param {Function} options.onFocus - Callback when window gains focus
      */
     constructor(options) {
         this.url = options.url;
-        this.title = options.title || 'App';
-        this.appId = options.appId;
+        this.title = options.title || 'Artifact';
+        this.artifactId = options.artifactId;
         this.root = options.root || document.body;
         this.onCloseCallback = options.onClose || null;
         this.onFocusCallback = options.onFocus || null;
@@ -31,7 +31,7 @@ export class AppWindow {
     }
 
     /**
-     * Open the app window.
+     * Open the artifact window.
      */
     open() {
         if (this.isOpen) {
@@ -46,7 +46,7 @@ export class AppWindow {
     }
 
     /**
-     * Close the app window and clean up.
+     * Close the artifact window and clean up.
      */
     close() {
         if (!this.isOpen) return;
@@ -63,7 +63,7 @@ export class AppWindow {
             wb.close();
         }
 
-        desktop.unregisterWindow(this.appId);
+        desktop.unregisterWindow(this.artifactId);
         this.isOpen = false;
 
         if (this.onCloseCallback) {
@@ -100,12 +100,12 @@ export class AppWindow {
 
     _createContainer() {
         const container = document.createElement('div');
-        container.className = 'app-window-content';
+        container.className = 'artifact-window-content';
         container.innerHTML = `
-            <div class="app-loading">Loading...</div>
-            <div class="app-error hidden">
-                <div class="app-error-message">Failed to load</div>
-                <button class="btn btn-primary app-reload-btn">Reload</button>
+            <div class="artifact-loading">Loading...</div>
+            <div class="artifact-error hidden">
+                <div class="artifact-error-message">Failed to load</div>
+                <button class="btn btn-primary artifact-reload-btn">Reload</button>
             </div>
         `;
         return container;
@@ -123,7 +123,7 @@ export class AppWindow {
             y: 'center',
             minwidth: 320,
             minheight: 240,
-            class: ['app-window'],
+            class: ['artifact-window'],
             onclose: () => {
                 this.winbox = null;
                 this.close();
@@ -133,18 +133,18 @@ export class AppWindow {
                 if (this.onFocusCallback) this.onFocusCallback(this);
             },
             onminimize: () => {
-                desktop.emit('window_minimized', { id: this.appId });
+                desktop.emit('window_minimized', { id: this.artifactId });
             },
             onrestore: () => {
-                desktop.emit('window_restored', { id: this.appId });
+                desktop.emit('window_restored', { id: this.artifactId });
                 if (this.onFocusCallback) this.onFocusCallback(this);
             },
         });
 
-        desktop.registerWindow(this.appId, this.winbox);
+        desktop.registerWindow(this.artifactId, this.winbox);
 
         // Set up reload button
-        const reloadBtn = container.querySelector('.app-reload-btn');
+        const reloadBtn = container.querySelector('.artifact-reload-btn');
         if (reloadBtn) {
             reloadBtn.addEventListener('click', () => this.reload());
         }
@@ -160,8 +160,8 @@ export class AppWindow {
         if (url.startsWith('/')) {
             return url;
         }
-        // Relative filename — serve from /apps/
-        return `/apps/${url}`;
+        // Relative filename — serve from /artifacts/
+        return `/artifacts/${url}`;
     }
 
     _isExternalUrl() {
@@ -171,13 +171,16 @@ export class AppWindow {
     _loadUrl() {
         if (!this.winbox) return;
 
-        const container = this.winbox.body;
-        const loadingEl = container.querySelector('.app-loading');
-        const errorEl = container.querySelector('.app-error');
+        // Find the .artifact-window-content container (mounted inside .wb-body)
+        const content = this.winbox.body.querySelector('.artifact-window-content');
+        if (!content) return;
+
+        const loadingEl = content.querySelector('.artifact-loading');
+        const errorEl = content.querySelector('.artifact-error');
 
         // Create iframe with appropriate sandbox
         this.iframe = document.createElement('iframe');
-        this.iframe.className = 'app-iframe';
+        this.iframe.className = 'artifact-iframe';
 
         // Smart sandboxing:
         // - Local files: allow-scripts allow-same-origin (needed for local JS/CSS)
@@ -197,12 +200,12 @@ export class AppWindow {
             if (loadingEl) loadingEl.classList.add('hidden');
             if (errorEl) {
                 errorEl.classList.remove('hidden');
-                errorEl.querySelector('.app-error-message').textContent =
+                errorEl.querySelector('.artifact-error-message').textContent =
                     `Failed to load: ${this.url}`;
             }
         });
 
         this.iframe.src = this._resolveUrl();
-        container.insertBefore(this.iframe, container.firstChild);
+        content.insertBefore(this.iframe, content.firstChild);
     }
 }

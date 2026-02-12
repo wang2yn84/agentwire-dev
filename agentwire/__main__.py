@@ -2105,12 +2105,12 @@ def cmd_alert(args) -> int:
 
 
 def cmd_open(args) -> int:
-    """Open a URL or local file as an app window in the portal.
+    """Open a URL or local file as an artifact window in the portal.
 
     Examples:
         agentwire open dashboard.html --title "Dashboard"
         agentwire open https://example.com --title "External"
-        agentwire open test.html --app-id my-test --json
+        agentwire open test.html --artifact-id my-test --json
     """
     import json as json_mod
     import requests
@@ -2119,18 +2119,18 @@ def cmd_open(args) -> int:
 
     url = args.url
     title = args.title
-    app_id = getattr(args, 'app_id', None)
+    artifact_id = getattr(args, 'artifact_id', None)
     json_output = getattr(args, 'json', False)
 
     portal_url = _get_portal_url()
 
     body = {
-        "type": "app",
+        "type": "artifact",
         "url": url,
         "title": title,
     }
-    if app_id:
-        body["app_id"] = app_id
+    if artifact_id:
+        body["artifact_id"] = artifact_id
 
     try:
         resp = requests.post(
@@ -2144,7 +2144,7 @@ def cmd_open(args) -> int:
         if json_output:
             print(json_mod.dumps(data))
         elif data.get("success"):
-            print(f"Opened app window: {title} (id: {data.get('window_id', 'unknown')})")
+            print(f"Opened artifact window: {title} (id: {data.get('window_id', 'unknown')})")
         else:
             print(f"Failed: {data.get('error', 'Unknown error')}", file=sys.stderr)
             return 1
@@ -7704,11 +7704,11 @@ def main() -> int:
     alert_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
     alert_parser.set_defaults(func=cmd_alert)
 
-    # === open command (app windows) ===
-    open_parser = subparsers.add_parser("open", help="Open a URL or local file as an app window in the portal")
-    open_parser.add_argument("url", help="URL or filename to open (filenames served from ~/.agentwire/apps/)")
-    open_parser.add_argument("--title", "-t", type=str, default="App", help="Window title")
-    open_parser.add_argument("--app-id", type=str, help="Unique window ID (auto-generated if omitted)")
+    # === open command (artifact windows) ===
+    open_parser = subparsers.add_parser("open", help="Open a URL or local file as an artifact window in the portal")
+    open_parser.add_argument("url", help="URL or filename to open (filenames served from ~/.agentwire/artifacts/)")
+    open_parser.add_argument("--title", "-t", type=str, default="Artifact", help="Window title")
+    open_parser.add_argument("--artifact-id", type=str, help="Unique window ID (auto-generated if omitted)")
     open_parser.add_argument("--json", action="store_true", help="Output JSON")
     open_parser.set_defaults(func=cmd_open)
 

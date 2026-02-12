@@ -1669,7 +1669,7 @@ def desktop_open_panel(panel_type: str) -> str:
     """Open a panel window in the portal desktop.
 
     Args:
-        panel_type: Panel to open - 'sessions', 'machines', 'projects', or 'config'
+        panel_type: Panel to open - 'sessions', 'machines', 'projects', 'artifacts', or 'config'
 
     Returns:
         Window ID of the opened panel or error.
@@ -1685,78 +1685,78 @@ def desktop_open_panel(panel_type: str) -> str:
 
 
 @mcp.tool()
-def desktop_open_app(url: str, title: str = "App", app_id: str | None = None) -> str:
-    """Open a URL or local app file in an iframe window on the portal desktop.
+def desktop_open_artifact(url: str, title: str = "Artifact", artifact_id: str | None = None) -> str:
+    """Open a URL or local artifact file in an iframe window on the portal desktop.
 
-    For local files, use a filename from ~/.agentwire/apps/ (e.g., "dashboard.html").
+    For local files, use a filename from ~/.agentwire/artifacts/ (e.g., "dashboard.html").
     For external sites, use a full URL (e.g., "https://example.com").
 
     Args:
-        url: URL or filename to display. Filenames are served from ~/.agentwire/apps/.
-        title: Window title (default: "App")
-        app_id: Optional unique window ID. If omitted, derived from URL.
+        url: URL or filename to display. Filenames are served from ~/.agentwire/artifacts/.
+        title: Window title (default: "Artifact")
+        artifact_id: Optional unique window ID. If omitted, derived from URL.
 
     Returns:
         Window ID of the opened window or error.
     """
     body = {
-        "type": "app",
+        "type": "artifact",
         "url": url,
         "title": title,
     }
-    if app_id:
-        body["app_id"] = app_id
+    if artifact_id:
+        body["artifact_id"] = artifact_id
 
     data = _portal_request("POST", "/api/desktop/window/open", body)
     if data.get("success"):
         wid = data.get("window_id", "unknown")
-        return f"Opened app window '{title}' (id: {wid})."
-    return f"Failed to open app window: {data.get('error', 'Unknown error')}"
+        return f"Opened artifact window '{title}' (id: {wid})."
+    return f"Failed to open artifact window: {data.get('error', 'Unknown error')}"
 
 
 @mcp.tool()
-def desktop_write_app(
+def desktop_write_artifact(
     filename: str,
     html_content: str,
-    title: str = "App",
-    app_id: str | None = None,
+    title: str = "Artifact",
+    artifact_id: str | None = None,
 ) -> str:
-    """Write HTML content to a file and open it as an app window.
+    """Write HTML content to a file and open it as an artifact window.
 
-    Atomically writes content to ~/.agentwire/apps/<filename>, then opens
+    Atomically writes content to ~/.agentwire/artifacts/<filename>, then opens
     it in an iframe window on the portal desktop. Use this to display
     dashboards, diagrams, reports, or any HTML content.
 
     Args:
         filename: Output filename (must end in .html, e.g., "dashboard.html")
         html_content: Complete HTML content to write
-        title: Window title (default: "App")
-        app_id: Optional unique window ID. If omitted, derived from filename.
+        title: Window title (default: "Artifact")
+        artifact_id: Optional unique window ID. If omitted, derived from filename.
 
     Returns:
         Window ID of the opened window or error.
     """
     # Step 1: Upload the file
-    upload_data = _portal_request("POST", "/api/apps/upload", {
+    upload_data = _portal_request("POST", "/api/artifacts/upload", {
         "filename": filename,
         "content": html_content,
     })
     if not upload_data.get("success"):
-        return f"Failed to write app: {upload_data.get('error', 'Unknown error')}"
+        return f"Failed to write artifact: {upload_data.get('error', 'Unknown error')}"
 
     # Step 2: Open it as a window
     body = {
-        "type": "app",
+        "type": "artifact",
         "url": filename,
         "title": title,
     }
-    if app_id:
-        body["app_id"] = app_id
+    if artifact_id:
+        body["artifact_id"] = artifact_id
 
     open_data = _portal_request("POST", "/api/desktop/window/open", body)
     if open_data.get("success"):
         wid = open_data.get("window_id", "unknown")
-        return f"App '{filename}' written and opened (id: {wid})."
+        return f"Artifact '{filename}' written and opened (id: {wid})."
     return f"File written but failed to open window: {open_data.get('error', 'Unknown error')}"
 
 

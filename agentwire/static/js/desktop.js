@@ -10,15 +10,16 @@
 import { desktop } from './desktop-manager.js';
 import { tileManager } from './tile-manager.js';
 import { SessionWindow } from './session-window.js';
-import { AppWindow } from './app-window.js';
+import { ArtifactWindow } from './artifact-window.js';
 import { openSessionsWindow } from './windows/sessions-window.js';
 import { openMachinesWindow } from './windows/machines-window.js';
 import { openConfigWindow } from './windows/config-window.js';
 import { openProjectsWindow } from './windows/projects-window.js';
+import { openArtifactsWindow } from './windows/artifacts-window.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
-const appWindows = new Map();      // appId -> AppWindow instance
+const artifactWindows = new Map();  // artifactId -> ArtifactWindow instance
 const listWindows = new Map();     // windowId -> ListWindow instance
 
 // Global PTT state
@@ -117,11 +118,11 @@ async function init() {
         if (msg.window_type === 'session') {
             openSessionTerminal(msg.session, msg.mode || 'monitor');
         } else if (msg.window_type === 'panel') {
-            const panelMap = { sessions: openSessionsWindow, machines: openMachinesWindow, projects: openProjectsWindow, config: openConfigWindow };
+            const panelMap = { sessions: openSessionsWindow, machines: openMachinesWindow, projects: openProjectsWindow, config: openConfigWindow, artifacts: openArtifactsWindow };
             const openFn = panelMap[msg.panel];
             if (openFn) openListWindowWithTaskbar(msg.panel, openFn);
-        } else if (msg.window_type === 'app') {
-            openAppWindow(msg.url, msg.title || 'App', msg.app_id);
+        } else if (msg.window_type === 'artifact') {
+            openArtifactWindow(msg.url, msg.title || 'Artifact', msg.artifact_id);
         }
     });
 
@@ -237,7 +238,7 @@ function setupPageUnload() {
 
         // Close all windows
         sessionWindows.forEach(sw => sw.close());
-        appWindows.forEach(aw => aw.close());
+        artifactWindows.forEach(aw => aw.close());
         listWindows.forEach(lw => lw.close());
     });
 }
@@ -253,6 +254,9 @@ function setupMenuListeners() {
     });
     document.getElementById('sessionsMenu')?.addEventListener('click', () => {
         openListWindowWithTaskbar('sessions', openSessionsWindow);
+    });
+    document.getElementById('artifactsMenu')?.addEventListener('click', () => {
+        openListWindowWithTaskbar('artifacts', openArtifactsWindow);
     });
 
     // Right side settings dropdown items
@@ -392,18 +396,18 @@ export function openSessionTerminal(session, mode, machine = null) {
 }
 
 /**
- * Open an app window (agent-generated HTML or external URL).
+ * Open an artifact window (agent-generated HTML or external URL).
  *
  * @param {string} url - URL or filename to load
  * @param {string} title - Window title
- * @param {string|null} appId - Optional explicit window ID
+ * @param {string|null} artifactId - Optional explicit window ID
  */
-export function openAppWindow(url, title = 'App', appId = null) {
-    const id = appId || `app-${url.replace(/[\/\.]/g, '-')}`;
+export function openArtifactWindow(url, title = 'Artifact', artifactId = null) {
+    const id = artifactId || `artifact-${url.replace(/[\/\.]/g, '-')}`;
 
     // Check if already open — restore if minimized, otherwise focus
-    if (appWindows.has(id)) {
-        const existing = appWindows.get(id);
+    if (artifactWindows.has(id)) {
+        const existing = artifactWindows.get(id);
         if (existing.isMinimized) {
             if (!desktop.isTiled(id)) {
                 desktop.minimizeAllExcept(id);
@@ -415,13 +419,16 @@ export function openAppWindow(url, title = 'App', appId = null) {
         return;
     }
 
-    const aw = new AppWindow({
+    // Minimize all other windows before opening new one
+    desktop.minimizeAllExcept(null);
+
+    const aw = new ArtifactWindow({
         url,
         title,
-        appId: id,
+        artifactId: id,
         root: elements.desktopArea,
         onClose: () => {
-            appWindows.delete(id);
+            artifactWindows.delete(id);
             removeTaskbarButton(id);
         },
         onFocus: () => {
@@ -431,7 +438,7 @@ export function openAppWindow(url, title = 'App', appId = null) {
     });
 
     aw.open();
-    appWindows.set(id, aw);
+    artifactWindows.set(id, aw);
     addTaskbarButton(id, aw);
 }
 
