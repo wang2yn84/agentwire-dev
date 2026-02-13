@@ -7086,8 +7086,8 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
                 continue
             break
 
-        # Clean up task context
-        clear_task_context(session)
+        # Don't clear task context here — hook owns context file lifecycle.
+        # ensure waits for hook to delete it (signals cleanup complete).
 
         if not json_mode:
             print(f"Task status: {last_status}")

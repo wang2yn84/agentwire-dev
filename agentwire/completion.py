@@ -217,8 +217,13 @@ def wait_for_completion_signal(
     start_time = time.time()
 
     while True:
-        # Primary: check if the agent has written the summary file
-        if summary_path and summary_path.exists() and summary_path.stat().st_size > 0:
+        # Primary: check if the agent has written the summary file AND
+        # the hook has deleted the context file (signals cleanup complete).
+        # This prevents ensure from proceeding before the hook finishes
+        # its second-idle cleanup (send /exit, kill session).
+        context_file = TASKS_DIR / f"{session}.json"
+        if (summary_path and summary_path.exists() and summary_path.stat().st_size > 0
+                and not context_file.exists()):
             # Give a moment for the file to be fully written
             time.sleep(0.5)
             try:

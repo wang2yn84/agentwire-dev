@@ -177,7 +177,9 @@ Workers that pass both gates get the standard two-pass summary treatment.
 For orchestrator sessions running `agentwire ensure` tasks:
 1. Reads task context from `~/.agentwire/tasks/{session}.json`
 2. First idle: increments `idle_count`, sends summary prompt
-3. Second idle: if `exit_on_complete: true`, sends `/exit`, cleans up context, kills tmux session
+3. Second idle: if `exit_on_complete: true`, sends `/exit`, deletes context file, kills tmux session
+
+**Hook owns context file lifecycle.** The `ensure` command polls for both the summary file AND the context file being deleted. Context file deletion is the "cleanup complete" signal — it means the hook has finished sending `/exit` and killing the session. This prevents a race where `ensure` would proceed (and delete the context file itself) before the hook's second idle pass.
 
 ### Enriched Notifications
 
