@@ -547,7 +547,21 @@ cp ~/projects/agentwire-dev/opencode-plugin/agentwire-notify.ts ~/.config/openco
 # Restart OpenCode to load the plugin
 ```
 
-The plugin lives at `~/.config/opencode/plugins/agentwire-notify.ts` and fires on `session.idle` events.
+The plugin lives at `~/.config/opencode/plugins/agentwire-notify.ts` and subscribes to the full OpenCode event bus:
+
+| Event | Purpose |
+|-------|---------|
+| `session.idle` | Trigger idle handling (with gate logic) |
+| `session.status` | Track busy/idle/retry transitions |
+| `message.updated` | Count completed assistant responses (role=assistant + time.completed) |
+| `session.diff` | Detect file changes (non-empty diff array) |
+| `session.deleted` | Clean up state |
+
+**Gate logic prevents spurious idle handling:**
+- **Gate A (retry):** Skips idle if in retry/rate-limit state or last retry within 10s
+- **Gate B (work):** Workers must have at least 1 completed response before getting summary prompts. Workers with no activity get a grace period on first idle, then notified as failed and killed on second idle.
+
+**Scheduled task support:** Plugin handles `agentwire ensure` tasks for pane 0 (reads `~/.agentwire/tasks/{session}.json`, sends summary prompt on first idle, exits session on second idle if `exit_on_complete: true`).
 
 **Plugin gotchas:**
 - Directory is `plugins/` (plural), NOT `plugin/` (singular)

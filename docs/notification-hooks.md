@@ -134,11 +134,57 @@ parent: main  # Notify parent session when idle (orchestrator only)
 
 ## OpenCode Support
 
-OpenCode uses a plugin at `~/.config/opencode/plugins/agentwire-notify.ts`:
-- Listens for `session.idle` events
-- Same two-pass idle logic as Claude Code hook
-- Uses `sessionID` from event for unique summary file identification
-- Calls `agentwire alert` for text-only notifications
+OpenCode uses an event-bus-aware plugin at `~/.config/opencode/plugins/agentwire-notify.ts`.
+
+### Event Subscriptions
+
+| Event | Purpose |
+|-------|---------|
+| `session.idle` | Trigger idle handling (gated) |
+| `session.status` | Track `busy`/`idle`/`retry` transitions, count busy cycles |
+| `message.updated` | Count completed assistant responses (`role=assistant` + `time.completed`) |
+| `session.diff` | Detect file changes (non-empty diff array) |
+| `session.deleted` | Clean up per-session state |
+
+Note: OpenCode does **not** dispatch `tool.execute.after`, `file.edited`, or `message.part.updated` to plugins. The `message.updated` event with `time.completed` is the primary "real work" signal. The `sessionID` is at `event.properties.info.sessionID` for message events, and `event.properties.sessionID` for session events.
+
+### Activity Tracking
+
+The plugin maintains a `SessionState` per session ID with counters:
+- `completedResponses` — from `message.updated` with `role=assistant` + `time.completed`
+- `busyCount` — from `session.status` with `type=busy`
+- `hasDiffs` — from `session.diff` with non-empty diff array
+- `retryCount`, `lastRetryAt`, `inRetryState` — from `session.status` retry events
+- `idlePassCount` — how many times idle handler fired
+- `summaryRequested` — prevents duplicate summary prompts
+
+### Gate Logic
+
+Before handling idle, two gates must pass:
+
+**Gate A — Rate-limit retry:**
+Skip entirely if `inRetryState` is true or `lastRetryAt` is within 10 seconds. Prevents injecting summary prompts during retry cycles (which would cause more API calls, worsening rate limits).
+
+**Gate B — Meaningful work (workers only):**
+Requires `completedResponses >= 1` (at least one completed assistant response):
+- First idle with no work → grace period (do nothing)
+- Second idle with no work → notify `[WORKER FAILED pane N]` + kill pane
+
+Workers that pass both gates get the standard two-pass summary treatment.
+
+### Scheduled Task Support (pane 0)
+
+For orchestrator sessions running `agentwire ensure` tasks:
+1. Reads task context from `~/.agentwire/tasks/{session}.json`
+2. First idle: increments `idle_count`, sends summary prompt
+3. Second idle: if `exit_on_complete: true`, sends `/exit`, cleans up context, kills tmux session
+
+### Enriched Notifications
+
+Parent notifications now include activity context:
+- Workers: `[WORKER SUMMARY pane 1] (after work: 5 tool calls, 2 file edits)`
+- Failed workers: `[WORKER FAILED pane 1] No meaningful activity detected (3 retries)`
+- Orchestrators: `myproject is idle (after work: 12 tool calls, 3 file edits)`
 
 ## Notes
 

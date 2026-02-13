@@ -124,7 +124,7 @@ agentwire ensure -s brainstorm -p ~/projects/foo --task brainstorm --keep-sessio
 - [x] Task context file includes `exit_on_complete` value
 - [x] Stale completion signals cleared before starting new task
 - [x] ProjectConfig preserves `tasks` section when updating
-- [ ] OpenCode plugin updated with same logic (deferred)
+- [x] OpenCode plugin updated with same logic (event-bus-aware version)
 - [ ] `--keep-session` CLI flag overrides task config (deferred)
 - [ ] CLAUDE.md updated with new task option (deferred)
 - [x] Brainstorm task updated to use default (auto-exit)
