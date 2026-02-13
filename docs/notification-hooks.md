@@ -132,6 +132,19 @@ parent: main  # Notify parent session when idle (orchestrator only)
 - Will write summary on first idle
 - Will send summary to pane 0 on second idle, then auto-kill
 
+## Claude Code Limitations
+
+The Claude Code hook is a stateless bash script (`idle-handler.sh`). Key differences from OpenCode:
+
+- **No memory between invocations** — each `idle_prompt` fires a fresh process with no state from prior calls
+- **No event bus** — only fires on `idle_prompt` (once per prompt cycle, after 60s idle). Cannot observe retries, busy/idle transitions, or message completions
+- **No Gate A (retry detection)** — will inject summary prompts even during rate-limit retry cycles
+- **No Gate B (meaningful work detection)** — workers always get the summary prompt on first idle, regardless of whether they did any actual work
+- **No activity tracking** — cannot count tool calls, file edits, or completed responses
+- **No enriched notifications** — parent notifications are plain text without activity context
+
+**Possible future improvement:** Parse `transcript_path` from the idle_prompt payload for basic activity detection (check if transcript contains tool calls or file modifications).
+
 ## OpenCode Support
 
 OpenCode uses an event-bus-aware plugin at `~/.config/opencode/plugins/agentwire-notify.ts`.
@@ -179,7 +192,37 @@ For orchestrator sessions running `agentwire ensure` tasks:
 2. First idle: increments `idle_count`, sends summary prompt
 3. Second idle: if `exit_on_complete: true`, sends `/exit`, deletes context file, kills tmux session
 
+**Ensure/Hook Coordination:**
+
+The `ensure` command and idle hook coordinate through two files:
+
+```
+ensure                              idle hook (bash)
+──────                              ──────────────
+1. Write context file
+   ~/.agentwire/tasks/{session}.json
+2. Send task prompt
+3. Poll for completion...
+                                    4. First idle → read context file
+                                       increment idle_count
+                                       send summary prompt to agent
+
+                                    [agent writes summary file]
+
+                                    5. Second idle → read context file
+                                       send /exit to agent
+                                       DELETE context file  ← cleanup signal
+                                       kill tmux session
+
+6. Detect: summary file EXISTS
+   AND context file DELETED
+   → task complete, proceed to
+   on_task_end / post phase
+```
+
 **Hook owns context file lifecycle.** The `ensure` command polls for both the summary file AND the context file being deleted. Context file deletion is the "cleanup complete" signal — it means the hook has finished sending `/exit` and killing the session. This prevents a race where `ensure` would proceed (and delete the context file itself) before the hook's second idle pass.
+
+**TASK-ORPHAN safety net (pane 0 only):** If no context file exists but a recent session-scoped summary file is found (within 5 minutes), the hook assumes a scheduled task lost its context. It sends `/exit`, cleans up the orphan summary, and kills the session. This handles edge cases where the context file was deleted prematurely.
 
 ### Enriched Notifications
 

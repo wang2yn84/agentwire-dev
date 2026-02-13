@@ -504,17 +504,23 @@ Use `agentwire roles list` to see available roles. Roles are bundled in `agentwi
 
 ## Agent Parity
 
-**The system works identically for Claude Code and OpenCode.** Both agents can be used for any role (orchestrator, worker) with identical behavior.
+**Both agents share the same core behavior but differ in capabilities.** Claude Code uses a stateless bash hook invoked once per idle cycle. OpenCode uses an event-bus plugin that tracks activity across the full session lifecycle.
 
-### Supported Features
+### Feature Comparison
 
 | Feature | Claude Code | OpenCode |
 |---------|-------------|----------|
-| Idle detection | ✓ | ✓ |
-| Output capture (last 20 lines) | ✓ | ✓ |
-| Auto-kill worker panes | ✓ | ✓ |
-| Queue-based notifications | ✓ | ✓ |
-| Session resume | ✓ (`--resume`) | ✓ (`--session`) |
+| Two-pass idle (summary → notify → kill) | Same | Same |
+| Scheduled task support (`ensure`) | Same | Same |
+| Queue-based notifications | Same | Same |
+| Output capture (last 20 lines) | Same | Same |
+| Gate A (retry/rate-limit protection) | No | Yes |
+| Gate B (meaningful work detection) | No | Yes |
+| Activity tracking (responses, diffs) | No | Yes |
+| Enriched notifications (activity context) | No | Yes |
+| Session resume | `--resume` | `--session` |
+
+**Why the difference:** Claude Code hooks are stateless bash scripts. Each `idle_prompt` fires a fresh process with no memory of prior events. OpenCode plugins live in the event bus and observe every session event (busy/idle/retry transitions, completed responses, file diffs) to make smarter decisions about when to act.
 
 ### Hook/Plugin Installation
 

@@ -405,6 +405,49 @@ echo $AGENTWIRE_SESSION  # Current session name
 echo $TMUX_PANE          # Current pane (e.g., %5)
 ```
 
+### `ensure` Hangs After Summary File Appears
+
+**Cause:** `ensure` waits for both the summary file AND the context file (`~/.agentwire/tasks/{session}.json`) to be deleted. The context file deletion happens on the hook's second idle pass, which requires another 60-second idle cycle after the summary is written.
+
+**Fix:** Wait for the next idle cycle (~60s). Check `/tmp/claude-hook-debug.log` for `TASK: second idle` messages. If the hook isn't firing, the agent may still be processing.
+
+**Force unblock (if stuck):**
+
+```bash
+# Check if context file still exists
+ls ~/.agentwire/tasks/
+
+# Manually delete context file (ensure will proceed)
+rm ~/.agentwire/tasks/session-name.json
+```
+
+### OpenCode Worker Not Getting Summary Prompt
+
+**Cause:** Gate B requires at least 1 completed assistant response before sending the summary prompt. Workers that hit errors or rate limits before producing any responses won't get the prompt.
+
+**Diagnosis:**
+
+```bash
+# Check for Gate B messages
+grep "Gate B" /tmp/opencode-plugin-debug.log
+```
+
+**Behavior:**
+- First idle with no work → grace period (do nothing, wait for more activity)
+- Second idle with no work → notify `[WORKER FAILED pane N]` + kill pane
+
+### OpenCode Idle Not Firing During Rate Limits
+
+**Cause:** Gate A skips idle handling when `inRetryState` is true or `lastRetryAt` is within 10 seconds. This is intentional — injecting summary prompts during rate-limit retry cycles would cause more API calls, worsening the rate limit.
+
+**Diagnosis:**
+
+```bash
+grep "Gate A" /tmp/opencode-plugin-debug.log
+```
+
+**Not a bug.** Wait for the rate limit to clear. The plugin will resume normal idle handling once the retry state ends.
+
 ### `agentwire alert` vs `agentwire say`
 
 | Command | Audio | Use Case |

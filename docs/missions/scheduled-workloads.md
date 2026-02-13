@@ -38,14 +38,16 @@ Behavior:
 4. Session idle? If not, wait until idle (respects `--timeout`)
 5. Run pre-commands, validate outputs, template prompt
 6. Send templated prompt to session
-7. Wait for first idle (task work complete)
-8. Send system summary prompt → agent writes `.agentwire/task-summary-{datetime}.md`
-9. Wait for summary file to be created
-10. Parse summary file for status
-11. If `on_task_end` defined: send user's final prompt, wait for idle
-12. Run post-commands with `{{ status }}` populated
-13. If status is `failed` and retries remaining: wait `retry_delay`, retry from step 5
-14. Release lock
+7. Write task context file (`~/.agentwire/tasks/{session}.json`) for hook coordination
+8. **Hook's first idle:** Hook reads context, sends summary prompt to agent
+9. Agent writes `.agentwire/task-summary-{session}-{task}-{datetime}.md`
+10. **Hook's second idle:** Hook sends `/exit`, deletes context file, kills session
+11. `ensure` detects both: summary file exists AND context file deleted → proceeds
+12. Parse summary file for status
+13. If `on_task_end` defined: send user's final prompt, wait for idle
+14. Run post-commands with `{{ status }}` populated
+15. If status is `failed` and retries remaining: wait `retry_delay`, retry from step 5
+16. Release lock
 
 Flags:
 - `-s, --session NAME` - Target session (required)
@@ -108,8 +110,9 @@ This gives users full control of the final interaction, with access to the struc
 
 | Signal | How Detected | Indicates |
 |--------|--------------|-----------|
-| Summary file exists | `.agentwire/task-summary-{datetime}.md` created | Agent responded to system prompt |
-| Second idle | Session idle after on_task_end | All prompts processed |
+| Summary file exists | `.agentwire/task-summary-{session}-{task}-{datetime}.md` created | Agent responded to summary prompt |
+| Context file deleted | `~/.agentwire/tasks/{session}.json` removed | Hook finished cleanup (sent /exit, killing session) |
+| Both signals together | Summary exists AND context deleted | Safe for `ensure` to proceed |
 | Hard timeout | `--timeout` exceeded | Failure |
 
 **Summary file naming:** Each task run creates a new timestamped file (e.g., `.agentwire/task-summary-2024-01-15T07-00-00.md`). This preserves history across runs. User manages cleanup.
