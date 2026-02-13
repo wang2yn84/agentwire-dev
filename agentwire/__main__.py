@@ -7029,18 +7029,28 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
         # Ensure .agentwire directory exists
         (project_path / ".agentwire").mkdir(exist_ok=True)
 
+        # Create iterations directory for loop tasks
+        if task.mode == "loop":
+            (project_path / ".agentwire" / "iterations").mkdir(exist_ok=True)
+
         # Clear any stale completion signal from a previous run
         # This prevents immediate return if a previous run's signal wasn't cleaned up
         clear_task_context(session)
 
         # Write task context for hook coordination
         # Hook will: first idle → send summary prompt (ensure polls for summary file directly)
+        # Loop mode: hook iterates (review → re-prompt) until complete or max_iterations
         write_task_context(
             session=session,
             task_name=task.name,
             summary_file=summary_filename,
             attempt=attempt,
             exit_on_complete=task.exit_on_complete,
+            mode=task.mode,
+            max_iterations=task.max_iterations,
+            iteration=1,
+            loop_review=task.loop_review,
+            original_prompt=prompt,
         )
 
         # Find previous summaries for this task to give the agent context
@@ -7065,9 +7075,12 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
         if not json_mode:
             print("Waiting for task completion...")
 
+        # Scale timeout for loop tasks (each iteration gets the full timeout)
+        effective_timeout = timeout * task.max_iterations if task.mode == "loop" else timeout
+
         try:
             signal = wait_for_completion_signal(
-                session, timeout=timeout, summary_path=summary_path
+                session, timeout=effective_timeout, summary_path=summary_path
             )
             last_status = signal.get("status", "incomplete")
             last_summary = signal.get("summary", "")
@@ -7252,12 +7265,13 @@ def cmd_task_list(args) -> int:
         return 0
 
     print(f"Tasks in {project_path.name}:\n")
-    print(f"{'Name':<25} {'Pre':<5} {'Post':<5} {'Retries':<8}")
-    print("-" * 50)
+    print(f"{'Name':<25} {'Mode':<10} {'Pre':<5} {'Post':<5} {'Retries':<8}")
+    print("-" * 60)
     for t in tasks:
         pre = "Yes" if t["has_pre"] else "-"
         post = "Yes" if t["has_post"] else "-"
-        print(f"{t['name']:<25} {pre:<5} {post:<5} {t['retries']:<8}")
+        mode = t.get("mode", "standard")
+        print(f"{t['name']:<25} {mode:<10} {pre:<5} {post:<5} {t['retries']:<8}")
 
     return 0
 
@@ -7297,6 +7311,9 @@ def cmd_task_show(args) -> int:
             "retries": task.retries,
             "retry_delay": task.retry_delay,
             "idle_timeout": task.idle_timeout,
+            "mode": task.mode,
+            "max_iterations": task.max_iterations,
+            "loop_review": task.loop_review,
             "pre": [{"name": p.name, "cmd": p.cmd, "required": p.required, "validate": p.validate, "timeout": p.timeout} for p in task.pre],
             "on_task_end": task.on_task_end,
             "post": task.post,
@@ -7307,6 +7324,10 @@ def cmd_task_show(args) -> int:
 
     print(f"Task: {task.name}\n")
     print(f"Shell: {task.shell or '/bin/sh'}")
+    print(f"Mode: {task.mode}")
+    if task.mode == "loop":
+        print(f"Max iterations: {task.max_iterations}")
+        print(f"Loop review: {task.loop_review}")
     print(f"Retries: {task.retries} (delay: {task.retry_delay}s)")
     print(f"Idle timeout: {task.idle_timeout}s")
     print()

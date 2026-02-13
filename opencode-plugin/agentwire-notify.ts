@@ -19,7 +19,7 @@
  */
 
 import { execSync, spawn } from "child_process"
-import { readFileSync, writeFileSync, appendFileSync, existsSync, unlinkSync } from "fs"
+import { readFileSync, writeFileSync, appendFileSync, existsSync, unlinkSync, mkdirSync } from "fs"
 import { basename, join } from "path"
 import { homedir } from "os"
 
@@ -186,6 +186,11 @@ interface TaskContext {
   attempt: number
   idle_count: number
   exit_on_complete: boolean
+  mode: string           // "standard" or "loop"
+  max_iterations: number // Safety cap (default: 3)
+  iteration: number      // Current iteration (1-based)
+  loop_review: boolean   // Write review file between iterations
+  original_prompt: string // Fully expanded task prompt for re-sending
 }
 
 function readTaskContext(tmuxSession: string): TaskContext | null {
@@ -218,10 +223,20 @@ function handleScheduledTask(tmuxSession: string, cwd: string): void {
   const ctx = readTaskContext(tmuxSession)
   if (!ctx) return
 
+  const mode = ctx.mode || "standard"
+
+  if (mode === "loop") {
+    handleLoopTask(tmuxSession, cwd, ctx)
+  } else {
+    handleStandardTask(tmuxSession, cwd, ctx)
+  }
+}
+
+function handleStandardTask(tmuxSession: string, cwd: string, ctx: TaskContext): void {
   const newIdleCount = ctx.idle_count + 1
   updateTaskContext(tmuxSession, { idle_count: newIdleCount })
 
-  log(`TASK: session=${tmuxSession} task=${ctx.task} idle_count=${newIdleCount} exit_on_complete=${ctx.exit_on_complete}`)
+  log(`TASK[standard]: session=${tmuxSession} task=${ctx.task} idle_count=${newIdleCount} exit_on_complete=${ctx.exit_on_complete}`)
 
   if (newIdleCount === 1) {
     // First idle: send summary prompt
@@ -235,7 +250,7 @@ complete | incomplete | error
 ## Notes
 [Any important context]`
 
-    log("TASK: sending summary prompt")
+    log("TASK[standard]: sending summary prompt")
     try {
       const child = spawn(
         getAgentwirePath(),
@@ -248,35 +263,159 @@ complete | incomplete | error
     }
   } else {
     // Second+ idle: exit if configured
-    if (ctx.exit_on_complete) {
-      log("TASK: exit_on_complete=true, sending /exit")
-      setTimeout(() => {
+    exitTask(tmuxSession, ctx)
+  }
+}
+
+function handleLoopTask(tmuxSession: string, cwd: string, ctx: TaskContext): void {
+  const iteration = ctx.iteration || 1
+  const maxIterations = ctx.max_iterations || 3
+  const loopReview = ctx.loop_review !== false
+  const newIdleCount = ctx.idle_count + 1
+
+  updateTaskContext(tmuxSession, { idle_count: newIdleCount })
+
+  log(`TASK[loop]: session=${tmuxSession} task=${ctx.task} iteration=${iteration}/${maxIterations} idle_count=${newIdleCount} loop_review=${loopReview}`)
+
+  if (loopReview) {
+    // Two-pass mode: idle 1 → review prompt, idle 2 → check review + decide
+    if (newIdleCount === 1) {
+      // Send review prompt
+      const iterFile = join(cwd, `.agentwire/iterations/${tmuxSession}-iter-${iteration}.md`)
+      const iterDir = join(cwd, ".agentwire/iterations")
+      try { mkdirSync(iterDir, { recursive: true }) } catch { /* ignore */ }
+
+      const instruction = `Review your progress so far. Write a brief status report to ${iterFile}:
+
+# Iteration ${iteration} Review
+
+## Status
+complete | incomplete
+
+## What Was Done
+[Brief description of work in this iteration]
+
+## Remaining Work
+[What still needs to be done, or "none" if complete]
+
+Use "complete" if the task is fully done. Use "incomplete" if more work is needed.
+Write the file now.`
+
+      log(`TASK[loop]: sending review prompt for iteration ${iteration}`)
+      try {
+        const child = spawn(
+          getAgentwirePath(),
+          ["send", "-s", tmuxSession, instruction],
+          { detached: true, stdio: "ignore" }
+        )
+        child.unref()
+      } catch {
+        // Ignore errors
+      }
+    } else {
+      // Second idle: read iteration file and decide
+      const iterFile = join(cwd, `.agentwire/iterations/${tmuxSession}-iter-${iteration}.md`)
+      let status = "incomplete"
+
+      if (existsSync(iterFile)) {
         try {
-          const child = spawn(
-            getAgentwirePath(),
-            ["send", "-s", tmuxSession, "/exit"],
-            { detached: true, stdio: "ignore" }
-          )
-          child.unref()
+          const content = readFileSync(iterFile, "utf-8")
+          const match = content.match(/##\s*Status[\s:]*\n?\s*(\w+)/i)
+          if (match) status = match[1].toLowerCase()
+        } catch {
+          // Ignore read errors
+        }
+      }
+
+      log(`TASK[loop]: iteration ${iteration} status=${status}`)
+
+      if (status === "complete" || iteration >= maxIterations) {
+        log(`TASK[loop]: exiting loop (status=${status}, iteration=${iteration}/${maxIterations})`)
+        transitionToStandardExit(tmuxSession, cwd, ctx)
+      } else {
+        continueLoop(tmuxSession, cwd, ctx, iteration)
+      }
+    }
+  } else {
+    // Single-pass mode: idle → check iteration cap → re-prompt or exit
+    if (iteration >= maxIterations) {
+      log(`TASK[loop]: max iterations reached (${iteration}/${maxIterations}), exiting`)
+      transitionToStandardExit(tmuxSession, cwd, ctx)
+    } else {
+      continueLoop(tmuxSession, cwd, ctx, iteration)
+    }
+  }
+}
+
+function transitionToStandardExit(tmuxSession: string, cwd: string, ctx: TaskContext): void {
+  // Switch to standard mode so next idle triggers normal summary → exit flow
+  updateTaskContext(tmuxSession, { mode: "standard", idle_count: 0 })
+  log(`TASK[loop→standard]: transitioned to standard exit`)
+
+  // The next idle event will enter handleStandardTask with idle_count=0,
+  // which will increment to 1 and send the summary prompt
+}
+
+function continueLoop(tmuxSession: string, cwd: string, ctx: TaskContext, iteration: number): void {
+  const nextIteration = iteration + 1
+  const maxIterations = ctx.max_iterations || 3
+  const originalPrompt = ctx.original_prompt || ""
+  const iterationsDir = join(cwd, ".agentwire/iterations")
+
+  // Reset idle_count and advance iteration
+  updateTaskContext(tmuxSession, { idle_count: 0, iteration: nextIteration })
+
+  const instruction = `Continue working on the task. This is iteration ${nextIteration} of ${maxIterations}.
+
+Previous iteration reviews are in ${iterationsDir}/ — read them for context on what's been done.
+
+Original task:
+${originalPrompt}
+
+Continue where you left off. Focus on remaining work identified in previous reviews.`
+
+  log(`TASK[loop]: continuing to iteration ${nextIteration}/${maxIterations}`)
+  try {
+    const child = spawn(
+      getAgentwirePath(),
+      ["send", "-s", tmuxSession, instruction],
+      { detached: true, stdio: "ignore" }
+    )
+    child.unref()
+  } catch {
+    // Ignore errors
+  }
+}
+
+function exitTask(tmuxSession: string, ctx: TaskContext): void {
+  if (ctx.exit_on_complete) {
+    log("TASK: exit_on_complete=true, sending /exit")
+    setTimeout(() => {
+      try {
+        const child = spawn(
+          getAgentwirePath(),
+          ["send", "-s", tmuxSession, "/exit"],
+          { detached: true, stdio: "ignore" }
+        )
+        child.unref()
+      } catch {
+        // Ignore errors
+      }
+
+      // Clean up task context
+      clearTaskContext(tmuxSession)
+      log("TASK: cleaned up task context")
+
+      // Kill tmux session after grace period
+      setTimeout(() => {
+        log("TASK: killing tmux session")
+        try {
+          execSync(`tmux kill-session -t "${tmuxSession}"`, { timeout: 5000 })
         } catch {
           // Ignore errors
         }
-
-        // Clean up task context
-        clearTaskContext(tmuxSession)
-        log("TASK: cleaned up task context")
-
-        // Kill tmux session after grace period
-        setTimeout(() => {
-          log("TASK: killing tmux session")
-          try {
-            execSync(`tmux kill-session -t "${tmuxSession}"`, { timeout: 5000 })
-          } catch {
-            // Ignore errors
-          }
-        }, 3000)
-      }, 1000)
-    }
+      }, 3000)
+    }, 1000)
   }
 }
 

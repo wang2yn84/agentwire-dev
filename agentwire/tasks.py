@@ -81,6 +81,11 @@ class TaskConfig:
     idle_timeout: int = 30  # Seconds of idle before completion
     exit_on_complete: bool = True  # Exit session after task completion
 
+    # Loop configuration
+    mode: str = "standard"  # "standard" or "loop"
+    max_iterations: int = 3  # Safety limit for loop mode (1-20)
+    loop_review: bool = True  # Write review file between iterations
+
     # Pre-phase: data gathering
     pre: list[PreCommand] = field(default_factory=list)
 
@@ -177,6 +182,9 @@ def parse_task_config(name: str, config: dict, default_shell: str | None = None)
         retry_delay=config.get("retry_delay", 30),
         idle_timeout=config.get("idle_timeout", 30),
         exit_on_complete=config.get("exit_on_complete", True),
+        mode=config.get("mode", "standard"),
+        max_iterations=config.get("max_iterations", 3),
+        loop_review=config.get("loop_review", True),
         pre=pre_commands,
         on_task_end=config.get("on_task_end"),
         post=post_commands,
@@ -256,6 +264,7 @@ def list_tasks(project_path: Path) -> list[dict[str, Any]]:
             "has_post": bool(task_config.get("post")),
             "has_on_task_end": bool(task_config.get("on_task_end")),
             "retries": task_config.get("retries", 0),
+            "mode": task_config.get("mode", "standard"),
         })
 
     return result
@@ -289,6 +298,12 @@ def validate_task(task: TaskConfig) -> list[str]:
 
     if task.idle_timeout <= 0:
         issues.append("Invalid idle_timeout (must be > 0)")
+
+    if task.mode not in ("standard", "loop"):
+        issues.append(f"Invalid mode '{task.mode}' (must be 'standard' or 'loop')")
+
+    if task.max_iterations < 1 or task.max_iterations > 20:
+        issues.append(f"Invalid max_iterations {task.max_iterations} (must be 1-20)")
 
     return issues
 

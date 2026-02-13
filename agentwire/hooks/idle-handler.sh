@@ -153,7 +153,7 @@ ${summary_content}"
 
     if [[ -f "$task_context_file" ]]; then
       log "Scheduled task detected, starting background job"
-      # Scheduled task: handle completion
+      # Scheduled task: handle completion (standard or loop mode)
       (
         dlog="/tmp/claude-hook-debug.log"
         echo "[$(date -Iseconds)] TASK: started session=$tmux_session" >> "$dlog"
@@ -166,19 +166,111 @@ ${summary_content}"
         summary_file=$(jq -r '.summary_file // ""' "$task_context_file" 2>/dev/null)
         idle_count=$(jq -r '.idle_count // 0' "$task_context_file" 2>/dev/null)
         exit_on_complete=$(jq -r '.exit_on_complete // true' "$task_context_file" 2>/dev/null)
-
-        echo "[$(date -Iseconds)] TASK: task=$task_name idle_count=$idle_count exit_on_complete=$exit_on_complete" >> "$dlog"
+        mode=$(jq -r '.mode // "standard"' "$task_context_file" 2>/dev/null)
+        max_iterations=$(jq -r '.max_iterations // 3' "$task_context_file" 2>/dev/null)
+        iteration=$(jq -r '.iteration // 1' "$task_context_file" 2>/dev/null)
+        loop_review=$(jq -r '.loop_review // true' "$task_context_file" 2>/dev/null)
+        original_prompt=$(jq -r '.original_prompt // ""' "$task_context_file" 2>/dev/null)
 
         # Increment idle count
         new_idle_count=$((idle_count + 1))
         jq ".idle_count = $new_idle_count" "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
 
-        if [[ "$new_idle_count" == "1" ]]; then
-          # First idle: send summary prompt
-          echo "[$(date -Iseconds)] TASK: first idle, sending summary prompt" >> "$dlog"
-          summary_path="${cwd}/${summary_file}"
+        echo "[$(date -Iseconds)] TASK: task=$task_name mode=$mode iteration=$iteration/$max_iterations idle_count=$new_idle_count exit_on_complete=$exit_on_complete" >> "$dlog"
 
-          instruction="Task complete. Write a brief summary to ${summary_path} with:
+        if [[ "$mode" == "loop" ]]; then
+          # ─── Loop mode ─────────────────────────────────────────────
+          iterations_dir="${cwd}/.agentwire/iterations"
+          mkdir -p "$iterations_dir"
+          iter_file="${iterations_dir}/${tmux_session}-iter-${iteration}.md"
+
+          if [[ "$loop_review" == "true" ]]; then
+            # Two-pass: idle 1 → review prompt, idle 2 → check + decide
+            if [[ "$new_idle_count" == "1" ]]; then
+              echo "[$(date -Iseconds)] TASK[loop]: sending review prompt for iteration $iteration" >> "$dlog"
+
+              instruction="Review your progress so far. Write a brief status report to ${iter_file}:
+
+# Iteration ${iteration} Review
+
+## Status
+complete | incomplete
+
+## What Was Done
+[Brief description of work in this iteration]
+
+## Remaining Work
+[What still needs to be done, or \"none\" if complete]
+
+Use \"complete\" if the task is fully done. Use \"incomplete\" if more work is needed.
+Write the file now."
+
+              $AGENTWIRE send -s "$tmux_session" "$instruction" >/dev/null 2>&1 &
+            else
+              # Read iteration file for status
+              iter_status="incomplete"
+              if [[ -f "$iter_file" ]]; then
+                iter_status=$(grep -iA1 '## Status' "$iter_file" | tail -1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+              fi
+
+              echo "[$(date -Iseconds)] TASK[loop]: iteration $iteration status=$iter_status" >> "$dlog"
+
+              if [[ "$iter_status" == "complete" || "$iteration" -ge "$max_iterations" ]]; then
+                echo "[$(date -Iseconds)] TASK[loop]: exiting loop (status=$iter_status, iteration=$iteration/$max_iterations)" >> "$dlog"
+                # Transition to standard exit
+                jq '.mode = "standard" | .idle_count = 0' "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
+                echo "[$(date -Iseconds)] TASK[loop→standard]: transitioned to standard exit" >> "$dlog"
+              else
+                # Continue loop
+                next_iteration=$((iteration + 1))
+                jq ".idle_count = 0 | .iteration = $next_iteration" "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
+
+                echo "[$(date -Iseconds)] TASK[loop]: continuing to iteration $next_iteration/$max_iterations" >> "$dlog"
+
+                instruction="Continue working on the task. This is iteration ${next_iteration} of ${max_iterations}.
+
+Previous iteration reviews are in ${iterations_dir}/ — read them for context on what's been done.
+
+Original task:
+${original_prompt}
+
+Continue where you left off. Focus on remaining work identified in previous reviews."
+
+                $AGENTWIRE send -s "$tmux_session" "$instruction" >/dev/null 2>&1 &
+              fi
+            fi
+          else
+            # Single-pass: idle → check cap → re-prompt or exit
+            if [[ "$iteration" -ge "$max_iterations" ]]; then
+              echo "[$(date -Iseconds)] TASK[loop]: max iterations reached ($iteration/$max_iterations), exiting" >> "$dlog"
+              jq '.mode = "standard" | .idle_count = 0' "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
+              echo "[$(date -Iseconds)] TASK[loop→standard]: transitioned to standard exit" >> "$dlog"
+            else
+              next_iteration=$((iteration + 1))
+              jq ".idle_count = 0 | .iteration = $next_iteration" "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
+
+              echo "[$(date -Iseconds)] TASK[loop]: continuing to iteration $next_iteration/$max_iterations" >> "$dlog"
+
+              instruction="Continue working on the task. This is iteration ${next_iteration} of ${max_iterations}.
+
+Previous iteration reviews are in ${iterations_dir}/ — read them for context on what's been done.
+
+Original task:
+${original_prompt}
+
+Continue where you left off. Focus on remaining work identified in previous reviews."
+
+              $AGENTWIRE send -s "$tmux_session" "$instruction" >/dev/null 2>&1 &
+            fi
+          fi
+        else
+          # ─── Standard mode ─────────────────────────────────────────
+          if [[ "$new_idle_count" == "1" ]]; then
+            # First idle: send summary prompt
+            echo "[$(date -Iseconds)] TASK[standard]: first idle, sending summary prompt" >> "$dlog"
+            summary_path="${cwd}/${summary_file}"
+
+            instruction="Task complete. Write a brief summary to ${summary_path} with:
 # Task Summary
 ## Status
 complete | incomplete | error
@@ -187,25 +279,26 @@ complete | incomplete | error
 ## Notes
 [Any important context]"
 
-          $AGENTWIRE send -s "$tmux_session" "$instruction" >/dev/null 2>&1 &
-          echo "[$(date -Iseconds)] TASK: summary prompt sent" >> "$dlog"
-        else
-          # Second+ idle: optionally exit session (ensure polls summary file directly)
-          echo "[$(date -Iseconds)] TASK: second idle" >> "$dlog"
+            $AGENTWIRE send -s "$tmux_session" "$instruction" >/dev/null 2>&1 &
+            echo "[$(date -Iseconds)] TASK[standard]: summary prompt sent" >> "$dlog"
+          else
+            # Second+ idle: optionally exit session (ensure polls summary file directly)
+            echo "[$(date -Iseconds)] TASK[standard]: second idle" >> "$dlog"
 
-          if [[ "$exit_on_complete" == "true" ]]; then
-            echo "[$(date -Iseconds)] TASK: exit_on_complete=true, sending /exit" >> "$dlog"
-            sleep 1
-            $AGENTWIRE send -s "$tmux_session" "/exit" >/dev/null 2>&1
+            if [[ "$exit_on_complete" == "true" ]]; then
+              echo "[$(date -Iseconds)] TASK: exit_on_complete=true, sending /exit" >> "$dlog"
+              sleep 1
+              $AGENTWIRE send -s "$tmux_session" "/exit" >/dev/null 2>&1
 
-            # Clean up task context file so it doesn't haunt future sessions
-            rm "$task_context_file" 2>/dev/null
-            echo "[$(date -Iseconds)] TASK: cleaned up task context" >> "$dlog"
+              # Clean up task context file so it doesn't haunt future sessions
+              rm "$task_context_file" 2>/dev/null
+              echo "[$(date -Iseconds)] TASK: cleaned up task context" >> "$dlog"
 
-            # Wait for Claude to exit, then kill the tmux session
-            sleep 3
-            echo "[$(date -Iseconds)] TASK: killing tmux session" >> "$dlog"
-            tmux kill-session -t "$tmux_session" 2>/dev/null &
+              # Wait for Claude to exit, then kill the tmux session
+              sleep 3
+              echo "[$(date -Iseconds)] TASK: killing tmux session" >> "$dlog"
+              tmux kill-session -t "$tmux_session" 2>/dev/null &
+            fi
           fi
         fi
       ) &

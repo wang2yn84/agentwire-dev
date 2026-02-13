@@ -94,6 +94,11 @@ def write_task_context(
     summary_file: str,
     attempt: int = 1,
     exit_on_complete: bool = True,
+    mode: str = "standard",
+    max_iterations: int = 3,
+    iteration: int = 1,
+    loop_review: bool = True,
+    original_prompt: str = "",
 ) -> Path:
     """Write task context file for hook coordination.
 
@@ -101,6 +106,7 @@ def write_task_context(
     - A scheduled task is running
     - What summary file to request
     - Whether to exit the session after completion
+    - Loop mode configuration (mode, iteration count, review flag)
 
     Args:
         session: tmux session name
@@ -108,6 +114,11 @@ def write_task_context(
         summary_file: Relative path for summary file
         attempt: Current attempt number
         exit_on_complete: Whether to exit session after task completion
+        mode: Task mode ("standard" or "loop")
+        max_iterations: Maximum loop iterations (loop mode only)
+        iteration: Current iteration number (loop mode only)
+        loop_review: Whether to write review files between iterations
+        original_prompt: Fully expanded task prompt (for re-sending in loop mode)
 
     Returns:
         Path to the context file
@@ -121,6 +132,11 @@ def write_task_context(
         "attempt": attempt,
         "idle_count": 0,  # Hook increments this
         "exit_on_complete": exit_on_complete,
+        "mode": mode,
+        "max_iterations": max_iterations,
+        "iteration": iteration,
+        "loop_review": loop_review,
+        "original_prompt": original_prompt,
     }
 
     context_file = TASKS_DIR / f"{session}.json"
@@ -527,3 +543,53 @@ def status_to_exit_code(status: str) -> int:
         return 1
     else:
         return 2
+
+
+# =============================================================================
+# Loop mode helpers
+# =============================================================================
+
+# Directory for iteration review files (relative to project root)
+ITERATIONS_DIR = ".agentwire/iterations"
+
+
+def generate_iteration_filename(session: str, iteration: int) -> str:
+    """Generate a filename for an iteration review file.
+
+    Args:
+        session: tmux session name
+        iteration: Current iteration number (1-based)
+
+    Returns:
+        Relative path like .agentwire/iterations/mysession-iter-1.md
+    """
+    return f"{ITERATIONS_DIR}/{session}-iter-{iteration}.md"
+
+
+# Prompt sent between loop iterations to get a review
+ITERATION_REVIEW_PROMPT = """Review your progress so far. Write a brief status report to {iter_file}:
+
+# Iteration {iteration} Review
+
+## Status
+complete | incomplete
+
+## What Was Done
+[Brief description of work in this iteration]
+
+## Remaining Work
+[What still needs to be done, or "none" if complete]
+
+Use "complete" if the task is fully done. Use "incomplete" if more work is needed.
+Write the file now."""
+
+
+# Prompt sent to continue the loop with context
+ITERATION_CONTINUE_PROMPT = """Continue working on the task. This is iteration {iteration} of {max_iterations}.
+
+Previous iteration reviews are in {iterations_dir}/ — read them for context on what's been done.
+
+Original task:
+{original_prompt}
+
+Continue where you left off. Focus on remaining work identified in previous reviews."""
