@@ -324,6 +324,10 @@ class DesktopManager {
                 this.emit('desktop_apply_layout', { windows: msg.windows });
                 break;
 
+            case 'scheduler_update':
+                this.emit('scheduler_update', msg);
+                break;
+
             default:
                 // Unknown message types are silently ignored
         }

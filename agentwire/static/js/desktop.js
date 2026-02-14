@@ -16,6 +16,7 @@ import { openMachinesWindow } from './windows/machines-window.js';
 import { openConfigWindow } from './windows/config-window.js';
 import { openProjectsWindow } from './windows/projects-window.js';
 import { openArtifactsWindow } from './windows/artifacts-window.js';
+import { openSchedulerWindow } from './windows/scheduler-window.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
@@ -118,7 +119,7 @@ async function init() {
         if (msg.window_type === 'session') {
             openSessionTerminal(msg.session, msg.mode || 'monitor');
         } else if (msg.window_type === 'panel') {
-            const panelMap = { sessions: openSessionsWindow, machines: openMachinesWindow, projects: openProjectsWindow, config: openConfigWindow, artifacts: openArtifactsWindow };
+            const panelMap = { sessions: openSessionsWindow, machines: openMachinesWindow, projects: openProjectsWindow, config: openConfigWindow, artifacts: openArtifactsWindow, scheduler: openSchedulerWindow };
             const openFn = panelMap[msg.panel];
             if (openFn) openListWindowWithTaskbar(msg.panel, openFn);
         } else if (msg.window_type === 'artifact') {
@@ -257,6 +258,9 @@ function setupMenuListeners() {
     });
     document.getElementById('artifactsMenu')?.addEventListener('click', () => {
         openListWindowWithTaskbar('artifacts', openArtifactsWindow);
+    });
+    document.getElementById('schedulerMenu')?.addEventListener('click', () => {
+        openListWindowWithTaskbar('scheduler', openSchedulerWindow);
     });
 
     // Right side settings dropdown items

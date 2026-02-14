@@ -219,6 +219,9 @@ class AgentWireServer:
         self.app.router.add_get("/api/scheduler/live", self.api_scheduler_live)
         self.app.router.add_get("/api/scheduler/events", self.api_scheduler_events)
         self.app.router.add_get("/api/scheduler/board", self.api_scheduler_board)
+        self.app.router.add_post("/api/scheduler/tasks/{name}/enable", self.api_scheduler_task_enable)
+        self.app.router.add_post("/api/scheduler/tasks/{name}/disable", self.api_scheduler_task_disable)
+        self.app.router.add_post("/api/scheduler/tasks/{name}/run", self.api_scheduler_task_run)
         # Artifact windows: upload and serve agent-generated HTML
         self.app.router.add_post("/api/artifacts/upload", self.api_artifacts_upload)
         self.app.router.add_get("/api/artifacts", self.api_artifacts_list)
@@ -3882,6 +3885,38 @@ projects:
             return web.json_response({"tasks": rows})
         except (FileNotFoundError, ValueError) as e:
             return web.json_response({"error": str(e)}, status=404)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_task_enable(self, request: web.Request) -> web.Response:
+        """POST /api/scheduler/tasks/{name}/enable - Enable a task."""
+        name = request.match_info["name"]
+        try:
+            success, result = await self.run_agentwire_cmd(["scheduler", "enable", name])
+            if success:
+                return web.json_response({"success": True, "task": name})
+            return web.json_response({"error": result.get("error", "Enable failed")}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_task_disable(self, request: web.Request) -> web.Response:
+        """POST /api/scheduler/tasks/{name}/disable - Disable a task."""
+        name = request.match_info["name"]
+        try:
+            success, result = await self.run_agentwire_cmd(["scheduler", "disable", name])
+            if success:
+                return web.json_response({"success": True, "task": name})
+            return web.json_response({"error": result.get("error", "Disable failed")}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_task_run(self, request: web.Request) -> web.Response:
+        """POST /api/scheduler/tasks/{name}/run - Force-run a task (fire-and-forget)."""
+        name = request.match_info["name"]
+        try:
+            # Fire-and-forget: start the task in background, completion comes via WebSocket
+            asyncio.create_task(self.run_agentwire_cmd(["scheduler", "run", name]))
+            return web.json_response({"success": True, "task": name, "status": "started"})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
