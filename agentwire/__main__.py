@@ -7824,6 +7824,249 @@ def cmd_scheduler_history(args) -> int:
     return 0
 
 
+def cmd_scheduler_events(args) -> int:
+    """Show recent scheduler events from the JSONL log."""
+    from .scheduler import read_events
+
+    json_mode = getattr(args, 'json', False)
+    tail = getattr(args, 'tail', 20)
+    task_filter = getattr(args, 'task', None)
+
+    events = read_events(tail=tail, task_filter=task_filter)
+
+    if json_mode:
+        _output_json({"success": True, "events": events})
+        return 0
+
+    if not events:
+        print("No scheduler events.")
+        return 0
+
+    for evt in events:
+        ts = evt.get("ts", "")
+        # Format timestamp for display
+        try:
+            dt = datetime.datetime.fromisoformat(ts)
+            ts_str = dt.strftime("%Y-%m-%d %H:%M")
+        except (ValueError, TypeError):
+            ts_str = ts[:16] if ts else "?"
+
+        event_type = evt.get("event", "?")
+        task_name = evt.get("task", "")
+        session = evt.get("session", "")
+
+        if event_type == "task_completed":
+            status = evt.get("status", "?")
+            duration = evt.get("duration", 0)
+            summary = evt.get("summary", "")
+            summary_str = f'  "{summary}"' if summary else ""
+            print(f"{ts_str}  {event_type:<22} {task_name:<24} {status:<12} {duration}s{summary_str}")
+        elif event_type == "task_started":
+            print(f"{ts_str}  {event_type:<22} {task_name:<24} {session}")
+        elif event_type == "task_skipped":
+            reason = evt.get("reason", "?")
+            print(f"{ts_str}  {event_type:<22} {task_name:<24} reason: {reason}")
+        elif event_type == "scheduler_sleeping":
+            next_task = evt.get("next_task", "?")
+            sleep_s = evt.get("sleep_seconds", 0)
+            print(f"{ts_str}  {event_type:<22} next: {next_task} in {int(sleep_s)}s")
+        elif event_type == "scheduler_started":
+            count = evt.get("task_count", 0)
+            enabled = evt.get("enabled_count", 0)
+            print(f"{ts_str}  {event_type:<22} {enabled}/{count} tasks enabled")
+        else:
+            print(f"{ts_str}  {event_type:<22} {task_name}")
+
+    return 0
+
+
+def cmd_scheduler_live(args) -> int:
+    """Show live scheduler state."""
+    from .scheduler import format_interval, read_live_state
+
+    json_mode = getattr(args, 'json', False)
+    watch_mode = getattr(args, 'watch', False)
+
+    def _display_once():
+        state = read_live_state()
+        if not state:
+            if json_mode:
+                _output_json({"success": False, "error": "No live state file. Is the scheduler running?"})
+            else:
+                print("No live state available. Is the scheduler running?")
+            return False
+
+        if json_mode:
+            _output_json({"success": True, **state})
+            return True
+
+        status = state.get("status", "unknown")
+        uptime = state.get("uptime_seconds", 0)
+        current = state.get("current_task")
+        current_started = state.get("current_task_started")
+        completed = state.get("tasks_completed", 0)
+        failed = state.get("tasks_failed", 0)
+        next_task = state.get("next_task")
+        next_in = state.get("next_in_seconds", 0)
+
+        print(f"Scheduler: {status} (uptime {format_interval(int(uptime))})")
+
+        if current:
+            # Calculate running time
+            running_str = ""
+            if current_started:
+                try:
+                    started_dt = datetime.datetime.fromisoformat(current_started)
+                    running = int((datetime.datetime.now(datetime.timezone.utc) - started_dt).total_seconds())
+                    running_str = f" (running {format_interval(running)})"
+                except (ValueError, TypeError):
+                    pass
+            print(f"Current:   {current}{running_str}")
+        else:
+            print("Current:   idle")
+
+        print(f"Completed: {completed} tasks | Failed: {failed}")
+
+        if next_task:
+            print(f"Next:      {next_task} (in {format_interval(int(next_in))})")
+        elif not current:
+            print("Next:      nothing due")
+
+        return True
+
+    if watch_mode:
+        import os
+        try:
+            while True:
+                os.system("clear")
+                _display_once()
+                time.sleep(2)
+        except KeyboardInterrupt:
+            return 0
+    else:
+        _display_once()
+        return 0
+
+
+def cmd_scheduler_dashboard(args) -> int:
+    """Generate and open an HTML dashboard as a portal artifact."""
+    from .scheduler import get_board_display, load_board, read_events
+
+    no_open = getattr(args, 'no_open', False)
+
+    try:
+        board = load_board()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    rows = get_board_display(board)
+    events = read_events(tail=50)
+
+    # Generate HTML
+    html = _generate_dashboard_html(rows, events)
+
+    # Write to artifacts
+    artifacts_dir = Path.home() / ".agentwire" / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    dashboard_path = artifacts_dir / "scheduler-dashboard.html"
+    dashboard_path.write_text(html)
+    print(f"Dashboard written to {dashboard_path}")
+
+    if not no_open:
+        subprocess.run(
+            ["agentwire", "open", "scheduler-dashboard.html", "--title", "Scheduler Dashboard"],
+            capture_output=True,
+        )
+
+    return 0
+
+
+def _generate_dashboard_html(rows: list[dict], events: list[dict]) -> str:
+    """Generate the scheduler dashboard HTML."""
+    # Build task rows
+    task_rows = ""
+    for r in rows:
+        status_class = ""
+        if r["last_status"] == "complete":
+            status_class = "status-complete"
+        elif r["last_status"] in ("failed", "timeout"):
+            status_class = "status-failed"
+        elif r["last_status"] == "never":
+            status_class = "status-never"
+
+        enabled_str = "" if r["enabled"] else " [disabled]"
+        task_rows += f"""<tr>
+            <td>{r['label']}{enabled_str}</td>
+            <td>{r['interval_str']}</td>
+            <td>{r['last_run']}</td>
+            <td class="{status_class}">{r['last_status']}</td>
+            <td>{r['last_duration']}s</td>
+            <td>{r['overdue_str']}</td>
+            <td>{r['run_count']}</td>
+        </tr>\n"""
+
+    # Build event rows (reversed for newest first)
+    event_rows = ""
+    for evt in reversed(events[-30:]):
+        ts = evt.get("ts", "")
+        try:
+            dt = datetime.datetime.fromisoformat(ts)
+            ts_str = dt.strftime("%H:%M:%S")
+        except (ValueError, TypeError):
+            ts_str = ts[:8] if ts else "?"
+
+        etype = evt.get("event", "?")
+        task = evt.get("task", "")
+        extra = ""
+        if etype == "task_completed":
+            extra = f'{evt.get("status", "")} — {evt.get("summary", "")}'
+        elif etype == "task_skipped":
+            extra = evt.get("reason", "")
+        elif etype == "scheduler_sleeping":
+            extra = f'next: {evt.get("next_task", "")} in {int(evt.get("sleep_seconds", 0))}s'
+
+        event_rows += f"<tr><td>{ts_str}</td><td>{etype}</td><td>{task}</td><td>{extra}</td></tr>\n"
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="30">
+<title>Scheduler Dashboard</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 20px; background: #1a1a2e; color: #e0e0e0; }}
+  h1 {{ color: #00d4ff; margin-bottom: 5px; }}
+  h2 {{ color: #8892b0; margin-top: 24px; }}
+  .meta {{ color: #666; font-size: 0.85em; margin-bottom: 20px; }}
+  table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+  th, td {{ text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a2a4a; }}
+  th {{ background: #16213e; color: #00d4ff; font-weight: 600; }}
+  tr:hover {{ background: #16213e; }}
+  .status-complete {{ color: #00c853; }}
+  .status-failed {{ color: #ff5252; }}
+  .status-never {{ color: #666; }}
+</style>
+</head>
+<body>
+<h1>Scheduler Dashboard</h1>
+<p class="meta">Auto-refreshes every 30s</p>
+
+<h2>Task Board</h2>
+<table>
+  <tr><th>Task</th><th>Interval</th><th>Last Run</th><th>Status</th><th>Duration</th><th>Overdue</th><th>Runs</th></tr>
+  {task_rows}
+</table>
+
+<h2>Recent Events</h2>
+<table>
+  <tr><th>Time</th><th>Event</th><th>Task</th><th>Details</th></tr>
+  {event_rows}
+</table>
+</body>
+</html>"""
+
+
 class VersionAction(argparse.Action):
     """Custom version action that checks Python version and pip environment."""
 
@@ -8592,6 +8835,24 @@ def main() -> int:
     sched_history = scheduler_subparsers.add_parser("history", help="Show recent run history")
     sched_history.add_argument("--json", action="store_true", help="Output JSON")
     sched_history.set_defaults(func=cmd_scheduler_history)
+
+    # scheduler events
+    sched_events = scheduler_subparsers.add_parser("events", help="Show recent scheduler events")
+    sched_events.add_argument("--json", action="store_true", help="Output JSON")
+    sched_events.add_argument("--tail", type=int, default=20, help="Number of events (default: 20)")
+    sched_events.add_argument("--task", help="Filter by task name")
+    sched_events.set_defaults(func=cmd_scheduler_events)
+
+    # scheduler live
+    sched_live = scheduler_subparsers.add_parser("live", help="Show live scheduler state")
+    sched_live.add_argument("--json", action="store_true", help="Output JSON")
+    sched_live.add_argument("--watch", action="store_true", help="Re-read every 2s")
+    sched_live.set_defaults(func=cmd_scheduler_live)
+
+    # scheduler dashboard
+    sched_dashboard = scheduler_subparsers.add_parser("dashboard", help="Open scheduler dashboard")
+    sched_dashboard.add_argument("--no-open", action="store_true", help="Generate HTML without opening")
+    sched_dashboard.set_defaults(func=cmd_scheduler_dashboard)
 
     args = parser.parse_args()
 

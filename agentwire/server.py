@@ -215,6 +215,10 @@ class AgentWireServer:
         self.app.router.add_post("/api/desktop/window/tile", self.api_desktop_tile)
         self.app.router.add_post("/api/desktop/window/minimize-all", self.api_desktop_minimize_all)
         self.app.router.add_post("/api/desktop/layout", self.api_desktop_layout)
+        # Scheduler monitoring endpoints
+        self.app.router.add_get("/api/scheduler/live", self.api_scheduler_live)
+        self.app.router.add_get("/api/scheduler/events", self.api_scheduler_events)
+        self.app.router.add_get("/api/scheduler/board", self.api_scheduler_board)
         # Artifact windows: upload and serve agent-generated HTML
         self.app.router.add_post("/api/artifacts/upload", self.api_artifacts_upload)
         self.app.router.add_get("/api/artifacts", self.api_artifacts_list)
@@ -3847,6 +3851,40 @@ projects:
             logger.error(f"History resume API failed: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_scheduler_live(self, request: web.Request) -> web.Response:
+        """GET /api/scheduler/live - Live scheduler state."""
+        try:
+            from .scheduler import read_live_state
+            state = read_live_state()
+            if state is None:
+                return web.json_response({"error": "Scheduler not running"}, status=404)
+            return web.json_response(state)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_events(self, request: web.Request) -> web.Response:
+        """GET /api/scheduler/events - Recent scheduler events."""
+        try:
+            from .scheduler import read_events
+            tail = int(request.query.get("tail", "20"))
+            task_filter = request.query.get("task") or None
+            events = read_events(tail=tail, task_filter=task_filter)
+            return web.json_response({"events": events})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_board(self, request: web.Request) -> web.Response:
+        """GET /api/scheduler/board - Scheduler board data."""
+        try:
+            from .scheduler import get_board_display, load_board
+            board = load_board()
+            rows = get_board_display(board)
+            return web.json_response({"tasks": rows})
+        except (FileNotFoundError, ValueError) as e:
+            return web.json_response({"error": str(e)}, status=404)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def api_notify(self, request: web.Request) -> web.Response:
         """POST /api/notify - Receive tmux hook notifications.
 
@@ -3961,6 +3999,15 @@ projects:
             elif event == "window_activity":
                 # Activity detected in a monitored window
                 await self.broadcast_dashboard("window_activity", {"session": session})
+
+            elif event == "scheduler_task_complete":
+                # Scheduler task finished — broadcast to dashboards
+                await self.broadcast_dashboard("scheduler_update", {
+                    "task": data.get("task"),
+                    "status": data.get("status"),
+                    "duration": data.get("duration"),
+                    "summary": data.get("summary"),
+                })
 
             else:
                 # Generic event - just broadcast it

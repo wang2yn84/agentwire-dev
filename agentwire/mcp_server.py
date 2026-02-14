@@ -1505,6 +1505,95 @@ def scheduler_board() -> str:
 
 
 @mcp.tool()
+def scheduler_live() -> str:
+    """Show live scheduler state including current task, uptime, and counters.
+
+    Returns:
+        Live scheduler state or error if scheduler is not running.
+    """
+    data = run_agentwire_cmd(["scheduler", "live", "--json"])
+    if not data.get("success"):
+        return f"Scheduler not running or no live state: {data.get('error', 'Unknown error')}"
+
+    status = data.get("status", "unknown")
+    uptime = data.get("uptime_seconds", 0)
+    current = data.get("current_task")
+    completed = data.get("tasks_completed", 0)
+    failed = data.get("tasks_failed", 0)
+    next_task = data.get("next_task")
+    next_in = data.get("next_in_seconds", 0)
+
+    # Format uptime
+    hours = uptime // 3600
+    mins = (uptime % 3600) // 60
+    uptime_str = f"{hours}h{mins}m" if hours else f"{mins}m"
+
+    lines = [f"Scheduler: {status} (uptime {uptime_str})"]
+    if current:
+        lines.append(f"Current: {current}")
+    else:
+        lines.append("Current: idle")
+    lines.append(f"Completed: {completed} | Failed: {failed}")
+    if next_task:
+        next_mins = int(next_in) // 60
+        next_secs = int(next_in) % 60
+        lines.append(f"Next: {next_task} (in {next_mins}m {next_secs}s)")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def scheduler_events(tail: int = 20, task: str = "") -> str:
+    """Show recent scheduler events from the event log.
+
+    Args:
+        tail: Number of recent events to show (default: 20)
+        task: Filter events by task name (optional)
+
+    Returns:
+        Recent scheduler events formatted for reading.
+    """
+    args = ["scheduler", "events", "--json", "--tail", str(tail)]
+    if task:
+        args.extend(["--task", task])
+
+    data = run_agentwire_cmd(args)
+    if not data.get("success"):
+        return f"Failed to get events: {data.get('error', 'Unknown error')}"
+
+    events = data.get("events", [])
+    if not events:
+        return "No scheduler events."
+
+    lines = ["Recent scheduler events:"]
+    for evt in events:
+        ts = evt.get("ts", "")
+        # Trim to just time portion
+        ts_short = ts[11:16] if len(ts) > 16 else ts
+        etype = evt.get("event", "?")
+        task_name = evt.get("task", "")
+
+        if etype == "task_completed":
+            status = evt.get("status", "?")
+            duration = evt.get("duration", 0)
+            summary = evt.get("summary", "")
+            detail = f"{status} {duration}s"
+            if summary:
+                detail += f' — "{summary}"'
+            lines.append(f"  {ts_short} {etype}: {task_name} ({detail})")
+        elif etype == "task_started":
+            session = evt.get("session", "")
+            lines.append(f"  {ts_short} {etype}: {task_name} → {session}")
+        elif etype == "task_skipped":
+            reason = evt.get("reason", "?")
+            lines.append(f"  {ts_short} {etype}: {task_name} ({reason})")
+        else:
+            lines.append(f"  {ts_short} {etype}: {task_name}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def scheduler_run(task: str) -> str:
     """Force-run a scheduler task immediately.
 

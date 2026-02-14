@@ -6,8 +6,10 @@ updates the board, and loops. No AI — pure subprocess management
 and time math.
 """
 
+import json
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,6 +20,10 @@ import yaml
 
 # Board file location
 BOARD_PATH = Path.home() / ".agentwire" / "scheduler.yaml"
+
+# Monitoring file locations
+EVENTS_PATH = Path.home() / ".agentwire" / "scheduler-events.jsonl"
+LIVE_STATE_PATH = Path.home() / ".agentwire" / "scheduler-live.json"
 
 # tmux session name for the scheduler daemon
 SCHEDULER_SESSION = "agentwire-scheduler"
@@ -61,6 +67,7 @@ class TaskState:
     last_status: str = "never"    # complete, failed, incomplete, timeout, lock_conflict, never
     last_duration: int = 0
     run_count: int = 0
+    last_summary: str = ""
 
 
 @dataclass
@@ -133,6 +140,7 @@ def load_board() -> Board:
                 last_status=str(s.get("last_status", "never")),
                 last_duration=int(s.get("last_duration", 0)),
                 run_count=int(s.get("run_count", 0)),
+                last_summary=str(s.get("last_summary", "")),
             )
 
     return board
@@ -149,12 +157,15 @@ def save_board(board: Board) -> None:
     # Only update the state section
     state_dict = {}
     for name, s in board.state.items():
-        state_dict[name] = {
+        entry = {
             "last_run": s.last_run.isoformat() if s.last_run else None,
             "last_status": s.last_status,
             "last_duration": s.last_duration,
             "run_count": s.run_count,
         }
+        if s.last_summary:
+            entry["last_summary"] = s.last_summary
+        state_dict[name] = entry
 
     raw["state"] = state_dict
 
@@ -249,6 +260,123 @@ def seconds_until_next_due(board: Board) -> float:
     return earliest_wait
 
 
+def _log_event(event: str, **fields) -> None:
+    """Append an event to the scheduler JSONL log."""
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        **fields,
+    }
+    try:
+        EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(EVENTS_PATH, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def _write_live_state(**fields) -> None:
+    """Atomically write the live state JSON file."""
+    try:
+        LIVE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(LIVE_STATE_PATH.parent), suffix=".tmp"
+        )
+        try:
+            with open(fd, "w") as f:
+                json.dump(fields, f, indent=2)
+            Path(tmp_path).rename(LIVE_STATE_PATH)
+        except Exception:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+    except OSError:
+        pass
+
+
+def _notify_portal(task_name: str, status: str, duration: int, summary: str) -> None:
+    """POST a scheduler_task_complete notification to the portal."""
+    try:
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        # Read portal URL from config
+        config_path = Path.home() / ".agentwire" / "config.yaml"
+        portal_url = "https://localhost:8765"
+        if config_path.exists():
+            try:
+                cfg = yaml.safe_load(config_path.read_text()) or {}
+                portal_url = cfg.get("portal", {}).get("url", portal_url)
+            except Exception:
+                pass
+
+        requests.post(
+            f"{portal_url}/api/notify",
+            json={
+                "event": "scheduler_task_complete",
+                "task": task_name,
+                "status": status,
+                "duration": duration,
+                "summary": summary,
+            },
+            verify=False,
+            timeout=5,
+        )
+    except Exception:
+        pass  # Portal may not be running
+
+
+def _parse_ensure_summary(task: SchedulerTask, result) -> tuple[str, list[str], list[str]]:
+    """Try to extract summary info from ensure subprocess output.
+
+    Returns:
+        (summary_text, files_modified, blockers)
+    """
+    summary = ""
+    files_modified: list[str] = []
+    blockers: list[str] = []
+
+    # Try parsing JSON stdout from ensure --json
+    if hasattr(result, "stdout") and result.stdout:
+        try:
+            data = json.loads(result.stdout)
+            summary = data.get("summary", "")
+            summary_file = data.get("summary_file", "")
+            if summary_file:
+                from .completion import parse_summary_file
+                sp = Path(summary_file)
+                if not sp.is_absolute():
+                    sp = Path(task.project) / sp
+                if sp.exists():
+                    parsed = parse_summary_file(sp)
+                    summary = summary or parsed.summary
+                    files_modified = parsed.files_modified
+                    blockers = parsed.blockers
+        except (json.JSONDecodeError, Exception):
+            pass
+
+    # Fallback: glob for summary files if we didn't get one
+    if not summary:
+        try:
+            agentwire_dir = Path(task.project) / ".agentwire"
+            if agentwire_dir.exists():
+                summaries = sorted(
+                    agentwire_dir.glob(f"task-summary-{task.session}-*.md"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                if summaries:
+                    from .completion import parse_summary_file
+                    parsed = parse_summary_file(summaries[0])
+                    summary = parsed.summary
+                    files_modified = parsed.files_modified
+                    blockers = parsed.blockers
+        except Exception:
+            pass
+
+    return summary, files_modified, blockers
+
+
 def _ensure_session(task: SchedulerTask) -> None:
     """Create the session if it doesn't exist, using the specified type.
 
@@ -323,6 +451,9 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     # Ensure session exists with the right type (e.g., opencode-bypass)
     _ensure_session(task)
 
+    _log_event("task_started", task=task_name, session=task.session,
+               project=task.project, attempt=existing_state.run_count + 1)
+
     cmd = [
         "agentwire", "ensure",
         "-s", task.session,
@@ -333,6 +464,7 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     ]
 
     start_time = time.time()
+    result = None
 
     try:
         result = subprocess.run(
@@ -352,12 +484,25 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
 
     # On lock conflict, don't update last_run so task remains eligible
     if exit_code == _EXIT_LOCK_CONFLICT:
+        _log_event("task_skipped", task=task_name, session=task.session,
+                    reason="lock_conflict")
         return TaskState(
             last_run=existing_state.last_run,
             last_status="lock_conflict",
             last_duration=duration,
             run_count=existing_state.run_count,
         )
+
+    # Parse summary from ensure output
+    summary, files_modified, blockers_list = _parse_ensure_summary(task, result)
+
+    # Log completion event
+    _log_event("task_completed", task=task_name, session=task.session,
+               status=status, duration=duration, summary=summary,
+               files_modified=files_modified, blockers=blockers_list)
+
+    # Notify portal
+    _notify_portal(task_name, status, duration, summary)
 
     # Auto-commit any changes the task made (each task = one revertable commit)
     _auto_commit(task, task_name, status)
@@ -367,6 +512,7 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
         last_status=status,
         last_duration=duration,
         run_count=existing_state.run_count + 1,
+        last_summary=summary,
     )
 
 
@@ -448,6 +594,10 @@ def get_board_display(board: Board) -> list[dict]:
 
 def run_scheduler_loop() -> None:
     """Main scheduler daemon loop. Runs forever."""
+    started_at = datetime.now(timezone.utc)
+    tasks_completed = 0
+    tasks_failed = 0
+
     print(f"[{_ts()}] Scheduler starting...")
     print(f"[{_ts()}] Board: {BOARD_PATH}")
 
@@ -461,6 +611,19 @@ def run_scheduler_loop() -> None:
     enabled_count = sum(1 for t in board.tasks.values() if t.enabled)
     print(f"[{_ts()}] Loaded {task_count} tasks ({enabled_count} enabled)")
 
+    _log_event("scheduler_started", task_count=task_count, enabled_count=enabled_count)
+    _write_live_state(
+        status="running",
+        started_at=started_at.isoformat(),
+        current_task=None,
+        current_task_started=None,
+        tasks_completed=0,
+        tasks_failed=0,
+        uptime_seconds=0,
+        next_task=None,
+        next_in_seconds=0,
+    )
+
     while True:
         try:
             board = load_board()
@@ -470,25 +633,116 @@ def run_scheduler_loop() -> None:
             continue
 
         task_name, wait_seconds = pick_next_task(board)
+        uptime = int((datetime.now(timezone.utc) - started_at).total_seconds())
 
         if task_name is None:
             sleep_time = min(wait_seconds, 60)
             print(f"[{_ts()}] Nothing due. Sleeping {int(sleep_time)}s...")
+            _write_live_state(
+                status="running",
+                started_at=started_at.isoformat(),
+                current_task=None,
+                current_task_started=None,
+                tasks_completed=tasks_completed,
+                tasks_failed=tasks_failed,
+                uptime_seconds=uptime,
+                next_task=None,
+                next_in_seconds=round(sleep_time, 1),
+            )
             time.sleep(sleep_time)
             continue
 
         if wait_seconds > 0:
             sleep_time = min(wait_seconds, 60)
             print(f"[{_ts()}] Next: {task_name} in {format_interval(int(wait_seconds))}. Sleeping {int(sleep_time)}s...")
+            _log_event("scheduler_sleeping", next_task=task_name,
+                        sleep_seconds=round(sleep_time, 1))
+            _write_live_state(
+                status="running",
+                started_at=started_at.isoformat(),
+                current_task=None,
+                current_task_started=None,
+                tasks_completed=tasks_completed,
+                tasks_failed=tasks_failed,
+                uptime_seconds=uptime,
+                next_task=task_name,
+                next_in_seconds=round(wait_seconds, 1),
+            )
             time.sleep(sleep_time)
             continue
 
         # Dispatch the task
         print(f"[{_ts()}] Running: {task_name}")
+        task_started = datetime.now(timezone.utc)
+        _write_live_state(
+            status="running",
+            started_at=started_at.isoformat(),
+            current_task=task_name,
+            current_task_started=task_started.isoformat(),
+            tasks_completed=tasks_completed,
+            tasks_failed=tasks_failed,
+            uptime_seconds=uptime,
+            next_task=None,
+            next_in_seconds=0,
+        )
+
         state = dispatch_task(board, task_name)
         board.state[task_name] = state
         save_board(board)
+
+        if state.last_status == "complete":
+            tasks_completed += 1
+        elif state.last_status not in ("lock_conflict", "never"):
+            tasks_failed += 1
+
         print(f"[{_ts()}] Done: {task_name} → {state.last_status} ({state.last_duration}s)")
+
+
+def read_events(tail: int = 20, task_filter: str | None = None) -> list[dict]:
+    """Read recent events from the JSONL log.
+
+    Args:
+        tail: Number of most recent events to return.
+        task_filter: Only return events for this task name.
+
+    Returns:
+        List of event dicts, most recent last.
+    """
+    if not EVENTS_PATH.exists():
+        return []
+
+    events = []
+    try:
+        with open(EVENTS_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                    if task_filter and evt.get("task") != task_filter:
+                        continue
+                    events.append(evt)
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+
+    return events[-tail:]
+
+
+def read_live_state() -> dict | None:
+    """Read the live scheduler state.
+
+    Returns:
+        Live state dict or None if file doesn't exist.
+    """
+    if not LIVE_STATE_PATH.exists():
+        return None
+    try:
+        return json.loads(LIVE_STATE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def _ts() -> str:
