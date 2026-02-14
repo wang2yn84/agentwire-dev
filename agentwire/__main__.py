@@ -3612,9 +3612,9 @@ def _wait_for_worker_ready(session: str, pane_index: int, timeout: int = 30, age
 
     while (time.time() - start) < timeout:
         try:
-            # Use :0.N to target pane N in window 0 (not :N which targets window N)
+            # Use session.N to target pane N (omit window index, let tmux resolve it)
             result = subprocess.run(
-                ["tmux", "capture-pane", "-t", f"{session}:0.{pane_index}", "-p", "-S", "-20"],
+                ["tmux", "capture-pane", "-t", f"{session}.{pane_index}", "-p", "-S", "-20"],
                 capture_output=True, text=True
             )
             if result.returncode == 0:

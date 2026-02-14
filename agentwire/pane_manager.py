@@ -123,7 +123,7 @@ def spawn_worker_pane(
     # -F: format string
     split_cmd = [
         "tmux", "split-window",
-        "-t", f"{session}:0.{last_pane_index}",  # split the LAST pane (append, don't insert)
+        "-t", f"{session}.{last_pane_index}",  # split the LAST pane (append, don't insert)
         split_flag,  # smart split direction
         "-d",  # detached (don't steal focus)
         "-P", "-F", "#{pane_index}:#{pane_id}"  # return pane info
@@ -267,7 +267,7 @@ def send_to_pane(session: str | None, pane_index: int, text: str, enter: bool = 
         if session is None:
             raise RuntimeError("Not in tmux session and no session specified")
 
-    target = f"{session}:0.{pane_index}"
+    target = f"{session}.{pane_index}"
 
     # For multi-line or long text, use load-buffer + paste-buffer
     # This ensures text is pasted as a single unit, not character-by-character
@@ -320,7 +320,7 @@ def capture_pane(
         if session is None:
             raise RuntimeError("Not in tmux session and no session specified")
 
-    target = f"{session}:0.{pane_index}"
+    target = f"{session}.{pane_index}"
     cmd = ["tmux", "capture-pane", "-t", target, "-p"]
 
     if lines is None:
@@ -352,7 +352,7 @@ def kill_pane(session: str | None, pane_index: int) -> None:
         if session is None:
             raise RuntimeError("Not in tmux session and no session specified")
 
-    target = f"{session}:0.{pane_index}"
+    target = f"{session}.{pane_index}"
     result = run_command(["tmux", "kill-pane", "-t", target], timeout=5)
     if not result.success:
         raise RuntimeError(f"Pane {pane_index} not found: {result.stderr.strip()}")
@@ -370,7 +370,7 @@ def focus_pane(session: str | None, pane_index: int) -> None:
         if session is None:
             raise RuntimeError("Not in tmux session and no session specified")
 
-    target = f"{session}:0.{pane_index}"
+    target = f"{session}.{pane_index}"
     run_command(["tmux", "select-pane", "-t", target], timeout=5)
 
 
