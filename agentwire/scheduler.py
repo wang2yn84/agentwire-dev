@@ -59,6 +59,7 @@ class SchedulerTask:
     filler: bool = False  # only runs in spare cycles
     priority: int = 99    # filler ordering (lower = higher)
     type: str | None = None  # session type override (e.g., opencode-bypass)
+    roles: list[str] | None = None  # role override (e.g., ["glm-worker"])
 
 
 @dataclass
@@ -107,6 +108,14 @@ def load_board() -> Board:
     for name, t in raw_tasks.items():
         if not isinstance(t, dict):
             continue
+        raw_roles = t.get("roles")
+        if isinstance(raw_roles, list):
+            roles = [str(r) for r in raw_roles]
+        elif isinstance(raw_roles, str):
+            roles = [r.strip() for r in raw_roles.split(",") if r.strip()]
+        else:
+            roles = None
+
         board.tasks[name] = SchedulerTask(
             name=name,
             project=str(Path(t.get("project", "")).expanduser()),
@@ -117,6 +126,7 @@ def load_board() -> Board:
             filler=bool(t.get("filler", False)),
             priority=int(t.get("priority", 99)),
             type=t.get("type"),
+            roles=roles,
         )
 
     raw_state = raw.get("state", {})
@@ -392,10 +402,12 @@ def _ensure_session(task: SchedulerTask) -> None:
     if check.returncode == 0:
         return  # Already running
 
-    # Create with specified type or let agentwire new use project defaults
+    # Create with specified type/roles or let agentwire new use project defaults
     cmd = ["agentwire", "new", "-s", task.session, "-p", task.project]
     if task.type:
         cmd.extend(["--type", task.type])
+    if task.roles is not None:
+        cmd.extend(["--roles", ",".join(task.roles)])
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode == 0:

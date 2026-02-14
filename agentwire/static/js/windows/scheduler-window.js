@@ -61,8 +61,8 @@ export function openSchedulerWindow() {
     // Listen for WebSocket scheduler updates
     wsCleanup = desktop.on('scheduler_update', () => refreshAll(container));
 
-    // Poll live state every 10s
-    pollInterval = setInterval(() => refreshLiveState(container), 10000);
+    // Poll all sections every 10s (live state, board, events)
+    pollInterval = setInterval(() => refreshAll(container), 10000);
 
     // Initial fetch
     refreshAll(container);
@@ -305,7 +305,7 @@ function renderBoardRow(task) {
             <td class="sched-task-name">${escapeHtml(task.name)}${fillerTag}</td>
             <td class="sched-task-session">${task.session ? `<a class="sched-session-link" data-action="open-session" data-session="${escapeHtml(task.session)}" title="Open session">${escapeHtml(task.session)}</a>` : '—'}</td>
             <td>${task.interval_str || '—'}</td>
-            <td>${escapeHtml(task.last_run || 'never')}</td>
+            <td>${task.last_run && task.last_run !== 'never' && task.last_summary ? `<a class="sched-session-link" data-action="show-summary" data-task="${task.name}" title="View summary">${escapeHtml(task.last_run)}</a>` : escapeHtml(task.last_run || 'never')}</td>
             <td>${statusBadge}</td>
             <td>${durationStr}</td>
             <td class="sched-overdue">${overdueStr}</td>
@@ -336,6 +336,9 @@ function wireRowActions(container) {
         } else if (action === 'open-session') {
             const session = target.dataset.session;
             if (session) openSession(session);
+        } else if (action === 'show-summary') {
+            const task = cachedBoard.find(t => t.name === taskName);
+            if (task?.last_summary) showSummaryModal(task);
         }
     });
 }
@@ -471,6 +474,38 @@ function showTaskDetailModal(task) {
 
     document.body.appendChild(modal);
 
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal || e.target.dataset.action === 'close') modal.remove();
+    });
+}
+
+// ============================================
+// Summary Modal
+// ============================================
+
+function showSummaryModal(task) {
+    document.querySelector('.sched-summary-modal')?.remove();
+
+    const statusBadge = task.last_status
+        ? `<span class="sched-badge sched-badge-${getStatusClass(task.last_status)}">${task.last_status}</span>`
+        : '';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay sched-summary-modal';
+    modal.innerHTML = `
+        <div class="modal sched-modal">
+            <div class="modal-header">
+                <h3>${escapeHtml(task.name)} — ${escapeHtml(task.last_run)}</h3>
+                <button class="modal-close" data-action="close">&#10005;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 10px;">${statusBadge} ${task.last_duration != null ? `<span style="color:var(--text-muted);font-size:12px;margin-left:8px;">${task.last_duration}s</span>` : ''}</div>
+                <pre class="sched-summary-pre">${escapeHtml(task.last_summary)}</pre>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
     modal.addEventListener('click', (e) => {
         if (e.target === modal || e.target.dataset.action === 'close') modal.remove();
     });

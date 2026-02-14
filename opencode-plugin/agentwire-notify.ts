@@ -401,33 +401,12 @@ Continue where you left off. Focus on remaining work identified in previous revi
 
 function exitTask(tmuxSession: string, ctx: TaskContext): void {
   if (ctx.exit_on_complete) {
-    log("TASK: exit_on_complete=true, sending /exit")
-    setTimeout(() => {
-      try {
-        const child = spawn(
-          getAgentwirePath(),
-          ["send", "-s", tmuxSession, "/exit"],
-          { detached: true, stdio: "ignore" }
-        )
-        child.unref()
-      } catch {
-        // Ignore errors
-      }
-
-      // Clean up task context
-      clearTaskContext(tmuxSession)
-      log("TASK: cleaned up task context")
-
-      // Kill tmux session after grace period
-      setTimeout(() => {
-        log("TASK: killing tmux session")
-        try {
-          execSync(`tmux kill-session -t "${tmuxSession}"`, { timeout: 5000 })
-        } catch {
-          // Ignore errors
-        }
-      }, 3000)
-    }, 1000)
+    log("TASK: exit_on_complete=true, cleaning up task context")
+    // Don't send /exit — OpenCode exits on its own when idle.
+    // Don't kill the tmux session — the scheduler needs it alive for the next task.
+    // Just clean up the task context so the next run starts fresh.
+    clearTaskContext(tmuxSession)
+    log("TASK: cleaned up task context")
   }
 }
 

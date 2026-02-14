@@ -3028,3 +3028,18 @@ body {
     max-height: 200px;
     overflow-y: auto;
 }
+
+.sched-summary-pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+    font-size: 12px;
+    background: var(--chrome);
+    padding: 12px;
+    border-radius: 4px;
+    margin: 0;
+    max-height: 400px;
+    overflow-y: auto;
+    line-height: 1.5;
+}
