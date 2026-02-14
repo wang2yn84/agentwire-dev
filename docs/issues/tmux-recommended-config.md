@@ -47,7 +47,7 @@ tmux source-file ~/.tmux.conf
 set -g mouse on
 set -g history-limit 50000
 set -g base-index 1
-setw -g pane-base-index 1
+setw -g pane-base-index 0
 set -g renumber-windows on
 set -s escape-time 0
 set -g default-terminal "screen-256color"
