@@ -579,7 +579,7 @@ def get_board_display(board: Board) -> list[dict]:
         if task.filler:
             label = f"{name} (filler)"
 
-        rows.append({
+        row = {
             "name": name,
             "label": label,
             "interval": task.interval,
@@ -597,7 +597,10 @@ def get_board_display(board: Board) -> list[dict]:
             "session": task.session,
             "task": task.task,
             "project": task.project,
-        })
+        }
+        if state.last_summary:
+            row["last_summary"] = state.last_summary
+        rows.append(row)
 
     # Sort: enabled first, then by overdue (most overdue first)
     rows.sort(key=lambda r: (not r["enabled"], -r["overdue_by"]))
