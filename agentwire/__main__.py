@@ -7526,6 +7526,304 @@ def cmd_lock(args) -> int:
     return 0
 
 
+# =============================================================================
+# Scheduler Commands
+# =============================================================================
+
+
+SCHEDULER_SESSION = "agentwire-scheduler"
+
+
+def cmd_scheduler_start(args) -> int:
+    """Start the scheduler daemon in a tmux session."""
+    if not _check_tmux_installed():
+        return 1
+
+    if tmux_session_exists(SCHEDULER_SESSION):
+        print(f"Scheduler already running in tmux session '{SCHEDULER_SESSION}'")
+        print("Attaching... (Ctrl+B D to detach)")
+        subprocess.run(["tmux", "attach-session", "-t", SCHEDULER_SESSION])
+        return 0
+
+    print(f"Starting scheduler daemon in tmux session '{SCHEDULER_SESSION}'...")
+    subprocess.run([
+        "tmux", "new-session", "-d", "-s", SCHEDULER_SESSION,
+    ])
+    subprocess.run([
+        "tmux", "send-keys", "-t", SCHEDULER_SESSION,
+        "agentwire scheduler serve", "Enter",
+    ])
+
+    print("Attaching... (Ctrl+B D to detach)")
+    subprocess.run(["tmux", "attach-session", "-t", SCHEDULER_SESSION])
+    return 0
+
+
+def cmd_scheduler_serve(args) -> int:
+    """Run the scheduler loop in the foreground (for tmux)."""
+    from .scheduler import run_scheduler_loop
+
+    run_scheduler_loop()
+    return 0
+
+
+def cmd_scheduler_stop(args) -> int:
+    """Stop the scheduler daemon."""
+    if not tmux_session_exists(SCHEDULER_SESSION):
+        print("Scheduler is not running.")
+        return 1
+
+    subprocess.run(["tmux", "kill-session", "-t", SCHEDULER_SESSION])
+    print("Scheduler stopped.")
+    return 0
+
+
+def cmd_scheduler_status(args) -> int:
+    """Show scheduler status and next task due."""
+    from .scheduler import (
+        BOARD_PATH,
+        format_interval,
+        load_board,
+        pick_next_task,
+    )
+
+    json_mode = getattr(args, 'json', False)
+    running = tmux_session_exists(SCHEDULER_SESSION)
+
+    if not BOARD_PATH.exists():
+        return _output_result(
+            False, json_mode,
+            f"Board file not found: {BOARD_PATH}",
+            running=running,
+        )
+
+    try:
+        board = load_board()
+    except (FileNotFoundError, ValueError) as e:
+        return _output_result(False, json_mode, str(e), running=running)
+
+    task_count = len(board.tasks)
+    enabled_count = sum(1 for t in board.tasks.values() if t.enabled)
+    next_task, wait_seconds = pick_next_task(board)
+
+    result = {
+        "running": running,
+        "board_path": str(BOARD_PATH),
+        "task_count": task_count,
+        "enabled_count": enabled_count,
+        "next_task": next_task,
+        "next_in_seconds": round(wait_seconds, 1),
+    }
+
+    if json_mode:
+        _output_json({"success": True, **result})
+        return 0
+
+    status_str = "running" if running else "stopped"
+    print(f"Scheduler: {status_str}")
+    print(f"Board: {BOARD_PATH}")
+    print(f"Tasks: {enabled_count}/{task_count} enabled")
+
+    if next_task:
+        if wait_seconds <= 0:
+            print(f"Next: {next_task} (due now)")
+        else:
+            print(f"Next: {next_task} (in {format_interval(int(wait_seconds))})")
+    else:
+        print("Next: nothing due")
+
+    return 0
+
+
+def cmd_scheduler_board(args) -> int:
+    """Show full task board with overdue scores."""
+    from .scheduler import get_board_display, load_board
+
+    json_mode = getattr(args, 'json', False)
+
+    try:
+        board = load_board()
+    except (FileNotFoundError, ValueError) as e:
+        return _output_result(False, json_mode, str(e))
+
+    rows = get_board_display(board)
+
+    if json_mode:
+        _output_json({"success": True, "tasks": rows})
+        return 0
+
+    if not rows:
+        print("No tasks in board.")
+        return 0
+
+    # Group by project
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        proj = r["project"].rstrip("/").split("/")[-1]
+        groups.setdefault(proj, [])
+        groups[proj].append(r)
+
+    # Summary line
+    total = len(rows)
+    regular = sum(1 for r in rows if not r["filler"])
+    fillers = total - regular
+    enabled = sum(1 for r in rows if r["enabled"])
+    print(f"Scheduler board: {total} tasks ({regular} regular + {fillers} filler), {enabled} enabled\n")
+
+    for proj, items in groups.items():
+        # Sort: regular first (by interval), then filler (by priority)
+        reg = sorted([r for r in items if not r["filler"]], key=lambda r: r["interval"])
+        fil = sorted([r for r in items if r["filler"]], key=lambda r: r["priority"])
+
+        session = items[0]["session"]
+        print(f"  {proj} ({len(items)} tasks) → {session}")
+        print(f"  {'Task':<30} {'Type':<16} {'Interval':<10} {'Last Run':<16} {'Status':<12} {'Overdue'}")
+        print(f"  {'-' * 100}")
+
+        for r in reg + fil:
+            task_name = r["task"]
+            if not r["enabled"]:
+                task_name = f"{task_name} [off]"
+
+            if r["filler"]:
+                type_str = f"filler (p{r['priority']})"
+            else:
+                type_str = "regular"
+
+            print(
+                f"  {task_name:<30} "
+                f"{type_str:<16} "
+                f"{r['interval_str']:<10} "
+                f"{r['last_run']:<16} "
+                f"{r['last_status']:<12} "
+                f"{r['overdue_str']}"
+            )
+
+        print()
+
+    return 0
+
+
+def cmd_scheduler_run(args) -> int:
+    """Force-run a specific task now."""
+    from .scheduler import dispatch_task, load_board, save_board
+
+    json_mode = getattr(args, 'json', False)
+    name = args.name
+
+    try:
+        board = load_board()
+    except (FileNotFoundError, ValueError) as e:
+        return _output_result(False, json_mode, str(e))
+
+    if name not in board.tasks:
+        return _output_result(
+            False, json_mode,
+            f"Task '{name}' not found in board. Available: {', '.join(board.tasks.keys())}",
+        )
+
+    if not json_mode:
+        print(f"Running: {name}")
+
+    state = dispatch_task(board, name)
+    board.state[name] = state
+    save_board(board)
+
+    if json_mode:
+        _output_json({
+            "success": state.last_status == "complete",
+            "task": name,
+            "status": state.last_status,
+            "duration": state.last_duration,
+            "run_count": state.run_count,
+        })
+        return 0 if state.last_status == "complete" else 1
+
+    print(f"Done: {name} → {state.last_status} ({state.last_duration}s)")
+    return 0 if state.last_status == "complete" else 1
+
+
+def cmd_scheduler_enable(args) -> int:
+    """Enable a task in the board."""
+    return _set_task_enabled(args.name, True)
+
+
+def cmd_scheduler_disable(args) -> int:
+    """Disable a task in the board."""
+    return _set_task_enabled(args.name, False)
+
+
+def _set_task_enabled(name: str, enabled: bool) -> int:
+    """Toggle a task's enabled field in the board YAML."""
+    import yaml
+
+    from .scheduler import BOARD_PATH
+
+    if not BOARD_PATH.exists():
+        print(f"Board file not found: {BOARD_PATH}", file=sys.stderr)
+        return 1
+
+    with open(BOARD_PATH) as f:
+        raw = yaml.safe_load(f) or {}
+
+    tasks = raw.get("tasks", {})
+    if name not in tasks:
+        print(f"Task '{name}' not found in board.", file=sys.stderr)
+        return 1
+
+    tasks[name]["enabled"] = enabled
+
+    with open(BOARD_PATH, "w") as f:
+        yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+    action = "Enabled" if enabled else "Disabled"
+    print(f"{action}: {name}")
+    return 0
+
+
+def cmd_scheduler_history(args) -> int:
+    """Show recent run history from board state."""
+    from .scheduler import format_interval, load_board
+
+    json_mode = getattr(args, 'json', False)
+
+    try:
+        board = load_board()
+    except (FileNotFoundError, ValueError) as e:
+        return _output_result(False, json_mode, str(e))
+
+    if json_mode:
+        history = []
+        for name, state in board.state.items():
+            history.append({
+                "task": name,
+                "last_run": state.last_run.isoformat() if state.last_run else None,
+                "last_status": state.last_status,
+                "last_duration": state.last_duration,
+                "run_count": state.run_count,
+            })
+        _output_json({"success": True, "history": history})
+        return 0
+
+    if not board.state:
+        print("No run history.")
+        return 0
+
+    print(f"{'Task':<30} {'Last Run':<20} {'Status':<14} {'Duration':<10} {'Runs'}")
+    print("-" * 85)
+
+    for name, state in sorted(board.state.items()):
+        if state.last_run:
+            lr = state.last_run.strftime("%Y-%m-%d %H:%M")
+        else:
+            lr = "never"
+
+        dur = format_interval(state.last_duration) if state.last_duration else "-"
+        print(f"{name:<30} {lr:<20} {state.last_status:<14} {dur:<10} {state.run_count}")
+
+    return 0
+
+
 class VersionAction(argparse.Action):
     """Custom version action that checks Python version and pip environment."""
 
@@ -8244,6 +8542,57 @@ def main() -> int:
     lock_remove_parser.add_argument("--json", action="store_true", help="Output JSON")
     lock_remove_parser.set_defaults(func=cmd_lock_remove)
 
+    # === scheduler command group ===
+    scheduler_parser = subparsers.add_parser(
+        "scheduler",
+        help="Manage the task scheduler",
+        description="Centralized daemon that dispatches tasks across projects on a shared cadence.",
+    )
+    scheduler_subparsers = scheduler_parser.add_subparsers(dest="scheduler_command")
+
+    # scheduler start
+    sched_start = scheduler_subparsers.add_parser("start", help="Start scheduler daemon")
+    sched_start.set_defaults(func=cmd_scheduler_start)
+
+    # scheduler serve (foreground, for tmux)
+    sched_serve = scheduler_subparsers.add_parser("serve", help="Run scheduler in foreground")
+    sched_serve.set_defaults(func=cmd_scheduler_serve)
+
+    # scheduler stop
+    sched_stop = scheduler_subparsers.add_parser("stop", help="Stop scheduler")
+    sched_stop.set_defaults(func=cmd_scheduler_stop)
+
+    # scheduler status
+    sched_status = scheduler_subparsers.add_parser("status", help="Check scheduler status")
+    sched_status.add_argument("--json", action="store_true", help="Output JSON")
+    sched_status.set_defaults(func=cmd_scheduler_status)
+
+    # scheduler board
+    sched_board = scheduler_subparsers.add_parser("board", help="Show task board with overdue scores")
+    sched_board.add_argument("--json", action="store_true", help="Output JSON")
+    sched_board.set_defaults(func=cmd_scheduler_board)
+
+    # scheduler run <name>
+    sched_run = scheduler_subparsers.add_parser("run", help="Force-run a task now")
+    sched_run.add_argument("name", help="Task name from board")
+    sched_run.add_argument("--json", action="store_true", help="Output JSON")
+    sched_run.set_defaults(func=cmd_scheduler_run)
+
+    # scheduler enable <name>
+    sched_enable = scheduler_subparsers.add_parser("enable", help="Enable a task")
+    sched_enable.add_argument("name", help="Task name")
+    sched_enable.set_defaults(func=cmd_scheduler_enable)
+
+    # scheduler disable <name>
+    sched_disable = scheduler_subparsers.add_parser("disable", help="Disable a task")
+    sched_disable.add_argument("name", help="Task name")
+    sched_disable.set_defaults(func=cmd_scheduler_disable)
+
+    # scheduler history
+    sched_history = scheduler_subparsers.add_parser("history", help="Show recent run history")
+    sched_history.add_argument("--json", action="store_true", help="Output JSON")
+    sched_history.set_defaults(func=cmd_scheduler_history)
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -8308,6 +8657,10 @@ def main() -> int:
 
     if args.command == "lock" and getattr(args, "lock_command", None) is None:
         lock_parser.print_help()
+        return 0
+
+    if args.command == "scheduler" and getattr(args, "scheduler_command", None) is None:
+        scheduler_parser.print_help()
         return 0
 
     if hasattr(args, "func"):

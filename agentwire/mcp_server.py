@@ -1438,6 +1438,94 @@ def lock_remove(session: str) -> str:
 
 
 # =============================================================================
+# Scheduler Tools
+# =============================================================================
+
+
+@mcp.tool()
+def scheduler_status() -> str:
+    """Check scheduler daemon health and next task due.
+
+    Returns:
+        Scheduler status including running state, task counts, and next task.
+    """
+    data = run_agentwire_cmd(["scheduler", "status"])
+    if not data.get("success"):
+        return f"Failed to get scheduler status: {data.get('error', 'Unknown error')}"
+
+    running = "running" if data.get("running") else "stopped"
+    task_count = data.get("task_count", 0)
+    enabled = data.get("enabled_count", 0)
+    next_task = data.get("next_task")
+    next_in = data.get("next_in_seconds", 0)
+
+    lines = [f"Scheduler: {running}"]
+    lines.append(f"Tasks: {enabled}/{task_count} enabled")
+
+    if next_task:
+        if next_in <= 0:
+            lines.append(f"Next: {next_task} (due now)")
+        else:
+            mins = int(next_in) // 60
+            secs = int(next_in) % 60
+            lines.append(f"Next: {next_task} (in {mins}m {secs}s)")
+    else:
+        lines.append("Next: nothing due")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def scheduler_board() -> str:
+    """Show scheduler task board with overdue scores.
+
+    Returns:
+        Full board with task names, intervals, last run times, and overdue scores.
+    """
+    data = run_agentwire_cmd(["scheduler", "board"])
+    if not data.get("success"):
+        return f"Failed to get board: {data.get('error', 'Unknown error')}"
+
+    tasks = data.get("tasks", [])
+    if not tasks:
+        return "No tasks in scheduler board."
+
+    lines = ["Scheduler board:"]
+    for t in tasks:
+        label = t.get("label", t.get("name", "unknown"))
+        if not t.get("enabled"):
+            label = f"{label} [disabled]"
+        status = t.get("last_status", "never")
+        overdue = t.get("overdue_str", "?")
+        interval = t.get("interval_str", "?")
+        last_run = t.get("last_run", "never")
+        lines.append(f"  - {label}: {status}, interval {interval}, last run {last_run}, overdue {overdue}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def scheduler_run(task: str) -> str:
+    """Force-run a scheduler task immediately.
+
+    Dispatches the task via `agentwire ensure` and updates the board state.
+
+    Args:
+        task: Task name from the scheduler board.
+
+    Returns:
+        Task result with status and duration.
+    """
+    data = run_agentwire_cmd(["scheduler", "run", task], timeout=600)
+    if not data.get("success"):
+        return f"Failed to run task: {data.get('error', 'Unknown error')}"
+
+    status = data.get("status", "unknown")
+    duration = data.get("duration", 0)
+    return f"Task '{task}' completed: {status} ({duration}s)"
+
+
+# =============================================================================
 # Notification Tools
 # =============================================================================
 
