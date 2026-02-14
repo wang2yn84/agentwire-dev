@@ -85,6 +85,7 @@ class TaskConfig:
     mode: str = "standard"  # "standard" or "loop"
     max_iterations: int = 3  # Safety limit for loop mode (1-20)
     loop_review: bool = True  # Write review file between iterations
+    loop_delay: int = 0  # Seconds to wait between loop iterations
 
     # Pre-phase: data gathering
     pre: list[PreCommand] = field(default_factory=list)
@@ -185,6 +186,7 @@ def parse_task_config(name: str, config: dict, default_shell: str | None = None)
         mode=config.get("mode", "standard"),
         max_iterations=config.get("max_iterations", 3),
         loop_review=config.get("loop_review", True),
+        loop_delay=config.get("loop_delay", 0),
         pre=pre_commands,
         on_task_end=config.get("on_task_end"),
         post=post_commands,
@@ -304,6 +306,9 @@ def validate_task(task: TaskConfig) -> list[str]:
 
     if task.max_iterations < 1 or task.max_iterations > 20:
         issues.append(f"Invalid max_iterations {task.max_iterations} (must be 1-20)")
+
+    if task.loop_delay < 0:
+        issues.append("Negative loop_delay")
 
     return issues
 

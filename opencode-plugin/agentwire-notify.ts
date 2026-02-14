@@ -190,6 +190,7 @@ interface TaskContext {
   max_iterations: number // Safety cap (default: 3)
   iteration: number      // Current iteration (1-based)
   loop_review: boolean   // Write review file between iterations
+  loop_delay: number     // Seconds to wait between loop iterations
   original_prompt: string // Fully expanded task prompt for re-sending
 }
 
@@ -360,12 +361,14 @@ function continueLoop(tmuxSession: string, cwd: string, ctx: TaskContext, iterat
   const nextIteration = iteration + 1
   const maxIterations = ctx.max_iterations || 3
   const originalPrompt = ctx.original_prompt || ""
+  const loopDelay = ctx.loop_delay || 0
   const iterationsDir = join(cwd, ".agentwire/iterations")
 
   // Reset idle_count and advance iteration
   updateTaskContext(tmuxSession, { idle_count: 0, iteration: nextIteration })
 
-  const instruction = `Continue working on the task. This is iteration ${nextIteration} of ${maxIterations}.
+  const sendNext = () => {
+    const instruction = `Continue working on the task. This is iteration ${nextIteration} of ${maxIterations}.
 
 Previous iteration reviews are in ${iterationsDir}/ — read them for context on what's been done.
 
@@ -374,16 +377,25 @@ ${originalPrompt}
 
 Continue where you left off. Focus on remaining work identified in previous reviews.`
 
-  log(`TASK[loop]: continuing to iteration ${nextIteration}/${maxIterations}`)
-  try {
-    const child = spawn(
-      getAgentwirePath(),
-      ["send", "-s", tmuxSession, instruction],
-      { detached: true, stdio: "ignore" }
-    )
-    child.unref()
-  } catch {
-    // Ignore errors
+    log(`TASK[loop]: sending iteration ${nextIteration}/${maxIterations}`)
+    try {
+      const child = spawn(
+        getAgentwirePath(),
+        ["send", "-s", tmuxSession, instruction],
+        { detached: true, stdio: "ignore" }
+      )
+      child.unref()
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  if (loopDelay > 0) {
+    log(`TASK[loop]: waiting ${loopDelay}s before iteration ${nextIteration}/${maxIterations}`)
+    setTimeout(sendNext, loopDelay * 1000)
+  } else {
+    log(`TASK[loop]: continuing to iteration ${nextIteration}/${maxIterations}`)
+    sendNext()
   }
 }
 

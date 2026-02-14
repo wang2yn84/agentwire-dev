@@ -170,6 +170,7 @@ ${summary_content}"
         max_iterations=$(jq -r '.max_iterations // 3' "$task_context_file" 2>/dev/null)
         iteration=$(jq -r '.iteration // 1' "$task_context_file" 2>/dev/null)
         loop_review=$(jq -r '.loop_review // true' "$task_context_file" 2>/dev/null)
+        loop_delay=$(jq -r '.loop_delay // 0' "$task_context_file" 2>/dev/null)
         original_prompt=$(jq -r '.original_prompt // ""' "$task_context_file" 2>/dev/null)
 
         # Increment idle count
@@ -225,6 +226,11 @@ Write the file now."
                 next_iteration=$((iteration + 1))
                 jq ".idle_count = 0 | .iteration = $next_iteration" "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
 
+                if [[ "$loop_delay" -gt 0 ]]; then
+                  echo "[$(date -Iseconds)] TASK[loop]: waiting ${loop_delay}s before iteration $next_iteration/$max_iterations" >> "$dlog"
+                  sleep "$loop_delay"
+                fi
+
                 echo "[$(date -Iseconds)] TASK[loop]: continuing to iteration $next_iteration/$max_iterations" >> "$dlog"
 
                 instruction="Continue working on the task. This is iteration ${next_iteration} of ${max_iterations}.
@@ -248,6 +254,11 @@ Continue where you left off. Focus on remaining work identified in previous revi
             else
               next_iteration=$((iteration + 1))
               jq ".idle_count = 0 | .iteration = $next_iteration" "$task_context_file" > "${task_context_file}.tmp" && mv "${task_context_file}.tmp" "$task_context_file"
+
+              if [[ "$loop_delay" -gt 0 ]]; then
+                echo "[$(date -Iseconds)] TASK[loop]: waiting ${loop_delay}s before iteration $next_iteration/$max_iterations" >> "$dlog"
+                sleep "$loop_delay"
+              fi
 
               echo "[$(date -Iseconds)] TASK[loop]: continuing to iteration $next_iteration/$max_iterations" >> "$dlog"
 

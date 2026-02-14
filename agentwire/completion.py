@@ -98,6 +98,7 @@ def write_task_context(
     max_iterations: int = 3,
     iteration: int = 1,
     loop_review: bool = True,
+    loop_delay: int = 0,
     original_prompt: str = "",
 ) -> Path:
     """Write task context file for hook coordination.
@@ -106,7 +107,7 @@ def write_task_context(
     - A scheduled task is running
     - What summary file to request
     - Whether to exit the session after completion
-    - Loop mode configuration (mode, iteration count, review flag)
+    - Loop mode configuration (mode, iteration count, review flag, delay)
 
     Args:
         session: tmux session name
@@ -118,6 +119,7 @@ def write_task_context(
         max_iterations: Maximum loop iterations (loop mode only)
         iteration: Current iteration number (loop mode only)
         loop_review: Whether to write review files between iterations
+        loop_delay: Seconds to wait between loop iterations (loop mode only)
         original_prompt: Fully expanded task prompt (for re-sending in loop mode)
 
     Returns:
@@ -136,6 +138,7 @@ def write_task_context(
         "max_iterations": max_iterations,
         "iteration": iteration,
         "loop_review": loop_review,
+        "loop_delay": loop_delay,
         "original_prompt": original_prompt,
     }
 

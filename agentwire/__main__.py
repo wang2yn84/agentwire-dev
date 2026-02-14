@@ -7050,6 +7050,7 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
             max_iterations=task.max_iterations,
             iteration=1,
             loop_review=task.loop_review,
+            loop_delay=task.loop_delay,
             original_prompt=prompt,
         )
 
@@ -7076,7 +7077,10 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
             print("Waiting for task completion...")
 
         # Scale timeout for loop tasks (each iteration gets the full timeout)
-        effective_timeout = timeout * task.max_iterations if task.mode == "loop" else timeout
+        effective_timeout = (
+            timeout * task.max_iterations + task.loop_delay * (task.max_iterations - 1)
+            if task.mode == "loop" else timeout
+        )
 
         try:
             signal = wait_for_completion_signal(
@@ -7314,6 +7318,7 @@ def cmd_task_show(args) -> int:
             "mode": task.mode,
             "max_iterations": task.max_iterations,
             "loop_review": task.loop_review,
+            "loop_delay": task.loop_delay,
             "pre": [{"name": p.name, "cmd": p.cmd, "required": p.required, "validate": p.validate, "timeout": p.timeout} for p in task.pre],
             "on_task_end": task.on_task_end,
             "post": task.post,
@@ -7328,6 +7333,8 @@ def cmd_task_show(args) -> int:
     if task.mode == "loop":
         print(f"Max iterations: {task.max_iterations}")
         print(f"Loop review: {task.loop_review}")
+        if task.loop_delay > 0:
+            print(f"Loop delay: {task.loop_delay}s")
     print(f"Retries: {task.retries} (delay: {task.retry_delay}s)")
     print(f"Idle timeout: {task.idle_timeout}s")
     print()
