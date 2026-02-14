@@ -67,6 +67,34 @@ def get_portal_url() -> str:
 
 
 # =============================================================================
+# Caller identity
+# =============================================================================
+
+
+def get_caller_session() -> str | None:
+    """Get the tmux session name of the calling agent.
+
+    The MCP server runs inside the caller's tmux session,
+    so we can detect their session name from $TMUX_PANE.
+    """
+    tmux_pane = os.environ.get("TMUX_PANE")
+    if not tmux_pane:
+        return None
+    try:
+        result = subprocess.run(
+            ["tmux", "display", "-t", tmux_pane, "-p", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+# =============================================================================
 # CLI Helpers
 # =============================================================================
 
@@ -294,6 +322,9 @@ def session_create(
 def session_send(session: str, message: str) -> str:
     """Send a prompt/message to a session.
 
+    Automatically includes the sender's session name so the receiving
+    agent knows who sent the message and can reply via session_send.
+
     Args:
         session: Session name (can include @machine suffix for remote)
         message: The message to send (Enter key is appended automatically)
@@ -301,6 +332,9 @@ def session_send(session: str, message: str) -> str:
     Returns:
         Success message or error description.
     """
+    caller = get_caller_session()
+    if caller and caller != session:
+        message = f"[From: {caller}]\n{message}"
     args = ["send", "-s", session, message]
     data = run_agentwire_cmd(args)
     if data.get("success"):
