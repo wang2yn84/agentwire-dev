@@ -7949,22 +7949,10 @@ def cmd_scheduler_live(args) -> int:
 
 
 def cmd_scheduler_dashboard(args) -> int:
-    """Generate and open an HTML dashboard as a portal artifact."""
-    from .scheduler import get_board_display, load_board, read_events
-
+    """Generate and open a live HTML dashboard as a portal artifact."""
     no_open = getattr(args, 'no_open', False)
 
-    try:
-        board = load_board()
-    except (FileNotFoundError, ValueError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-
-    rows = get_board_display(board)
-    events = read_events(tail=50)
-
-    # Generate HTML
-    html = _generate_dashboard_html(rows, events)
+    html = _generate_dashboard_html()
 
     # Write to artifacts
     artifacts_dir = Path.home() / ".agentwire" / "artifacts"
@@ -7982,89 +7970,187 @@ def cmd_scheduler_dashboard(args) -> int:
     return 0
 
 
-def _generate_dashboard_html(rows: list[dict], events: list[dict]) -> str:
-    """Generate the scheduler dashboard HTML."""
-    # Build task rows
-    task_rows = ""
-    for r in rows:
-        status_class = ""
-        if r["last_status"] == "complete":
-            status_class = "status-complete"
-        elif r["last_status"] in ("failed", "timeout"):
-            status_class = "status-failed"
-        elif r["last_status"] == "never":
-            status_class = "status-never"
+def _generate_dashboard_html() -> str:
+    """Generate a live scheduler dashboard that fetches data from REST APIs."""
 
-        enabled_str = "" if r["enabled"] else " [disabled]"
-        task_rows += f"""<tr>
-            <td>{r['label']}{enabled_str}</td>
-            <td>{r['interval_str']}</td>
-            <td>{r['last_run']}</td>
-            <td class="{status_class}">{r['last_status']}</td>
-            <td>{r['last_duration']}s</td>
-            <td>{r['overdue_str']}</td>
-            <td>{r['run_count']}</td>
-        </tr>\n"""
-
-    # Build event rows (reversed for newest first)
-    event_rows = ""
-    for evt in reversed(events[-30:]):
-        ts = evt.get("ts", "")
-        try:
-            dt = datetime.datetime.fromisoformat(ts)
-            ts_str = dt.strftime("%H:%M:%S")
-        except (ValueError, TypeError):
-            ts_str = ts[:8] if ts else "?"
-
-        etype = evt.get("event", "?")
-        task = evt.get("task", "")
-        extra = ""
-        if etype == "task_completed":
-            extra = f'{evt.get("status", "")} — {evt.get("summary", "")}'
-        elif etype == "task_skipped":
-            extra = evt.get("reason", "")
-        elif etype == "scheduler_sleeping":
-            extra = f'next: {evt.get("next_task", "")} in {int(evt.get("sleep_seconds", 0))}s'
-
-        event_rows += f"<tr><td>{ts_str}</td><td>{etype}</td><td>{task}</td><td>{extra}</td></tr>\n"
-
-    return f"""<!DOCTYPE html>
+    return '''<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="30">
 <title>Scheduler Dashboard</title>
 <style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 20px; background: #1a1a2e; color: #e0e0e0; }}
-  h1 {{ color: #00d4ff; margin-bottom: 5px; }}
-  h2 {{ color: #8892b0; margin-top: 24px; }}
-  .meta {{ color: #666; font-size: 0.85em; margin-bottom: 20px; }}
-  table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
-  th, td {{ text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a2a4a; }}
-  th {{ background: #16213e; color: #00d4ff; font-weight: 600; }}
-  tr:hover {{ background: #16213e; }}
-  .status-complete {{ color: #00c853; }}
-  .status-failed {{ color: #ff5252; }}
-  .status-never {{ color: #666; }}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 20px; background: #1a1a2e; color: #e0e0e0; }
+  h1 { color: #00d4ff; margin-bottom: 4px; }
+  h2 { color: #8892b0; margin-top: 24px; margin-bottom: 8px; font-size: 1.1em; }
+  .meta { color: #555; font-size: 0.82em; margin-bottom: 16px; }
+  .status-bar { display: flex; gap: 24px; padding: 12px 16px; background: #16213e; border-radius: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .status-bar .item { display: flex; flex-direction: column; }
+  .status-bar .label { color: #556; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.5px; }
+  .status-bar .value { color: #e0e0e0; font-size: 1.1em; font-weight: 600; }
+  .status-bar .value.running { color: #00c853; }
+  .status-bar .value.idle { color: #8892b0; }
+  .status-bar .value.stopped { color: #ff5252; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #2a2a4a; font-size: 0.9em; }
+  th { background: #16213e; color: #00d4ff; font-weight: 600; position: sticky; top: 0; }
+  tr:hover { background: #16213e; }
+  .complete { color: #00c853; }
+  .failed, .timeout { color: #ff5252; }
+  .never { color: #555; }
+  .lock_conflict, .incomplete { color: #ffa726; }
+  .disabled { opacity: 0.4; }
+  .evt-task_completed { color: #00c853; }
+  .evt-task_started { color: #42a5f5; }
+  .evt-task_skipped { color: #ffa726; }
+  .evt-scheduler_sleeping { color: #555; }
+  .evt-scheduler_started { color: #00d4ff; }
+  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #00c853; margin-right: 6px; animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 </style>
 </head>
 <body>
 <h1>Scheduler Dashboard</h1>
-<p class="meta">Auto-refreshes every 30s</p>
+<p class="meta">Live &mdash; polls every 10s, instant updates via WebSocket</p>
+
+<div class="status-bar" id="status-bar">
+  <div class="item"><span class="label">Status</span><span class="value" id="sb-status">&mdash;</span></div>
+  <div class="item"><span class="label">Uptime</span><span class="value" id="sb-uptime">&mdash;</span></div>
+  <div class="item"><span class="label">Current</span><span class="value" id="sb-current">&mdash;</span></div>
+  <div class="item"><span class="label">Completed</span><span class="value" id="sb-completed">&mdash;</span></div>
+  <div class="item"><span class="label">Failed</span><span class="value" id="sb-failed">&mdash;</span></div>
+  <div class="item"><span class="label">Next</span><span class="value" id="sb-next">&mdash;</span></div>
+</div>
 
 <h2>Task Board</h2>
 <table>
-  <tr><th>Task</th><th>Interval</th><th>Last Run</th><th>Status</th><th>Duration</th><th>Overdue</th><th>Runs</th></tr>
-  {task_rows}
+  <thead><tr><th>Task</th><th>Interval</th><th>Last Run</th><th>Status</th><th>Duration</th><th>Overdue</th><th>Runs</th></tr></thead>
+  <tbody id="board-body"></tbody>
 </table>
 
 <h2>Recent Events</h2>
 <table>
-  <tr><th>Time</th><th>Event</th><th>Task</th><th>Details</th></tr>
-  {event_rows}
+  <thead><tr><th style="width:70px">Time</th><th style="width:160px">Event</th><th style="width:180px">Task</th><th>Details</th></tr></thead>
+  <tbody id="events-body"></tbody>
 </table>
+
+<script>
+const BASE = location.origin;
+const WS_URL = BASE.replace(/^http/, "ws") + "/ws";
+
+function fmtInterval(s) {
+  s = Math.round(s);
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return m ? h + "h" + m + "m" : h + "h";
+}
+
+function fmtTime(iso) {
+  try { return new Date(iso).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+  catch(e) { return iso ? iso.slice(11, 19) : "?"; }
+}
+
+function esc(s) {
+  var d = document.createElement("div");
+  d.textContent = s || "";
+  return d.innerHTML;
+}
+
+async function refreshLive() {
+  try {
+    var r = await fetch(BASE + "/api/scheduler/live");
+    if (!r.ok) throw new Error(r.status);
+    var d = await r.json();
+    var el = document.getElementById("sb-status");
+    if (d.current_task) { el.textContent = "running"; el.className = "value running"; }
+    else if (d.status === "running") { el.innerHTML = "<span class=\"pulse\"></span>idle"; el.className = "value idle"; }
+    else { el.textContent = d.status || "stopped"; el.className = "value stopped"; }
+    document.getElementById("sb-uptime").textContent = fmtInterval(d.uptime_seconds || 0);
+    if (d.current_task) {
+      var run = "";
+      if (d.current_task_started) {
+        var elapsed = (Date.now() - new Date(d.current_task_started).getTime()) / 1000;
+        run = " (" + fmtInterval(elapsed) + ")";
+      }
+      document.getElementById("sb-current").textContent = d.current_task + run;
+    } else { document.getElementById("sb-current").textContent = "\u2014"; }
+    document.getElementById("sb-completed").textContent = d.tasks_completed != null ? d.tasks_completed : "\u2014";
+    document.getElementById("sb-failed").textContent = d.tasks_failed != null ? d.tasks_failed : "\u2014";
+    if (d.next_task) {
+      document.getElementById("sb-next").textContent = d.next_task + " (in " + fmtInterval(d.next_in_seconds || 0) + ")";
+    } else { document.getElementById("sb-next").textContent = "\u2014"; }
+  } catch(e) {
+    document.getElementById("sb-status").textContent = "offline";
+    document.getElementById("sb-status").className = "value stopped";
+  }
+}
+
+async function refreshBoard() {
+  try {
+    var r = await fetch(BASE + "/api/scheduler/board");
+    if (!r.ok) return;
+    var d = await r.json();
+    var tbody = document.getElementById("board-body");
+    tbody.innerHTML = (d.tasks || []).map(function(t) {
+      var cls = t.enabled ? t.last_status : "disabled";
+      var label = esc(t.label) + (t.enabled ? "" : " <span style=\"color:#555\">[off]</span>");
+      return "<tr class=\"" + cls + "\">" +
+        "<td>" + label + "</td>" +
+        "<td>" + esc(t.interval_str) + "</td>" +
+        "<td>" + esc(t.last_run) + "</td>" +
+        "<td class=\"" + esc(t.last_status) + "\">" + esc(t.last_status) + "</td>" +
+        "<td>" + t.last_duration + "s</td>" +
+        "<td>" + esc(t.overdue_str) + "</td>" +
+        "<td>" + t.run_count + "</td></tr>";
+    }).join("");
+  } catch(e) {}
+}
+
+async function refreshEvents() {
+  try {
+    var r = await fetch(BASE + "/api/scheduler/events?tail=30");
+    if (!r.ok) return;
+    var d = await r.json();
+    var evts = (d.events || []).slice().reverse();
+    var tbody = document.getElementById("events-body");
+    tbody.innerHTML = evts.map(function(evt) {
+      var ts = fmtTime(evt.ts);
+      var etype = evt.event || "?";
+      var task = evt.task || "";
+      var detail = "";
+      if (etype === "task_completed") detail = esc(evt.status) + " \u2014 " + esc(evt.summary);
+      else if (etype === "task_skipped") detail = esc(evt.reason);
+      else if (etype === "scheduler_sleeping") detail = "next: " + esc(evt.next_task) + " in " + Math.round(evt.sleep_seconds || 0) + "s";
+      else if (etype === "task_started") detail = esc(evt.session);
+      else if (etype === "scheduler_started") detail = (evt.enabled_count || 0) + "/" + (evt.task_count || 0) + " tasks enabled";
+      return "<tr><td>" + ts + "</td><td class=\"evt-" + esc(etype) + "\">" + esc(etype) + "</td><td>" + esc(task) + "</td><td>" + detail + "</td></tr>";
+    }).join("");
+  } catch(e) {}
+}
+
+function connectWS() {
+  try {
+    var ws = new WebSocket(WS_URL);
+    ws.onmessage = function(e) {
+      try {
+        var msg = JSON.parse(e.data);
+        if (msg.type === "scheduler_update") { refreshLive(); refreshBoard(); refreshEvents(); }
+      } catch(ex) {}
+    };
+    ws.onclose = function() { setTimeout(connectWS, 5000); };
+    ws.onerror = function() { ws.close(); };
+  } catch(e) {}
+}
+
+refreshLive(); refreshBoard(); refreshEvents();
+setInterval(refreshLive, 10000);
+setInterval(refreshBoard, 10000);
+setInterval(refreshEvents, 10000);
+connectWS();
+</script>
 </body>
-</html>"""
+</html>'''
 
 
 class VersionAction(argparse.Action):
