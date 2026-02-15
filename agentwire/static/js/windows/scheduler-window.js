@@ -3,6 +3,11 @@
  *
  * Custom window (not ListWindow) because the scheduler panel is a multi-section
  * dashboard (status header + task board + event timeline), not a flat item list.
+ *
+ * Board layout: two sections with the active task in the middle.
+ * - "Up Next": tasks due to fire, sorted so next-to-fire is at the bottom (closest to active)
+ * - "Active": currently running task, highlighted in the center
+ * - "Completed": recently fired tasks, sorted so most recent is at the top (closest to active)
  */
 
 import { desktop } from '../desktop-manager.js';
@@ -12,6 +17,9 @@ let schedulerWindow = null;
 
 /** Cached board data for client-side filtering */
 let cachedBoard = [];
+
+/** Cached live state for active task detection */
+let cachedLiveState = null;
 
 /** Polling interval handle */
 let pollInterval = null;
@@ -85,6 +93,7 @@ function cleanup() {
     if (wsCleanup) { wsCleanup(); wsCleanup = null; }
     desktop.unregisterWindow('scheduler');
     cachedBoard = [];
+    cachedLiveState = null;
 }
 
 // ============================================
@@ -117,23 +126,7 @@ function buildContainer() {
                 <button class="sched-refresh-btn" title="Refresh">↻</button>
             </div>
             <div class="sched-board-table-wrap">
-                <table class="sched-board-table">
-                    <thead>
-                        <tr>
-                            <th class="sched-col-toggle"></th>
-                            <th>Task</th>
-                            <th>Session</th>
-                            <th>Interval</th>
-                            <th>Last Run</th>
-                            <th>Status</th>
-                            <th>Duration</th>
-                            <th>Overdue</th>
-                            <th>Runs</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="sched-board-body"></tbody>
-                </table>
+                <div class="sched-board-content"></div>
             </div>
         </div>
         <div class="sched-events-section collapsed">
@@ -174,12 +167,15 @@ async function refreshLiveState(container) {
     try {
         const res = await fetch('/api/scheduler/live');
         if (res.status === 404) {
+            cachedLiveState = null;
             renderStatusNotRunning(container);
             return;
         }
         const data = await res.json();
+        cachedLiveState = data;
         renderStatusHeader(container, data);
     } catch {
+        cachedLiveState = null;
         renderStatusNotRunning(container);
     }
 }
@@ -192,8 +188,8 @@ async function refreshBoard(container) {
         renderBoard(container, cachedBoard);
     } catch (err) {
         console.error('[Scheduler] Board fetch failed:', err);
-        container.querySelector('.sched-board-body').innerHTML =
-            '<tr><td colspan="10" class="sched-empty">Failed to load board</td></tr>';
+        container.querySelector('.sched-board-content').innerHTML =
+            '<div class="sched-empty">Failed to load board</div>';
     }
 }
 
@@ -267,33 +263,112 @@ function renderStatusHeader(container, state) {
 }
 
 // ============================================
-// Rendering: Task Board
+// Rendering: Task Board (Two-Section Layout)
 // ============================================
 
 function renderBoard(container, tasks) {
-    const tbody = container.querySelector('.sched-board-body');
+    const content = container.querySelector('.sched-board-content');
     if (!tasks.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="sched-empty">No tasks configured</td></tr>';
+        content.innerHTML = '<div class="sched-empty">No tasks configured</div>';
         return;
     }
-    tbody.innerHTML = tasks.map(renderBoardRow).join('');
+
+    const currentTask = cachedLiveState?.current_task || null;
+
+    // Split tasks into three groups
+    const activeTask = currentTask ? tasks.find(t => t.name === currentTask) : null;
+    const otherTasks = tasks.filter(t => t.name !== currentTask);
+
+    // "Up Next": overdue (overdue_by > 0) or never run — these are due to fire
+    // "Completed": not overdue (overdue_by <= 0) and have run before
+    const upNext = otherTasks.filter(t => t.overdue_by > 0 || t.last_status === 'never');
+    const completed = otherTasks.filter(t => t.overdue_by <= 0 && t.last_status !== 'never');
+
+    // Sort "Up Next": most overdue at bottom (closest to active) = ascending by overdue
+    // So the task that's about to fire is at the bottom of the list
+    upNext.sort((a, b) => a.overdue_by - b.overdue_by);
+
+    // Sort "Completed": most recently run at top (closest to active)
+    // last_run_iso gives us the ISO timestamp to sort by
+    completed.sort((a, b) => {
+        const ta = a.last_run_iso ? new Date(a.last_run_iso).getTime() : 0;
+        const tb = b.last_run_iso ? new Date(b.last_run_iso).getTime() : 0;
+        return tb - ta; // newest first
+    });
+
+    const tableHead = `
+        <thead>
+            <tr>
+                <th class="sched-col-toggle"></th>
+                <th>Task</th>
+                <th>Session</th>
+                <th>Interval</th>
+                <th>Last Run</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Overdue</th>
+                <th>Runs</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+    `;
+
+    let html = '';
+
+    // Up Next section
+    if (upNext.length > 0) {
+        html += `
+            <div class="sched-section">
+                <div class="sched-section-label sched-section-upnext">Up Next <span class="sched-section-count">${upNext.length}</span></div>
+                <table class="sched-board-table">${tableHead}<tbody>${upNext.map(t => renderBoardRow(t, false)).join('')}</tbody></table>
+            </div>
+        `;
+    }
+
+    // Active task section
+    if (activeTask) {
+        html += `
+            <div class="sched-section sched-section-active-wrap">
+                <div class="sched-section-label sched-section-running">Running</div>
+                <table class="sched-board-table">${tableHead}<tbody>${renderBoardRow(activeTask, true)}</tbody></table>
+            </div>
+        `;
+    }
+
+    // Completed section
+    if (completed.length > 0) {
+        html += `
+            <div class="sched-section">
+                <div class="sched-section-label sched-section-completed">Completed <span class="sched-section-count">${completed.length}</span></div>
+                <table class="sched-board-table">${tableHead}<tbody>${completed.map(t => renderBoardRow(t, false)).join('')}</tbody></table>
+            </div>
+        `;
+    }
+
+    if (!html) {
+        html = '<div class="sched-empty">No tasks configured</div>';
+    }
+
+    content.innerHTML = html;
     wireRowActions(container);
 }
 
-function renderBoardRow(task) {
+function renderBoardRow(task, isActive) {
     const statusClass = getStatusClass(task.last_status);
-    const isRunning = false; // Will be detected by live state match
     const rowClass = [
         'sched-row',
+        isActive ? 'sched-row-active' : '',
         task.enabled ? '' : 'sched-row-disabled',
         task.filler ? 'sched-row-filler' : '',
     ].filter(Boolean).join(' ');
 
     const toggleDotClass = task.enabled ? 'sched-toggle-dot enabled' : 'sched-toggle-dot disabled';
 
-    const statusBadge = task.last_status
-        ? `<span class="sched-badge sched-badge-${statusClass}">${task.last_status}</span>`
-        : '<span class="sched-badge sched-badge-never">never</span>';
+    const statusBadge = isActive
+        ? '<span class="sched-badge sched-badge-running">running</span>'
+        : (task.last_status
+            ? `<span class="sched-badge sched-badge-${statusClass}">${task.last_status}</span>`
+            : '<span class="sched-badge sched-badge-never">never</span>');
 
     const durationStr = task.last_duration != null ? `${task.last_duration}s` : '—';
     const overdueStr = task.overdue_str || '—';
@@ -319,7 +394,13 @@ function renderBoardRow(task) {
 }
 
 function wireRowActions(container) {
-    container.querySelector('.sched-board-body').addEventListener('click', async (e) => {
+    // Use event delegation on the board content area
+    const content = container.querySelector('.sched-board-content');
+    // Remove old listener by replacing the node (simple approach since we rebuild content)
+    const clone = content.cloneNode(true);
+    content.parentNode.replaceChild(clone, content);
+
+    clone.addEventListener('click', async (e) => {
         const target = e.target.closest('[data-action]');
         if (!target) return;
         const action = target.dataset.action;

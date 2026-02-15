@@ -3195,12 +3195,13 @@ def cmd_new(args) -> int:
     agent_type = detect_default_agent_type()
 
     # Determine session type from CLI --type flag or existing config
+    no_save = getattr(args, 'no_save', False)
     type_arg = getattr(args, 'type', None)
     if type_arg:
         # CLI flag specified - use it directly and normalize
         session_type = normalize_session_type(type_arg, agent_type)
-        # Save to .agentwire.yml for future sessions
-        if session_path:
+        # Save to .agentwire.yml for future sessions (unless --no-save)
+        if session_path and not no_save:
             existing_config = load_project_config(session_path)
             project_config = ProjectConfig(
                 type=SessionType.from_str(session_type),
@@ -3240,26 +3241,27 @@ def cmd_new(args) -> int:
         )
 
     # Update project config (.agentwire.yml) - preserve ALL existing settings
-    # Note: session name is NOT stored in config - it's runtime context
-    existing_config = load_project_config(session_path)
-    if existing_config:
-        # Preserve existing settings if not overridden by CLI
-        project_config = ProjectConfig(
-            type=SessionType.from_str(session_type),
-            roles=role_names if type_arg else existing_config.roles,
-            voice=existing_config.voice,
-            parent=existing_config.parent,
-            shell=existing_config.shell,
-            tasks=existing_config.tasks,
-        )
-    else:
-        # Create new config
-        project_config = ProjectConfig(
-            type=SessionType.from_str(session_type),
-            roles=role_names if role_names else [],
-            voice=None,
-        )
-    save_project_config(project_config, session_path)
+    # Skip if --no-save (scheduler uses this to avoid corrupting project config)
+    if not no_save:
+        existing_config = load_project_config(session_path)
+        if existing_config:
+            # Preserve existing settings if not overridden by CLI
+            project_config = ProjectConfig(
+                type=SessionType.from_str(session_type),
+                roles=role_names if type_arg else existing_config.roles,
+                voice=existing_config.voice,
+                parent=existing_config.parent,
+                shell=existing_config.shell,
+                tasks=existing_config.tasks,
+            )
+        else:
+            # Create new config
+            project_config = ProjectConfig(
+                type=SessionType.from_str(session_type),
+                roles=role_names if role_names else [],
+                voice=None,
+            )
+        save_project_config(project_config, session_path)
 
     if json_mode:
         _output_json({
@@ -8435,6 +8437,7 @@ def main() -> int:
     new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, opencode-bypass, opencode-prompted, opencode-restricted, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
+    new_parser.add_argument("--no-save", action="store_true", help="Don't overwrite .agentwire.yml (use CLI flags as session-level overrides only)")
     new_parser.add_argument("--json", action="store_true", help="Output as JSON")
     new_parser.set_defaults(func=cmd_new)
 

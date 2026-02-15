@@ -403,7 +403,8 @@ def _ensure_session(task: SchedulerTask) -> None:
         return  # Already running
 
     # Create with specified type/roles or let agentwire new use project defaults
-    cmd = ["agentwire", "new", "-s", task.session, "-p", task.project]
+    # --no-save prevents overwriting the project's .agentwire.yml with scheduler overrides
+    cmd = ["agentwire", "new", "-s", task.session, "-p", task.project, "--no-save"]
     if task.type:
         cmd.extend(["--type", task.type])
     if task.roles is not None:

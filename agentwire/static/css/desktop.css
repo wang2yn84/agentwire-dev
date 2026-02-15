@@ -2815,6 +2815,17 @@ body {
     text-transform: lowercase;
 }
 
+.sched-badge-running {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    animation: sched-badge-pulse 2s ease-in-out infinite;
+}
+
+@keyframes sched-badge-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
 .sched-badge-complete {
     background: rgba(74, 222, 128, 0.15);
     color: #4ade80;
@@ -3042,4 +3053,69 @@ body {
     max-height: 400px;
     overflow-y: auto;
     line-height: 1.5;
+}
+
+/* Board content (wraps sections) */
+.sched-board-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+/* Section dividers */
+.sched-section {
+    position: relative;
+}
+
+.sched-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 6px 12px 4px;
+    color: var(--text-muted);
+    border-bottom: 1px solid rgba(42, 42, 42, 0.5);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sched-section-count {
+    font-weight: 400;
+    font-size: 10px;
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.sched-section-upnext {
+    color: #fbbf24;
+}
+
+.sched-section-running {
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.05);
+}
+
+.sched-section-completed {
+    color: #4ade80;
+}
+
+/* Active task highlight */
+.sched-section-active-wrap {
+    border-top: 2px solid rgba(56, 189, 248, 0.3);
+    border-bottom: 2px solid rgba(56, 189, 248, 0.3);
+}
+
+.sched-row-active {
+    background: rgba(56, 189, 248, 0.08) !important;
+}
+
+.sched-row-active .sched-task-name {
+    color: #38bdf8;
+    font-weight: 600;
+}
+
+/* Hide thead for active section (only 1 row, redundant) */
+.sched-section-active-wrap .sched-board-table thead {
+    display: none;
 }
