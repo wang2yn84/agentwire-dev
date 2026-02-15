@@ -6999,7 +6999,6 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
                 print("Waiting for session to initialize...")
             # Determine agent type from session type in .agentwire.yml
             try:
-                from .config import load_project_config
                 pcfg = load_project_config(project_path)
                 agent_type = "opencode" if pcfg and pcfg.type and pcfg.type.value.startswith("opencode") else "claude"
             except Exception:
