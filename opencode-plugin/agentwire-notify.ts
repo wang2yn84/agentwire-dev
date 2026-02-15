@@ -187,11 +187,17 @@ function getPortalUrl(): string {
     const configPath = join(homedir(), ".agentwire", "config.yaml")
     if (existsSync(configPath)) {
       const content = readFileSync(configPath, "utf-8")
-      const match = content.match(/^\s*url:\s*["']?([^"'\s]+)/m)
-      if (match) {
-        portalUrl = match[1]
+      // Look for portal.url in config (under "portal:" section)
+      const portalMatch = content.match(/^portal:\s*\n\s+url:\s*["']?([^"'\s]+)/m)
+      if (portalMatch) {
+        portalUrl = portalMatch[1]
         return portalUrl
       }
+      // Fall back to constructing from server config
+      const portMatch = content.match(/^server:\s*\n(?:.*\n)*?\s+port:\s*(\d+)/m)
+      const port = portMatch ? portMatch[1] : "8765"
+      portalUrl = `https://localhost:${port}`
+      return portalUrl
     }
   } catch {
     // fallback
