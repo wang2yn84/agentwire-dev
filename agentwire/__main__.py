@@ -3591,6 +3591,36 @@ def cmd_kill(args) -> int:
     return 0
 
 
+def _wait_for_agent_ready(session: str, timeout: int = 30, pane_index: int = 0) -> bool:
+    """Wait for an agent to be ready to accept input.
+
+    Checks for both Claude Code and OpenCode ready indicators,
+    regardless of which agent is running (avoids config/runtime mismatch).
+
+    Returns True if agent became ready, False if timeout.
+    """
+    start = time.time()
+    all_indicators = ['❯', 'Claude Code', 'Ask anything', 'GLM', 'Coding Plan', '▣']
+
+    while (time.time() - start) < timeout:
+        try:
+            result = subprocess.run(
+                ["tmux", "capture-pane", "-t", f"{session}.{pane_index}", "-p", "-S", "-20"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                output = result.stdout
+                for indicator in all_indicators:
+                    if indicator in output:
+                        time.sleep(0.3)
+                        return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    return False
+
+
 def _wait_for_worker_ready(session: str, pane_index: int, timeout: int = 30, agent_type: str = "claude") -> bool:
     """Wait for a worker pane to be ready to receive input.
 
@@ -6994,18 +7024,13 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
             if result != 0:
                 return _output_result(False, json_mode, f"Failed to create session '{session}'", exit_code=ENSURE_EXIT_SESSION_ERROR)
 
-            # Wait for agent to be ready to accept input
+        # Wait for agent to be ready to accept input.
+        # Returns immediately if already ready (existing session with active agent).
+        if not json_mode:
+            print("Waiting for agent to be ready...")
+        if not _wait_for_agent_ready(session, timeout=30):
             if not json_mode:
-                print("Waiting for session to initialize...")
-            # Determine agent type from session type in .agentwire.yml
-            try:
-                pcfg = load_project_config(project_path)
-                agent_type = "opencode" if pcfg and pcfg.type and pcfg.type.value.startswith("opencode") else "claude"
-            except Exception:
-                agent_type = "claude"
-            if not _wait_for_worker_ready(session, 0, timeout=30, agent_type=agent_type):
-                if not json_mode:
-                    print("Warning: agent may not be fully ready")
+                print("Warning: agent may not be fully ready")
 
         # Run pre-commands
         if task.pre:
