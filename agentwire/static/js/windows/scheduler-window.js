@@ -38,6 +38,15 @@ let schedulerRunning = false;
 /** WebSocket listener cleanups */
 let wsCleanups = [];
 
+/** Agent progress state per session */
+let agentProgress = {};
+
+/** Output preview state */
+let outputExpanded = false;
+let expandedSession = null;
+let elapsedTimer = null;
+let outputRefreshTimer = null;
+
 /**
  * Open the Scheduler window.
  */
@@ -82,7 +91,21 @@ export function openSchedulerWindow() {
         renderStatusHeader(container, data);
         if (activeTab === 'queue') renderQueueTab(container);
     }));
-    wsCleanups.push(desktop.on('scheduler_update', () => refreshAll(container)));
+    wsCleanups.push(desktop.on('scheduler_update', (data) => {
+        // Task completed — clear progress for that session, stop timers
+        if (data.session) delete agentProgress[data.session];
+        stopElapsedTimer();
+        stopOutputRefresh();
+        outputExpanded = false;
+        expandedSession = null;
+        refreshAll(container);
+    }));
+    wsCleanups.push(desktop.on('agent_progress', (data) => {
+        if (data.session) {
+            agentProgress[data.session] = data;
+            updateActiveCardProgress(container);
+        }
+    }));
 
     // Initial fetch
     refreshAll(container);
@@ -110,6 +133,11 @@ function cleanup() {
     cachedEvents = [];
     drilldownTask = null;
     activeTab = 'queue';
+    agentProgress = {};
+    outputExpanded = false;
+    expandedSession = null;
+    stopElapsedTimer();
+    stopOutputRefresh();
 }
 
 // ============================================
@@ -338,17 +366,47 @@ function renderQueueTab(container) {
         const elapsed = cachedLiveState?.current_task_started
             ? Math.floor((Date.now() - new Date(cachedLiveState.current_task_started).getTime()) / 1000)
             : 0;
+        const session = activeTask.session || '';
+        const progress = agentProgress[session];
+        const statusBadge = progress ? getAgentStatusBadge(progress.status) : '';
+        const respCount = progress?.responses > 0 ? `<span class="sched-agent-responses">${progress.responses} resp</span>` : '';
+        const diffIcon = progress?.has_diffs ? '<span class="sched-diff-indicator" title="Files changed">\u270E</span>' : '';
+        const expandIcon = outputExpanded && expandedSession === session ? '\u25B2' : '\u25BC';
+
         html += `
             <div class="sched-queue-section sched-queue-active">
                 <div class="sched-queue-section-label sched-section-running">Running</div>
                 <div class="sched-queue-active-card">
-                    <span class="sched-queue-task-name sched-clickable" data-action="drilldown" data-task="${activeTask.name}">${escapeHtml(activeTask.name)}</span>
-                    <span class="sched-queue-session">${activeTask.session ? `<a class="sched-session-link" data-action="open-session" data-session="${escapeHtml(activeTask.session)}">${escapeHtml(activeTask.session)}</a>` : ''}</span>
-                    <span class="sched-queue-elapsed">${formatDuration(elapsed)}</span>
-                    <div class="sched-progress-bar" style="display:block;width:120px;"><div class="sched-progress-fill"></div></div>
+                    <div class="sched-active-card-row">
+                        <span class="sched-queue-task-name sched-clickable" data-action="drilldown" data-task="${activeTask.name}">${escapeHtml(activeTask.name)}</span>
+                        <span class="sched-queue-session">${session ? `<a class="sched-session-link" data-action="open-session" data-session="${escapeHtml(session)}">${escapeHtml(session)}</a>` : ''}</span>
+                        <span class="sched-queue-elapsed" data-started="${cachedLiveState?.current_task_started || ''}">${formatDuration(elapsed)}</span>
+                        <div class="sched-agent-stats">
+                            ${statusBadge}
+                            ${respCount}
+                            ${diffIcon}
+                        </div>
+                        <div class="sched-progress-bar" style="display:block;width:80px;"><div class="sched-progress-fill"></div></div>
+                        ${session ? `<button class="sched-expand-btn" data-action="toggle-output" data-session="${escapeHtml(session)}" title="Toggle output preview">${expandIcon}</button>` : ''}
+                    </div>
+                    <div class="sched-active-output" style="display:${outputExpanded && expandedSession === session ? 'block' : 'none'};">
+                        <pre class="sched-output-pre">${outputExpanded && expandedSession === session ? 'Loading...' : ''}</pre>
+                    </div>
                 </div>
             </div>
         `;
+
+        // Start elapsed timer
+        startElapsedTimer(container);
+
+        // If output is expanded, load it
+        if (outputExpanded && expandedSession === session) {
+            fetchAndShowOutput(container, session);
+            startOutputRefresh(container, session);
+        }
+    } else {
+        stopElapsedTimer();
+        stopOutputRefresh();
     }
 
     // Up Next section
@@ -624,7 +682,11 @@ function handleContentClick(container, e) {
     // Skip actions handled by dedicated listeners (expand-history, expand-run)
     if (action === 'expand-history' || action === 'expand-run') return;
 
-    if (action === 'drilldown') {
+    if (action === 'toggle-output') {
+        const session = target.dataset.session;
+        toggleOutputPreview(container, session);
+        return;
+    } else if (action === 'drilldown') {
         const taskName = target.dataset.task;
         openDrilldown(container, taskName);
     } else if (action === 'toggle') {
@@ -851,4 +913,117 @@ function formatDate(ts) {
 function escapeHtml(str) {
     if (!str) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ============================================
+// Agent Progress Helpers
+// ============================================
+
+function getAgentStatusBadge(status) {
+    if (!status) return '';
+    const cls = status === 'busy' ? 'sched-agent-busy'
+        : status === 'retry' ? 'sched-agent-retry'
+        : 'sched-agent-idle';
+    return `<span class="sched-agent-badge ${cls}">${status}</span>`;
+}
+
+/** Inline DOM update for progress stats — avoids full tab re-render */
+function updateActiveCardProgress(container) {
+    const statsEl = container.querySelector('.sched-agent-stats');
+    if (!statsEl) return;
+
+    const activeTask = cachedLiveState?.current_task
+        ? cachedBoard.find(t => t.name === cachedLiveState.current_task)
+        : null;
+    if (!activeTask) return;
+
+    const session = activeTask.session || '';
+    const progress = agentProgress[session];
+    if (!progress) return;
+
+    const statusBadge = getAgentStatusBadge(progress.status);
+    const respCount = progress.responses > 0 ? `<span class="sched-agent-responses">${progress.responses} resp</span>` : '';
+    const diffIcon = progress.has_diffs ? '<span class="sched-diff-indicator" title="Files changed">\u270E</span>' : '';
+    statsEl.innerHTML = `${statusBadge}${respCount}${diffIcon}`;
+}
+
+function toggleOutputPreview(container, session) {
+    if (outputExpanded && expandedSession === session) {
+        // Collapse
+        outputExpanded = false;
+        expandedSession = null;
+        stopOutputRefresh();
+        const outputEl = container.querySelector('.sched-active-output');
+        if (outputEl) outputEl.style.display = 'none';
+        const btn = container.querySelector('.sched-expand-btn');
+        if (btn) btn.textContent = '\u25BC';
+    } else {
+        // Expand
+        outputExpanded = true;
+        expandedSession = session;
+        const outputEl = container.querySelector('.sched-active-output');
+        if (outputEl) {
+            outputEl.style.display = 'block';
+            const pre = outputEl.querySelector('.sched-output-pre');
+            if (pre) pre.textContent = 'Loading...';
+        }
+        const btn = container.querySelector('.sched-expand-btn');
+        if (btn) btn.textContent = '\u25B2';
+        fetchAndShowOutput(container, session);
+        startOutputRefresh(container, session);
+    }
+}
+
+async function fetchAndShowOutput(container, session) {
+    try {
+        const res = await fetch(`/api/scheduler/output?session=${encodeURIComponent(session)}&lines=30`);
+        const data = await res.json();
+        const pre = container.querySelector('.sched-output-pre');
+        if (pre && expandedSession === session) {
+            pre.textContent = data.output || '(no output)';
+            // Auto-scroll to bottom
+            const outputEl = container.querySelector('.sched-active-output');
+            if (outputEl) outputEl.scrollTop = outputEl.scrollHeight;
+        }
+    } catch {
+        const pre = container.querySelector('.sched-output-pre');
+        if (pre) pre.textContent = '(failed to fetch output)';
+    }
+}
+
+function startOutputRefresh(container, session) {
+    stopOutputRefresh();
+    outputRefreshTimer = setInterval(() => {
+        if (outputExpanded && expandedSession === session) {
+            fetchAndShowOutput(container, session);
+        } else {
+            stopOutputRefresh();
+        }
+    }, 5000);
+}
+
+function stopOutputRefresh() {
+    if (outputRefreshTimer) {
+        clearInterval(outputRefreshTimer);
+        outputRefreshTimer = null;
+    }
+}
+
+function startElapsedTimer(container) {
+    stopElapsedTimer();
+    elapsedTimer = setInterval(() => {
+        const el = container.querySelector('.sched-queue-elapsed');
+        if (!el) { stopElapsedTimer(); return; }
+        const started = el.dataset.started;
+        if (!started) return;
+        const elapsed = Math.floor((Date.now() - new Date(started).getTime()) / 1000);
+        el.textContent = formatDuration(elapsed);
+    }, 1000);
+}
+
+function stopElapsedTimer() {
+    if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+    }
 }

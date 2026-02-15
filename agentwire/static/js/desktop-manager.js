@@ -328,6 +328,14 @@ class DesktopManager {
                 this.emit('scheduler_update', msg);
                 break;
 
+            case 'scheduler_state':
+                this.emit('scheduler_state', msg);
+                break;
+
+            case 'agent_progress':
+                this.emit('agent_progress', msg);
+                break;
+
             default:
                 // Unknown message types are silently ignored
         }

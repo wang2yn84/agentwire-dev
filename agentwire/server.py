@@ -223,6 +223,7 @@ class AgentWireServer:
         self.app.router.add_get("/api/scheduler/tasks/{name}/events", self.api_scheduler_task_events)
         self.app.router.add_post("/api/scheduler/start", self.api_scheduler_start)
         self.app.router.add_post("/api/scheduler/stop", self.api_scheduler_stop)
+        self.app.router.add_get("/api/scheduler/output", self.api_scheduler_session_output)
         # Artifact windows: upload and serve agent-generated HTML
         self.app.router.add_post("/api/artifacts/upload", self.api_artifacts_upload)
         self.app.router.add_get("/api/artifacts", self.api_artifacts_list)
@@ -3988,6 +3989,21 @@ projects:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_scheduler_session_output(self, request: web.Request) -> web.Response:
+        """GET /api/scheduler/output?session=X&lines=30 - Get recent session output."""
+        session = request.query.get("session")
+        if not session:
+            return web.json_response({"error": "session parameter required"}, status=400)
+        lines = min(int(request.query.get("lines", "30")), 100)
+        try:
+            loop = asyncio.get_event_loop()
+            output = await loop.run_in_executor(
+                None, lambda: self.agent.get_output(session, lines=lines)
+            )
+            return web.json_response({"session": session, "output": output})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def api_notify(self, request: web.Request) -> web.Response:
         """POST /api/notify - Receive tmux hook notifications.
 
@@ -4106,6 +4122,10 @@ projects:
             elif event == "scheduler_state":
                 # Full scheduler state push — broadcast live state to dashboards
                 await self.broadcast_dashboard("scheduler_state", data)
+
+            elif event == "agent_progress":
+                # Live agent progress from OpenCode plugin — broadcast to dashboards
+                await self.broadcast_dashboard("agent_progress", data)
 
             elif event == "scheduler_task_complete":
                 # Scheduler task finished — broadcast to dashboards

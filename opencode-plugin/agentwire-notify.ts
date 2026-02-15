@@ -176,6 +176,55 @@ function hasMeaningfulWork(state: SessionState): boolean {
 }
 
 // =============================================================================
+// Progress push to portal
+// =============================================================================
+
+let portalUrl: string | null = null
+
+function getPortalUrl(): string {
+  if (portalUrl) return portalUrl
+  try {
+    const configPath = join(homedir(), ".agentwire", "config.yaml")
+    if (existsSync(configPath)) {
+      const content = readFileSync(configPath, "utf-8")
+      const match = content.match(/^\s*url:\s*["']?([^"'\s]+)/m)
+      if (match) {
+        portalUrl = match[1]
+        return portalUrl
+      }
+    }
+  } catch {
+    // fallback
+  }
+  portalUrl = "https://localhost:8765"
+  return portalUrl
+}
+
+function postProgress(session: string, state: SessionState, status: string): void {
+  try {
+    const url = `${getPortalUrl()}/api/notify`
+    const payload = JSON.stringify({
+      event: "agent_progress",
+      session,
+      status,
+      responses: state.completedResponses,
+      has_diffs: state.hasDiffs,
+      busy_cycles: state.busyCount,
+      retry_count: state.retryCount,
+    })
+    const child = spawn("curl", [
+      "-sk", "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-d", payload,
+      url,
+    ], { detached: true, stdio: "ignore" })
+    child.unref()
+  } catch {
+    // Fire-and-forget, ignore errors
+  }
+}
+
+// =============================================================================
 // Scheduled task support (ported from bash hook)
 // =============================================================================
 
@@ -434,6 +483,12 @@ function handleStatus(event: any, states: Map<string, SessionState>): void {
     // Don't handle here, wait for session.idle event
     state.inRetryState = false
   }
+
+  // Push progress to portal on every status transition
+  const tmuxSession = getTmuxSessionName()
+  if (tmuxSession && statusType) {
+    postProgress(tmuxSession, state, statusType)
+  }
 }
 
 // =============================================================================
@@ -452,6 +507,11 @@ function handleMessageUpdated(event: any, states: Map<string, SessionState>): vo
     const state = getState(sid, states)
     state.completedResponses++
     log(`MSG: completed response sid=${sid} total=${state.completedResponses}`)
+
+    const tmuxSession = getTmuxSessionName()
+    if (tmuxSession) {
+      postProgress(tmuxSession, state, "busy")
+    }
   }
 }
 
@@ -466,6 +526,11 @@ function handleDiff(event: any, states: Map<string, SessionState>): void {
     const state = getState(sid, states)
     state.hasDiffs = true
     log(`DIFF: file changes detected sid=${sid}`)
+
+    const tmuxSession = getTmuxSessionName()
+    if (tmuxSession) {
+      postProgress(tmuxSession, state, "busy")
+    }
   }
 }
 
