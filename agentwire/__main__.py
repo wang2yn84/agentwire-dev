@@ -165,8 +165,12 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
                 temp_file = f.name
                 parts.append(f'--append-system-prompt "$(<{temp_file})"')
 
-            if merged.model:
+            if merged.model and not model:
                 parts.append(f"--model {merged.model}")
+
+        # Explicit model override takes priority over role model
+        if model:
+            parts.append(f"--model {model}")
 
         return AgentCommand(
             command=" ".join(parts),
@@ -3222,7 +3226,8 @@ def cmd_new(args) -> int:
             session_type = f"{agent_type}-bypass"
 
     # Build agent command
-    agent = build_agent_command(session_type, roles if roles else None)
+    model_override = getattr(args, 'model', None)
+    agent = build_agent_command(session_type, roles if roles else None, model=model_override)
 
     # Store role instructions for first message (OpenCode only)
     if agent.role_instructions:
@@ -8458,6 +8463,7 @@ def main() -> int:
     new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, opencode-bypass, opencode-prompted, opencode-restricted, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
+    new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
     new_parser.add_argument("--persist", action="store_true", help="Write --type/--roles to .agentwire.yml (default: session-level override only)")
     new_parser.add_argument("--json", action="store_true", help="Output as JSON")
     new_parser.set_defaults(func=cmd_new)

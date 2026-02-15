@@ -60,8 +60,9 @@ class SchedulerTask:
     enabled: bool = True
     filler: bool = False  # only runs in spare cycles
     priority: int = 99    # filler ordering (lower = higher)
-    type: str | None = None  # session type override (e.g., opencode-bypass)
-    roles: list[str] | None = None  # role override (e.g., ["glm-worker"])
+    type: str | None = None  # session type override (e.g., claude-bypass)
+    roles: list[str] | None = None  # role override (e.g., ["task-runner"])
+    model: str | None = None  # model override (e.g., "haiku")
 
 
 @dataclass
@@ -129,6 +130,7 @@ def load_board() -> Board:
             priority=int(t.get("priority", 99)),
             type=t.get("type"),
             roles=roles,
+            model=t.get("model"),
         )
 
     raw_state = raw.get("state", {})
@@ -444,7 +446,7 @@ def _pre_create_session(task: SchedulerTask) -> None:
 
     If no overrides, this is a no-op — ensure --fresh handles everything.
     """
-    if not task.type and task.roles is None:
+    if not task.type and task.roles is None and not task.model:
         return  # No overrides, let ensure handle it
 
     # Only pre-create if session doesn't exist (ensure --fresh will have killed it)
@@ -460,6 +462,8 @@ def _pre_create_session(task: SchedulerTask) -> None:
         cmd.extend(["--type", task.type])
     if task.roles is not None:
         cmd.extend(["--roles", ",".join(task.roles)])
+    if task.model:
+        cmd.extend(["--model", task.model])
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode == 0:
@@ -521,7 +525,7 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     _log_event("task_started", task=task_name, session=task.session,
                project=task.project, attempt=existing_state.run_count + 1)
 
-    has_overrides = bool(task.type or task.roles is not None)
+    has_overrides = bool(task.type or task.roles is not None or task.model)
 
     if has_overrides:
         # Scheduler has type/role overrides — kill + pre-create ourselves,
