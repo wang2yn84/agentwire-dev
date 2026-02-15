@@ -7,6 +7,8 @@ and time math.
 """
 
 import json
+import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -60,6 +62,7 @@ class SchedulerTask:
     priority: int = 99    # filler ordering (lower = higher)
     type: str | None = None  # session type override (e.g., opencode-bypass)
     roles: list[str] | None = None  # role override (e.g., ["glm-worker"])
+    timeout: int = 300  # ensure --timeout in seconds
 
 
 @dataclass
@@ -472,23 +475,38 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
         "-s", task.session,
         "--task", task.task,
         "--project", task.project,
+        "--timeout", str(task.timeout),
         "--skip-if-locked",
         "--json",
     ]
 
     start_time = time.time()
     result = None
+    task_timeout = task.timeout + 120  # hard limit = ensure timeout + 2min buffer
 
     try:
-        result = subprocess.run(
+        # Use Popen with process group for reliable timeout killing
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=600,  # 10 min hard limit for the subprocess
+            start_new_session=True,  # Create new process group
         )
-        exit_code = result.returncode
-    except subprocess.TimeoutExpired:
-        exit_code = _EXIT_TIMEOUT
+        try:
+            stdout, stderr = proc.communicate(timeout=task_timeout)
+            exit_code = proc.returncode
+            # Create a result-like object for _parse_ensure_summary
+            result = subprocess.CompletedProcess(cmd, exit_code, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            # Kill entire process group (ensures all children die)
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            exit_code = _EXIT_TIMEOUT
+            print(f"[{_ts()}] Timeout: {task_name} killed after {task_timeout}s")
     except Exception:
         exit_code = _EXIT_FAILED
 
