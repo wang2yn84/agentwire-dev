@@ -115,7 +115,7 @@ def _create_opencode_agent_file(role_names: list[str], instructions: str) -> str
     return agent_name
 
 
-def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None) -> AgentCommand:
+def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None, model: str | None = None) -> AgentCommand:
     """Build the agent command for a session.
 
     Supports both Claude Code and OpenCode with appropriate flags/env vars.
@@ -123,6 +123,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
     Args:
         session_type: Session type (e.g., "claude-bypass", "opencode-bypass", "bare")
         roles: Optional list of roles to apply
+        model: Optional model override (e.g., "haiku", "sonnet", "opus")
 
     Returns:
         AgentCommand with the command string and metadata
