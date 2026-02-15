@@ -282,12 +282,16 @@ uploads:
 |----------|--------|---------|
 | `/health` | GET | Health check |
 | `/api/sessions` | GET | List all tmux sessions |
+| `/api/sessions/local` | GET | List local tmux sessions |
+| `/api/sessions/remote` | GET | List remote tmux sessions |
 | `/api/sessions/{name}` | DELETE | Close/kill a session |
-| `/api/sessions/archive` | GET | List archived sessions |
+| `/api/sessions/refresh` | POST | Refresh session list from tmux |
 | `/api/create` | POST | Create new session |
 | `/api/check-path` | GET | Check if path exists and is git repo |
 | `/api/check-branches` | GET | Get existing branches matching prefix |
 | `/api/projects` | GET | List discovered projects (folders with `.agentwire.yml`) |
+| `/api/projects/delete` | POST | Delete a project |
+| `/api/roles` | GET | List available roles |
 
 ### Session Management
 
@@ -341,6 +345,51 @@ uploads:
 |----------|--------|---------|
 | `/api/permission/{name}` | POST | Submit permission request (from hook) |
 | `/api/permission/{name}/respond` | POST | User responds to permission request |
+
+### History
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/history` | GET | List conversation history |
+| `/api/history/{session_id}` | GET | Get session history details |
+| `/api/history/{session_id}/resume` | POST | Resume a session from history (forks) |
+
+### Desktop/Portal Control
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/desktop/windows` | GET | List open desktop windows |
+| `/api/desktop/window/open` | POST | Open a window (session, panel, or artifact) |
+| `/api/desktop/window/close` | POST | Close a window |
+| `/api/desktop/window/focus` | POST | Bring window to front |
+| `/api/desktop/window/tile` | POST | Tile window to zone (left/right/top/bottom) |
+| `/api/desktop/window/minimize-all` | POST | Minimize all windows |
+| `/api/desktop/layout` | POST | Apply multi-window layout |
+
+### Artifacts
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/artifacts` | GET | List agent-generated HTML artifacts |
+| `/api/artifacts/upload` | POST | Upload new artifact |
+| `/api/artifacts/{filename}` | GET | Serve artifact file |
+
+### Scheduler
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/scheduler/board` | GET | Get task board with overdue scores |
+| `/api/scheduler/live` | GET | Get live scheduler state |
+| `/api/scheduler/events` | GET | Get recent scheduler events |
+| `/api/scheduler/tasks/{name}/run` | POST | Force-run a scheduled task |
+| `/api/scheduler/tasks/{name}/enable` | POST | Enable a scheduled task |
+| `/api/scheduler/tasks/{name}/disable` | POST | Disable a scheduled task |
+
+### Notifications
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/notify` | POST | Notify portal of session/pane state changes |
 
 ### WebSocket Endpoints
 

@@ -385,7 +385,7 @@ Each project can have a `.agentwire.yml` in its root directory. This configures 
 type: claude-bypass
 roles:
   - leader
-  - glm-orchestration
+  - glm-delegation
 voice: may
 parent: main  # Notify parent session when idle (optional)
 ```
