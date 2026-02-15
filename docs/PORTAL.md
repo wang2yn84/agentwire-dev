@@ -372,7 +372,8 @@ uploads:
 |----------|--------|---------|
 | `/api/artifacts` | GET | List agent-generated HTML artifacts |
 | `/api/artifacts/upload` | POST | Upload new artifact |
-| `/api/artifacts/{filename}` | GET | Serve artifact file |
+| `/api/artifacts/{filename}` | DELETE | Delete artifact file |
+| `/artifacts/{filename}` | GET | Serve artifact file (static route) |
 
 ### Scheduler
 
@@ -381,9 +382,13 @@ uploads:
 | `/api/scheduler/board` | GET | Get task board with overdue scores |
 | `/api/scheduler/live` | GET | Get live scheduler state |
 | `/api/scheduler/events` | GET | Get recent scheduler events |
+| `/api/scheduler/output` | GET | Get scheduler session output |
+| `/api/scheduler/start` | POST | Start the scheduler daemon |
+| `/api/scheduler/stop` | POST | Stop the scheduler daemon |
 | `/api/scheduler/tasks/{name}/run` | POST | Force-run a scheduled task |
 | `/api/scheduler/tasks/{name}/enable` | POST | Enable a scheduled task |
 | `/api/scheduler/tasks/{name}/disable` | POST | Disable a scheduled task |
+| `/api/scheduler/tasks/{name}/events` | GET | Get events for specific task |
 
 ### Notifications
 
