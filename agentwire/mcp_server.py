@@ -278,6 +278,9 @@ def sessions_list() -> str:
 
     Returns information about all tmux sessions including name, machine,
     window count, working directory, and session type.
+
+    Returns:
+        Formatted list of sessions or error message.
     """
     data = run_agentwire_cmd(["list", "--sessions"])
     if not data.get("success"):

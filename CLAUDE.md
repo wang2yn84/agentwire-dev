@@ -182,7 +182,7 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire jump --pane 1` | `pane_jump(pane=1)` |
 | `agentwire resize` | `pane_resize()` |
 
-### Voice & TTS (10 tools)
+### Voice & TTS (12 tools)
 
 | CLI Command | MCP Tool |
 |-------------|----------|
@@ -226,12 +226,14 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire history resume id -p path` | `history_resume(session_id="...", project="...")` |
 | `agentwire email --body "..." --to addr` | `email_send(body="...", to="...")` |
 
-### Notifications & Network (3 tools)
+### Notifications & Network (5 tools)
 
 | CLI Command | MCP Tool |
 |-------------|----------|
 | `agentwire notify event` | `session_notify(event="...")` |
-| `agentwire tunnels up/down/status` | `tunnels_up()` / `tunnels_down()` / `tunnels_status()` |
+| `agentwire tunnels up` | `tunnels_up()` |
+| `agentwire tunnels down` | `tunnels_down()` |
+| `agentwire tunnels status` | `tunnels_status()` |
 | `agentwire network status` | `network_status()` |
 
 ### Status (3 tools)
@@ -241,6 +243,16 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire portal status` | `portal_status()` |
 | `agentwire tts status` | `tts_status()` |
 | `agentwire stt status` | `stt_status()` |
+
+### Scheduler (5 tools)
+
+| CLI Command | MCP Tool |
+|-------------|----------|
+| `agentwire scheduler status` | `scheduler_status()` |
+| `agentwire scheduler board` | `scheduler_board()` |
+| `agentwire scheduler live --json` | `scheduler_live()` |
+| `agentwire scheduler events --json` | `scheduler_events(tail=20, task="")` |
+| `agentwire scheduler run task` | `scheduler_run(task="...")` |
 
 ### Desktop/Portal UI (10 tools)
 
@@ -257,7 +269,7 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | Minimize all | `desktop_minimize_all()` |
 | Multi-window layout | `desktop_layout(windows=[{id: "...", zone: "left"}])` |
 
-**65 tools total.** When to use CLI vs MCP:
+**70 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
