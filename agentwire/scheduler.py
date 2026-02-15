@@ -130,6 +130,7 @@ def load_board() -> Board:
             priority=int(t.get("priority", 99)),
             type=t.get("type"),
             roles=roles,
+            timeout=int(t.get("timeout", 300)),
         )
 
     raw_state = raw.get("state", {})
