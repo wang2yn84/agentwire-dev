@@ -3195,13 +3195,13 @@ def cmd_new(args) -> int:
     agent_type = detect_default_agent_type()
 
     # Determine session type from CLI --type flag or existing config
-    no_save = getattr(args, 'no_save', False)
+    persist = getattr(args, 'persist', False)
     type_arg = getattr(args, 'type', None)
     if type_arg:
         # CLI flag specified - use it directly and normalize
         session_type = normalize_session_type(type_arg, agent_type)
-        # Save to .agentwire.yml for future sessions (unless --no-save)
-        if session_path and not no_save:
+        # Only save to .agentwire.yml if --persist is given
+        if session_path and persist:
             existing_config = load_project_config(session_path)
             project_config = ProjectConfig(
                 type=SessionType.from_str(session_type),
@@ -3240,9 +3240,8 @@ def cmd_new(args) -> int:
             check=True
         )
 
-    # Update project config (.agentwire.yml) - preserve ALL existing settings
-    # Skip if --no-save (scheduler uses this to avoid corrupting project config)
-    if not no_save:
+    # Update project config (.agentwire.yml) - only if --persist is given
+    if persist:
         existing_config = load_project_config(session_path)
         if existing_config:
             # Preserve existing settings if not overridden by CLI
@@ -8434,7 +8433,7 @@ def main() -> int:
     new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, opencode-bypass, opencode-prompted, opencode-restricted, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
-    new_parser.add_argument("--no-save", action="store_true", help="Don't overwrite .agentwire.yml (use CLI flags as session-level overrides only)")
+    new_parser.add_argument("--persist", action="store_true", help="Write --type/--roles to .agentwire.yml (default: session-level override only)")
     new_parser.add_argument("--json", action="store_true", help="Output as JSON")
     new_parser.set_defaults(func=cmd_new)
 

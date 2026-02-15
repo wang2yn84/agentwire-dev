@@ -340,6 +340,36 @@ def _notify_portal(task_name: str, status: str, duration: int, summary: str) -> 
         pass  # Portal may not be running
 
 
+def _notify_portal_state() -> None:
+    """Push full scheduler live state to the portal via /api/notify."""
+    try:
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        state = read_live_state()
+        if not state:
+            return
+
+        config_path = Path.home() / ".agentwire" / "config.yaml"
+        portal_url = "https://localhost:8765"
+        if config_path.exists():
+            try:
+                cfg = yaml.safe_load(config_path.read_text()) or {}
+                portal_url = cfg.get("portal", {}).get("url", portal_url)
+            except Exception:
+                pass
+
+        requests.post(
+            f"{portal_url}/api/notify",
+            json={"event": "scheduler_state", **state},
+            verify=False,
+            timeout=5,
+        )
+    except Exception:
+        pass  # Portal may not be running
+
+
 def _parse_ensure_summary(task: SchedulerTask, result) -> tuple[str, list[str], list[str]]:
     """Try to extract summary info from ensure subprocess output.
 
@@ -407,8 +437,8 @@ def _ensure_session(task: SchedulerTask) -> None:
         return  # Already running
 
     # Create with specified type/roles or let agentwire new use project defaults
-    # --no-save prevents overwriting the project's .agentwire.yml with scheduler overrides
-    cmd = ["agentwire", "new", "-s", task.session, "-p", task.project, "--no-save"]
+    # Default behavior: --type is session-level override only (never saves to .agentwire.yml)
+    cmd = ["agentwire", "new", "-s", task.session, "-p", task.project]
     if task.type:
         cmd.extend(["--type", task.type])
     if task.roles is not None:
@@ -658,6 +688,7 @@ def run_scheduler_loop() -> None:
         next_task=None,
         next_in_seconds=0,
     )
+    _notify_portal_state()
 
     while True:
         try:
@@ -684,6 +715,7 @@ def run_scheduler_loop() -> None:
                 next_task=None,
                 next_in_seconds=round(sleep_time, 1),
             )
+            _notify_portal_state()
             time.sleep(sleep_time)
             continue
 
@@ -703,6 +735,7 @@ def run_scheduler_loop() -> None:
                 next_task=task_name,
                 next_in_seconds=round(wait_seconds, 1),
             )
+            _notify_portal_state()
             time.sleep(sleep_time)
             continue
 
@@ -720,6 +753,7 @@ def run_scheduler_loop() -> None:
             next_task=None,
             next_in_seconds=0,
         )
+        _notify_portal_state()
 
         state = dispatch_task(board, task_name)
         board.state[task_name] = state

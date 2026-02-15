@@ -1,13 +1,12 @@
 /**
- * Scheduler Window - dashboard panel for the scheduler daemon
+ * Scheduler Window v2 — three-tab layout with WebSocket push
  *
- * Custom window (not ListWindow) because the scheduler panel is a multi-section
- * dashboard (status header + task board + event timeline), not a flat item list.
+ * Tabs:
+ *   Queue   — what's happening now + what's coming next
+ *   History — timeline of completed runs (click to expand)
+ *   Tasks   — full admin table with toggle/run/view
  *
- * Board layout: two sections with the active task in the middle.
- * - "Up Next": tasks due to fire, sorted so next-to-fire is at the bottom (closest to active)
- * - "Active": currently running task, highlighted in the center
- * - "Completed": recently fired tasks, sorted so most recent is at the top (closest to active)
+ * Task drill-down: click any task name → side panel with config + run history
  */
 
 import { desktop } from '../desktop-manager.js';
@@ -15,21 +14,32 @@ import { desktop } from '../desktop-manager.js';
 /** @type {Object|null} */
 let schedulerWindow = null;
 
-/** Cached board data for client-side filtering */
+/** Cached data */
 let cachedBoard = [];
-
-/** Cached live state for active task detection */
 let cachedLiveState = null;
+let cachedEvents = [];
 
-/** Polling interval handle */
-let pollInterval = null;
+/** Active tab */
+let activeTab = 'queue';
 
-/** WebSocket listener cleanup */
-let wsCleanup = null;
+/** Active drill-down task */
+let drilldownTask = null;
+
+/** History filters */
+let historyStatusFilter = 'all';
+let historySearchQuery = '';
+
+/** Tasks tab search */
+let tasksSearchQuery = '';
+
+/** Whether scheduler daemon is running */
+let schedulerRunning = false;
+
+/** WebSocket listener cleanups */
+let wsCleanups = [];
 
 /**
  * Open the Scheduler window.
- * Returns an object matching the interface openListWindowWithTaskbar expects.
  */
 export function openSchedulerWindow() {
     if (schedulerWindow?.winbox) {
@@ -66,11 +76,13 @@ export function openSchedulerWindow() {
     winbox.maximize();
     desktop.registerWindow('scheduler', winbox);
 
-    // Listen for WebSocket scheduler updates
-    wsCleanup = desktop.on('scheduler_update', () => refreshAll(container));
-
-    // Poll all sections every 10s (live state, board, events)
-    pollInterval = setInterval(() => refreshAll(container), 10000);
+    // WebSocket listeners — no polling
+    wsCleanups.push(desktop.on('scheduler_state', (data) => {
+        cachedLiveState = data;
+        renderStatusHeader(container, data);
+        if (activeTab === 'queue') renderQueueTab(container);
+    }));
+    wsCleanups.push(desktop.on('scheduler_update', () => refreshAll(container)));
 
     // Initial fetch
     refreshAll(container);
@@ -89,11 +101,15 @@ export function openSchedulerWindow() {
 }
 
 function cleanup() {
-    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-    if (wsCleanup) { wsCleanup(); wsCleanup = null; }
+    wsCleanups.forEach(fn => fn());
+    wsCleanups = [];
+    boundClickHandler = null;
     desktop.unregisterWindow('scheduler');
     cachedBoard = [];
     cachedLiveState = null;
+    cachedEvents = [];
+    drilldownTask = null;
+    activeTab = 'queue';
 }
 
 // ============================================
@@ -107,8 +123,9 @@ function buildContainer() {
         <div class="sched-status-header">
             <div class="sched-status-left">
                 <span class="sched-status-dot not-running"></span>
-                <span class="sched-status-label">Not Running</span>
+                <span class="sched-status-label">Stopped</span>
                 <span class="sched-uptime"></span>
+                <button class="sched-btn sched-power-btn" title="Start scheduler">Start</button>
             </div>
             <div class="sched-status-center">
                 <span class="sched-current-task"></span>
@@ -117,36 +134,37 @@ function buildContainer() {
             <div class="sched-status-right">
                 <span class="sched-stat"><span class="sched-stat-value sched-completed">0</span> completed</span>
                 <span class="sched-stat"><span class="sched-stat-value sched-failed">0</span> failed</span>
-                <span class="sched-stat sched-next-stat"><span class="sched-stat-label">Next:</span> <span class="sched-next-task">—</span></span>
+                <span class="sched-stat sched-next-stat"><span class="sched-stat-label">Next:</span> <span class="sched-next-task">\u2014</span></span>
             </div>
         </div>
-        <div class="sched-board-section">
-            <div class="sched-board-toolbar">
-                <input type="text" class="sched-search" placeholder="Filter tasks..." />
-                <button class="sched-refresh-btn" title="Refresh">↻</button>
-            </div>
-            <div class="sched-board-table-wrap">
-                <div class="sched-board-content"></div>
+        <div class="sched-tabs">
+            <button class="sched-tab active" data-tab="queue">Queue</button>
+            <button class="sched-tab" data-tab="history">History</button>
+            <button class="sched-tab" data-tab="tasks">Tasks</button>
+            <div class="sched-tabs-right">
+                <button class="sched-refresh-btn" title="Refresh">\u21BB</button>
             </div>
         </div>
-        <div class="sched-events-section collapsed">
-            <div class="sched-events-header">
-                <span class="sched-events-chevron">&#9660;</span>
-                <span>Events</span>
-                <span class="sched-events-badge">0</span>
-            </div>
-            <div class="sched-events-body"></div>
+        <div class="sched-body">
+            <div class="sched-tab-content"></div>
+            <div class="sched-drilldown"></div>
         </div>
     `;
 
-    // Wire interactions
-    el.querySelector('.sched-search').addEventListener('input', (e) => {
-        filterBoard(el, e.target.value);
+    // Tab switching
+    el.querySelectorAll('.sched-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            activeTab = btn.dataset.tab;
+            el.querySelectorAll('.sched-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === activeTab));
+            renderActiveTab(el);
+        });
     });
+
+    // Refresh button
     el.querySelector('.sched-refresh-btn').addEventListener('click', () => refreshAll(el));
-    el.querySelector('.sched-events-header').addEventListener('click', () => {
-        el.querySelector('.sched-events-section').classList.toggle('collapsed');
-    });
+
+    // Power button (start/stop)
+    el.querySelector('.sched-power-btn').addEventListener('click', () => toggleScheduler(el));
 
     return el;
 }
@@ -161,6 +179,7 @@ async function refreshAll(container) {
         refreshBoard(container),
         refreshEvents(container),
     ]);
+    renderActiveTab(container);
 }
 
 async function refreshLiveState(container) {
@@ -185,53 +204,61 @@ async function refreshBoard(container) {
         const res = await fetch('/api/scheduler/board');
         const data = await res.json();
         cachedBoard = data.tasks || [];
-        renderBoard(container, cachedBoard);
     } catch (err) {
         console.error('[Scheduler] Board fetch failed:', err);
-        container.querySelector('.sched-board-content').innerHTML =
-            '<div class="sched-empty">Failed to load board</div>';
     }
 }
 
 async function refreshEvents(container) {
     try {
-        const res = await fetch('/api/scheduler/events?tail=30');
+        const res = await fetch('/api/scheduler/events?tail=200');
         const data = await res.json();
-        renderEvents(container, data.events || []);
+        cachedEvents = data.events || [];
     } catch (err) {
         console.error('[Scheduler] Events fetch failed:', err);
     }
 }
 
+function renderActiveTab(container) {
+    if (activeTab === 'queue') renderQueueTab(container);
+    else if (activeTab === 'history') renderHistoryTab(container);
+    else if (activeTab === 'tasks') renderTasksTab(container);
+}
+
 // ============================================
-// Rendering: Status Header
+// Status Header
 // ============================================
 
 function renderStatusNotRunning(container) {
+    schedulerRunning = false;
     const dot = container.querySelector('.sched-status-dot');
     dot.className = 'sched-status-dot not-running';
-    container.querySelector('.sched-status-label').textContent = 'Not Running';
+    container.querySelector('.sched-status-label').textContent = 'Stopped';
     container.querySelector('.sched-uptime').textContent = '';
     container.querySelector('.sched-current-task').textContent = '';
     container.querySelector('.sched-progress-bar').style.display = 'none';
     container.querySelector('.sched-completed').textContent = '0';
     container.querySelector('.sched-failed').textContent = '0';
-    container.querySelector('.sched-next-task').textContent = '—';
+    container.querySelector('.sched-next-task').textContent = '\u2014';
+
+    const btn = container.querySelector('.sched-power-btn');
+    btn.textContent = 'Start';
+    btn.className = 'sched-btn sched-power-btn sched-power-start';
+    btn.disabled = false;
 }
 
 function renderStatusHeader(container, state) {
+    schedulerRunning = true;
     const dot = container.querySelector('.sched-status-dot');
     const isExecuting = !!state.current_task;
 
     dot.className = 'sched-status-dot ' + (isExecuting ? 'executing' : 'running');
     container.querySelector('.sched-status-label').textContent = isExecuting ? 'Executing' : 'Running';
 
-    // Uptime
     if (state.uptime_seconds != null) {
         container.querySelector('.sched-uptime').textContent = formatDuration(state.uptime_seconds);
     }
 
-    // Current task — find session from board data and make clickable
     const currentEl = container.querySelector('.sched-current-task');
     const progressBar = container.querySelector('.sched-progress-bar');
     if (state.current_task) {
@@ -249,52 +276,237 @@ function renderStatusHeader(container, state) {
         progressBar.style.display = 'none';
     }
 
-    // Stats
     container.querySelector('.sched-completed').textContent = state.tasks_completed ?? 0;
     container.querySelector('.sched-failed').textContent = state.tasks_failed ?? 0;
 
-    // Next task
     if (state.next_task) {
         const countdown = state.next_in_seconds > 0 ? ` (${formatDuration(state.next_in_seconds)})` : '';
         container.querySelector('.sched-next-task').textContent = state.next_task + countdown;
     } else {
-        container.querySelector('.sched-next-task').textContent = '—';
+        container.querySelector('.sched-next-task').textContent = '\u2014';
+    }
+
+    const btn = container.querySelector('.sched-power-btn');
+    btn.textContent = 'Stop';
+    btn.className = 'sched-btn sched-power-btn sched-power-stop';
+    btn.disabled = false;
+}
+
+async function toggleScheduler(container) {
+    const btn = container.querySelector('.sched-power-btn');
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    try {
+        const endpoint = schedulerRunning ? '/api/scheduler/stop' : '/api/scheduler/start';
+        await fetch(endpoint, { method: 'POST' });
+        // Wait a beat for state to settle, then refresh
+        await new Promise(r => setTimeout(r, 1500));
+        await refreshAll(container);
+    } catch (err) {
+        console.error('[Scheduler] Toggle failed:', err);
+        btn.disabled = false;
+        btn.textContent = schedulerRunning ? 'Stop' : 'Start';
     }
 }
 
 // ============================================
-// Rendering: Task Board (Two-Section Layout)
+// Queue Tab
 // ============================================
 
-function renderBoard(container, tasks) {
-    const content = container.querySelector('.sched-board-content');
-    if (!tasks.length) {
-        content.innerHTML = '<div class="sched-empty">No tasks configured</div>';
-        return;
-    }
-
+function renderQueueTab(container) {
+    const content = container.querySelector('.sched-tab-content');
     const currentTask = cachedLiveState?.current_task || null;
 
-    // Split tasks into three groups
-    const activeTask = currentTask ? tasks.find(t => t.name === currentTask) : null;
-    const otherTasks = tasks.filter(t => t.name !== currentTask);
+    // Active task
+    const activeTask = currentTask ? cachedBoard.find(t => t.name === currentTask) : null;
 
-    // "Up Next": overdue (overdue_by > 0) or never run — these are due to fire
-    // "Completed": not overdue (overdue_by <= 0) and have run before
-    const upNext = otherTasks.filter(t => t.overdue_by > 0 || t.last_status === 'never');
-    const completed = otherTasks.filter(t => t.overdue_by <= 0 && t.last_status !== 'never');
+    // Up Next: overdue or never run, sorted by when they'll fire
+    const upNext = cachedBoard
+        .filter(t => t.enabled && t.name !== currentTask && (t.overdue_by > 0 || t.last_status === 'never'))
+        .sort((a, b) => b.overdue_by - a.overdue_by);
 
-    // Sort "Up Next": most overdue at bottom (closest to active) = ascending by overdue
-    // So the task that's about to fire is at the bottom of the list
-    upNext.sort((a, b) => a.overdue_by - b.overdue_by);
+    // Coming later: enabled tasks not overdue
+    const later = cachedBoard
+        .filter(t => t.enabled && t.name !== currentTask && t.overdue_by <= 0 && t.last_status !== 'never')
+        .sort((a, b) => a.overdue_by - b.overdue_by);  // least negative = soonest
 
-    // Sort "Completed": most recently run at top (closest to active)
-    // last_run_iso gives us the ISO timestamp to sort by
-    completed.sort((a, b) => {
-        const ta = a.last_run_iso ? new Date(a.last_run_iso).getTime() : 0;
-        const tb = b.last_run_iso ? new Date(b.last_run_iso).getTime() : 0;
-        return tb - ta; // newest first
+    let html = '';
+
+    // Active section
+    if (activeTask) {
+        const elapsed = cachedLiveState?.current_task_started
+            ? Math.floor((Date.now() - new Date(cachedLiveState.current_task_started).getTime()) / 1000)
+            : 0;
+        html += `
+            <div class="sched-queue-section sched-queue-active">
+                <div class="sched-queue-section-label sched-section-running">Running</div>
+                <div class="sched-queue-active-card">
+                    <span class="sched-queue-task-name sched-clickable" data-action="drilldown" data-task="${activeTask.name}">${escapeHtml(activeTask.name)}</span>
+                    <span class="sched-queue-session">${activeTask.session ? `<a class="sched-session-link" data-action="open-session" data-session="${escapeHtml(activeTask.session)}">${escapeHtml(activeTask.session)}</a>` : ''}</span>
+                    <span class="sched-queue-elapsed">${formatDuration(elapsed)}</span>
+                    <div class="sched-progress-bar" style="display:block;width:120px;"><div class="sched-progress-fill"></div></div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Up Next section
+    if (upNext.length > 0) {
+        html += `
+            <div class="sched-queue-section">
+                <div class="sched-queue-section-label sched-section-upnext">Due Now <span class="sched-section-count">${upNext.length}</span></div>
+                <div class="sched-queue-list">
+                    ${upNext.map(t => renderQueueRow(t, 'overdue')).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // Coming later
+    if (later.length > 0) {
+        html += `
+            <div class="sched-queue-section">
+                <div class="sched-queue-section-label">Up Next <span class="sched-section-count">${later.length}</span></div>
+                <div class="sched-queue-list">
+                    ${later.map(t => renderQueueRow(t, 'upcoming')).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    if (!html) {
+        html = '<div class="sched-empty">No tasks scheduled</div>';
+    }
+
+    content.innerHTML = html;
+    wireContentActions(container);
+}
+
+function renderQueueRow(task, mode) {
+    const timeStr = mode === 'overdue'
+        ? `overdue ${formatDuration(Math.abs(task.overdue_by))}`
+        : `in ${formatDuration(Math.abs(task.overdue_by))}`;
+    const fillerTag = task.filler ? ' <span class="sched-filler-tag">(filler)</span>' : '';
+
+    return `
+        <div class="sched-queue-row" data-task="${task.name}">
+            <span class="sched-queue-task-name sched-clickable" data-action="drilldown" data-task="${task.name}">${escapeHtml(task.name)}${fillerTag}</span>
+            <span class="sched-queue-time ${mode === 'overdue' ? 'sched-queue-overdue' : ''}">${timeStr}</span>
+            <span class="sched-queue-session-small">${escapeHtml(task.session || '')}</span>
+        </div>
+    `;
+}
+
+// ============================================
+// History Tab
+// ============================================
+
+function renderHistoryTab(container) {
+    const content = container.querySelector('.sched-tab-content');
+
+    // Filter events to task_completed only
+    let events = cachedEvents.filter(e => (e.event || e.type) === 'task_completed');
+
+    // Apply status filter
+    if (historyStatusFilter !== 'all') {
+        events = events.filter(e => e.status === historyStatusFilter);
+    }
+
+    // Apply search filter
+    if (historySearchQuery) {
+        const q = historySearchQuery.toLowerCase();
+        events = events.filter(e => (e.task || '').toLowerCase().includes(q));
+    }
+
+    // Newest first
+    events = [...events].reverse();
+
+    let html = `
+        <div class="sched-history-toolbar">
+            <input type="text" class="sched-search sched-history-search" placeholder="Filter by task..." value="${escapeHtml(historySearchQuery)}" />
+            <div class="sched-history-filters">
+                ${['all', 'complete', 'failed', 'timeout'].map(s =>
+                    `<button class="sched-filter-btn ${historyStatusFilter === s ? 'active' : ''}" data-filter="${s}">${s}</button>`
+                ).join('')}
+            </div>
+        </div>
+    `;
+
+    if (events.length === 0) {
+        html += '<div class="sched-empty">No matching events</div>';
+    } else {
+        html += '<div class="sched-history-list">';
+        events.forEach((evt, i) => {
+            const ts = evt.timestamp ? formatTimestamp(evt.timestamp) : '';
+            const statusClass = getStatusClass(evt.status);
+            const durationStr = evt.duration ? `${evt.duration}s` : '';
+            const summaryPreview = evt.summary ? evt.summary.substring(0, 120) + (evt.summary.length > 120 ? '...' : '') : '';
+
+            html += `
+                <div class="sched-history-row" data-index="${i}">
+                    <div class="sched-history-row-main">
+                        <span class="sched-history-ts">${ts}</span>
+                        <span class="sched-history-task sched-clickable" data-action="drilldown" data-task="${escapeHtml(evt.task || '')}">${escapeHtml(evt.task || '')}</span>
+                        <span class="sched-badge sched-badge-${statusClass}">${evt.status || 'unknown'}</span>
+                        <span class="sched-history-duration">${durationStr}</span>
+                        <span class="sched-history-preview">${escapeHtml(summaryPreview)}</span>
+                        <span class="sched-history-expand" data-action="expand-history" data-index="${i}">${evt.summary ? '\u25B6' : ''}</span>
+                    </div>
+                    <div class="sched-history-detail" style="display:none;">
+                        <pre class="sched-summary-pre">${escapeHtml(evt.summary || 'No summary')}</pre>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+
+    content.innerHTML = html;
+
+    // Wire filter buttons
+    content.querySelectorAll('.sched-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            historyStatusFilter = btn.dataset.filter;
+            renderHistoryTab(container);
+        });
     });
+
+    // Wire search
+    const searchInput = content.querySelector('.sched-history-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            historySearchQuery = e.target.value;
+            renderHistoryTab(container);
+        });
+    }
+
+    // Wire expand
+    content.querySelectorAll('[data-action="expand-history"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = btn.closest('.sched-history-row');
+            const detail = row.querySelector('.sched-history-detail');
+            const isOpen = detail.style.display !== 'none';
+            detail.style.display = isOpen ? 'none' : 'block';
+            btn.textContent = isOpen ? '\u25B6' : '\u25BC';
+        });
+    });
+
+    wireContentActions(container);
+}
+
+// ============================================
+// Tasks Tab (Admin)
+// ============================================
+
+function renderTasksTab(container) {
+    const content = container.querySelector('.sched-tab-content');
+
+    let tasks = cachedBoard;
+    if (tasksSearchQuery) {
+        const q = tasksSearchQuery.toLowerCase();
+        tasks = tasks.filter(t => t.name.toLowerCase().includes(q));
+    }
 
     const tableHead = `
         <thead>
@@ -313,47 +525,42 @@ function renderBoard(container, tasks) {
         </thead>
     `;
 
-    let html = '';
+    let html = `
+        <div class="sched-tasks-toolbar">
+            <input type="text" class="sched-search sched-tasks-search" placeholder="Filter tasks..." value="${escapeHtml(tasksSearchQuery)}" />
+        </div>
+    `;
 
-    // Up Next section
-    if (upNext.length > 0) {
+    if (!tasks.length) {
+        html += '<div class="sched-empty">No tasks configured</div>';
+    } else {
         html += `
-            <div class="sched-section">
-                <div class="sched-section-label sched-section-upnext">Up Next <span class="sched-section-count">${upNext.length}</span></div>
-                <table class="sched-board-table">${tableHead}<tbody>${upNext.map(t => renderBoardRow(t, false)).join('')}</tbody></table>
+            <div class="sched-board-table-wrap">
+                <table class="sched-board-table">
+                    ${tableHead}
+                    <tbody>${tasks.map(t => renderTaskRow(t)).join('')}</tbody>
+                </table>
             </div>
         `;
-    }
-
-    // Active task section
-    if (activeTask) {
-        html += `
-            <div class="sched-section sched-section-active-wrap">
-                <div class="sched-section-label sched-section-running">Running</div>
-                <table class="sched-board-table">${tableHead}<tbody>${renderBoardRow(activeTask, true)}</tbody></table>
-            </div>
-        `;
-    }
-
-    // Completed section
-    if (completed.length > 0) {
-        html += `
-            <div class="sched-section">
-                <div class="sched-section-label sched-section-completed">Completed <span class="sched-section-count">${completed.length}</span></div>
-                <table class="sched-board-table">${tableHead}<tbody>${completed.map(t => renderBoardRow(t, false)).join('')}</tbody></table>
-            </div>
-        `;
-    }
-
-    if (!html) {
-        html = '<div class="sched-empty">No tasks configured</div>';
     }
 
     content.innerHTML = html;
-    wireRowActions(container);
+
+    // Wire search
+    const searchInput = content.querySelector('.sched-tasks-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            tasksSearchQuery = e.target.value;
+            renderTasksTab(container);
+        });
+    }
+
+    wireContentActions(container);
 }
 
-function renderBoardRow(task, isActive) {
+function renderTaskRow(task) {
+    const currentTask = cachedLiveState?.current_task || null;
+    const isActive = task.name === currentTask;
     const statusClass = getStatusClass(task.last_status);
     const rowClass = [
         'sched-row',
@@ -370,115 +577,184 @@ function renderBoardRow(task, isActive) {
             ? `<span class="sched-badge sched-badge-${statusClass}">${task.last_status}</span>`
             : '<span class="sched-badge sched-badge-never">never</span>');
 
-    const durationStr = task.last_duration != null ? `${task.last_duration}s` : '—';
-    const overdueStr = task.overdue_str || '—';
+    const durationStr = task.last_duration != null ? `${task.last_duration}s` : '\u2014';
+    const overdueStr = task.overdue_str || '\u2014';
     const fillerTag = task.filler ? ' <span class="sched-filler-tag">(filler)</span>' : '';
 
     return `
         <tr class="${rowClass}" data-task="${task.name}">
             <td><span class="${toggleDotClass}" data-action="toggle" data-task="${task.name}" data-enabled="${task.enabled}" title="${task.enabled ? 'Disable' : 'Enable'}"></span></td>
-            <td class="sched-task-name">${escapeHtml(task.name)}${fillerTag}</td>
-            <td class="sched-task-session">${task.session ? `<a class="sched-session-link" data-action="open-session" data-session="${escapeHtml(task.session)}" title="Open session">${escapeHtml(task.session)}</a>` : '—'}</td>
-            <td>${task.interval_str || '—'}</td>
-            <td>${task.last_run && task.last_run !== 'never' && task.last_summary ? `<a class="sched-session-link" data-action="show-summary" data-task="${task.name}" title="View summary">${escapeHtml(task.last_run)}</a>` : escapeHtml(task.last_run || 'never')}</td>
+            <td class="sched-task-name sched-clickable" data-action="drilldown" data-task="${task.name}">${escapeHtml(task.name)}${fillerTag}</td>
+            <td class="sched-task-session">${task.session ? `<a class="sched-session-link" data-action="open-session" data-session="${escapeHtml(task.session)}" title="Open session">${escapeHtml(task.session)}</a>` : '\u2014'}</td>
+            <td>${task.interval_str || '\u2014'}</td>
+            <td>${task.last_run && task.last_run !== 'never' ? escapeHtml(task.last_run) : 'never'}</td>
             <td>${statusBadge}</td>
             <td>${durationStr}</td>
             <td class="sched-overdue">${overdueStr}</td>
             <td>${task.run_count ?? 0}</td>
             <td class="sched-actions">
                 <button class="sched-btn sched-btn-run" data-action="run" data-task="${task.name}" title="Force run">Run</button>
-                <button class="sched-btn sched-btn-view" data-action="view" data-task="${task.name}" title="View details">View</button>
             </td>
         </tr>
     `;
 }
 
-function wireRowActions(container) {
-    // Use event delegation on the board content area
-    const content = container.querySelector('.sched-board-content');
-    // Remove old listener by replacing the node (simple approach since we rebuild content)
-    const clone = content.cloneNode(true);
-    content.parentNode.replaceChild(clone, content);
+// ============================================
+// Shared Action Wiring
+// ============================================
 
-    clone.addEventListener('click', async (e) => {
-        const target = e.target.closest('[data-action]');
-        if (!target) return;
-        const action = target.dataset.action;
+/** Bound click handler reference for cleanup */
+let boundClickHandler = null;
+
+function wireContentActions(container) {
+    const content = container.querySelector('.sched-tab-content');
+    // Remove previous handler to avoid duplicates
+    if (boundClickHandler) {
+        content.removeEventListener('click', boundClickHandler);
+    }
+    boundClickHandler = (e) => handleContentClick(container, e);
+    content.addEventListener('click', boundClickHandler);
+}
+
+function handleContentClick(container, e) {
+    const target = e.target.closest('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+
+    // Skip actions handled by dedicated listeners (expand-history, expand-run)
+    if (action === 'expand-history' || action === 'expand-run') return;
+
+    if (action === 'drilldown') {
         const taskName = target.dataset.task;
+        openDrilldown(container, taskName);
+    } else if (action === 'toggle') {
+        const taskName = target.dataset.task;
+        const isEnabled = target.dataset.enabled === 'true';
+        toggleTask(taskName, !isEnabled, container);
+    } else if (action === 'run') {
+        const taskName = target.dataset.task;
+        forceRunTask(taskName, target, container);
+    } else if (action === 'open-session') {
+        const session = target.dataset.session;
+        if (session) openSession(session);
+    }
+}
 
-        if (action === 'toggle') {
-            const isEnabled = target.dataset.enabled === 'true';
-            await toggleTask(taskName, !isEnabled, container);
-        } else if (action === 'run') {
-            await forceRunTask(taskName, target, container);
-        } else if (action === 'view') {
-            const task = cachedBoard.find(t => t.name === taskName);
-            if (task) showTaskDetailModal(task);
-        } else if (action === 'open-session') {
-            const session = target.dataset.session;
-            if (session) openSession(session);
-        } else if (action === 'show-summary') {
-            const task = cachedBoard.find(t => t.name === taskName);
-            if (task?.last_summary) showSummaryModal(task);
-        }
+// ============================================
+// Drilldown Side Panel
+// ============================================
+
+async function openDrilldown(container, taskName) {
+    drilldownTask = taskName;
+    const panel = container.querySelector('.sched-drilldown');
+    panel.classList.add('open');
+
+    const task = cachedBoard.find(t => t.name === taskName);
+
+    // Show loading
+    panel.innerHTML = `
+        <div class="sched-drilldown-header">
+            <span class="sched-drilldown-title">${escapeHtml(taskName)}</span>
+            <button class="sched-drilldown-close" data-action="close-drilldown">\u2715</button>
+        </div>
+        <div class="sched-drilldown-body">
+            <div class="sched-empty">Loading...</div>
+        </div>
+    `;
+
+    panel.querySelector('.sched-drilldown-close').addEventListener('click', () => closeDrilldown(container));
+
+    // Fetch task events
+    let events = [];
+    try {
+        const res = await fetch(`/api/scheduler/tasks/${encodeURIComponent(taskName)}/events?tail=50`);
+        const data = await res.json();
+        events = (data.events || []).filter(e => (e.event || e.type) === 'task_completed').reverse();
+    } catch {
+        // empty
+    }
+
+    // Check we're still showing this task
+    if (drilldownTask !== taskName) return;
+
+    const statusBadge = task?.last_status
+        ? `<span class="sched-badge sched-badge-${getStatusClass(task.last_status)}">${task.last_status}</span>`
+        : '<span class="sched-badge sched-badge-never">never</span>';
+
+    let bodyHtml = '';
+
+    // Config section
+    if (task) {
+        bodyHtml += `
+            <div class="sched-drilldown-section">
+                <div class="sched-drilldown-section-title">Configuration</div>
+                <table class="sched-detail-table">
+                    <tr><td>Session</td><td>${escapeHtml(task.session || '\u2014')}</td></tr>
+                    <tr><td>Project</td><td>${escapeHtml(task.project || '\u2014')}</td></tr>
+                    <tr><td>Task</td><td>${escapeHtml(task.task || '\u2014')}</td></tr>
+                    <tr><td>Interval</td><td>${task.interval_str || '\u2014'} (${task.interval}s)</td></tr>
+                    <tr><td>Priority</td><td>${task.priority ?? '\u2014'}</td></tr>
+                    <tr><td>Filler</td><td>${task.filler ? 'Yes' : 'No'}</td></tr>
+                    <tr><td>Enabled</td><td>${task.enabled ? 'Yes' : 'No'}</td></tr>
+                    <tr><td>Status</td><td>${statusBadge}</td></tr>
+                    <tr><td>Runs</td><td>${task.run_count ?? 0}</td></tr>
+                </table>
+            </div>
+        `;
+    }
+
+    // Run history
+    bodyHtml += `
+        <div class="sched-drilldown-section">
+            <div class="sched-drilldown-section-title">Run History <span class="sched-section-count">${events.length}</span></div>
+    `;
+
+    if (events.length === 0) {
+        bodyHtml += '<div class="sched-empty">No runs recorded</div>';
+    } else {
+        events.forEach((evt, i) => {
+            const ts = evt.timestamp ? formatTimestamp(evt.timestamp) : '';
+            const tsDate = evt.timestamp ? formatDate(evt.timestamp) : '';
+            const sc = getStatusClass(evt.status);
+            const dur = evt.duration ? `${evt.duration}s` : '';
+
+            bodyHtml += `
+                <div class="sched-drilldown-run">
+                    <div class="sched-drilldown-run-header" data-action="expand-run" data-idx="${i}">
+                        <span class="sched-drilldown-run-ts">${tsDate} ${ts}</span>
+                        <span class="sched-badge sched-badge-${sc}">${evt.status || '?'}</span>
+                        <span class="sched-drilldown-run-dur">${dur}</span>
+                        <span class="sched-drilldown-run-chevron">${evt.summary ? '\u25B6' : ''}</span>
+                    </div>
+                    ${evt.summary ? `<div class="sched-drilldown-run-detail" style="display:none;"><pre class="sched-summary-pre">${escapeHtml(evt.summary)}</pre></div>` : ''}
+                </div>
+            `;
+        });
+    }
+
+    bodyHtml += '</div>';
+
+    const body = panel.querySelector('.sched-drilldown-body');
+    body.innerHTML = bodyHtml;
+
+    // Wire expand for runs
+    body.querySelectorAll('[data-action="expand-run"]').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+            const run = hdr.closest('.sched-drilldown-run');
+            const detail = run.querySelector('.sched-drilldown-run-detail');
+            if (!detail) return;
+            const isOpen = detail.style.display !== 'none';
+            detail.style.display = isOpen ? 'none' : 'block';
+            hdr.querySelector('.sched-drilldown-run-chevron').textContent = isOpen ? '\u25B6' : '\u25BC';
+        });
     });
 }
 
-function filterBoard(container, query) {
-    const q = query.toLowerCase().trim();
-    const filtered = q ? cachedBoard.filter(t => t.name.toLowerCase().includes(q)) : cachedBoard;
-    renderBoard(container, filtered);
-}
-
-// ============================================
-// Rendering: Events Timeline
-// ============================================
-
-function renderEvents(container, events) {
-    const badge = container.querySelector('.sched-events-badge');
-    badge.textContent = events.length;
-
-    const body = container.querySelector('.sched-events-body');
-    if (!events.length) {
-        body.innerHTML = '<div class="sched-empty">No events</div>';
-        return;
-    }
-
-    // Newest first
-    const reversed = [...events].reverse();
-    body.innerHTML = reversed.map(renderEventRow).join('');
-}
-
-function renderEventRow(evt) {
-    const typeClass = getEventTypeClass(evt.event || evt.type);
-    const ts = evt.timestamp ? formatTimestamp(evt.timestamp) : '';
-    const eventType = evt.event || evt.type || '?';
-    const taskName = evt.task || '';
-    const detail = formatEventDetail(evt);
-
-    return `
-        <div class="sched-event-row">
-            <span class="sched-event-ts">${ts}</span>
-            <span class="sched-event-type sched-evt-${typeClass}">${eventType}</span>
-            <span class="sched-event-task">${escapeHtml(taskName)}</span>
-            <span class="sched-event-detail">${escapeHtml(detail)}</span>
-        </div>
-    `;
-}
-
-function formatEventDetail(evt) {
-    const eventType = evt.event || evt.type || '';
-    if (eventType === 'task_completed' || eventType === 'task_complete') {
-        const parts = [];
-        if (evt.status) parts.push(evt.status);
-        if (evt.duration) parts.push(`${evt.duration}s`);
-        if (evt.summary) parts.push(evt.summary);
-        return parts.join(' — ');
-    }
-    if (eventType === 'task_skipped') return evt.reason || '';
-    if (eventType === 'scheduler_sleeping') return evt.next_task ? `next: ${evt.next_task}` : '';
-    if (evt.detail) return evt.detail;
-    return '';
+function closeDrilldown(container) {
+    drilldownTask = null;
+    const panel = container.querySelector('.sched-drilldown');
+    panel.classList.remove('open');
+    panel.innerHTML = '';
 }
 
 // ============================================
@@ -489,7 +765,10 @@ async function toggleTask(name, enable, container) {
     const action = enable ? 'enable' : 'disable';
     try {
         const res = await fetch(`/api/scheduler/tasks/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
-        if (res.ok) await refreshBoard(container);
+        if (res.ok) {
+            await refreshBoard(container);
+            renderActiveTab(container);
+        }
     } catch (err) {
         console.error(`[Scheduler] Toggle failed:`, err);
     }
@@ -500,8 +779,6 @@ async function forceRunTask(name, btn, container) {
     btn.textContent = '...';
     try {
         await fetch(`/api/scheduler/tasks/${encodeURIComponent(name)}/run`, { method: 'POST' });
-        // Don't refresh immediately — WebSocket scheduler_update will trigger it
-        // Reset button after 2s
         setTimeout(() => {
             btn.disabled = false;
             btn.textContent = 'Run';
@@ -511,85 +788,6 @@ async function forceRunTask(name, btn, container) {
         btn.disabled = false;
         btn.textContent = 'Run';
     }
-}
-
-// ============================================
-// Task Detail Modal
-// ============================================
-
-function showTaskDetailModal(task) {
-    // Remove existing
-    document.querySelector('.sched-detail-modal')?.remove();
-
-    const statusBadge = task.last_status
-        ? `<span class="sched-badge sched-badge-${getStatusClass(task.last_status)}">${task.last_status}</span>`
-        : '<span class="sched-badge sched-badge-never">never</span>';
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay sched-detail-modal';
-    modal.innerHTML = `
-        <div class="modal sched-modal">
-            <div class="modal-header">
-                <h3>${escapeHtml(task.name)}</h3>
-                <button class="modal-close" data-action="close">&#10005;</button>
-            </div>
-            <div class="modal-body">
-                <table class="sched-detail-table">
-                    <tr><td>Session</td><td>${escapeHtml(task.session || '—')}</td></tr>
-                    <tr><td>Project</td><td>${escapeHtml(task.project || '—')}</td></tr>
-                    <tr><td>Task</td><td>${escapeHtml(task.task || '—')}</td></tr>
-                    <tr><td>Interval</td><td>${task.interval_str || '—'} (${task.interval}s)</td></tr>
-                    <tr><td>Priority</td><td>${task.priority ?? '—'}</td></tr>
-                    <tr><td>Filler</td><td>${task.filler ? 'Yes' : 'No'}</td></tr>
-                    <tr><td>Enabled</td><td>${task.enabled ? 'Yes' : 'No'}</td></tr>
-                    <tr><td>Last Run</td><td>${escapeHtml(task.last_run || 'never')}</td></tr>
-                    <tr><td>Status</td><td>${statusBadge}</td></tr>
-                    <tr><td>Duration</td><td>${task.last_duration != null ? task.last_duration + 's' : '—'}</td></tr>
-                    <tr><td>Runs</td><td>${task.run_count ?? 0}</td></tr>
-                    <tr><td>Overdue</td><td>${task.overdue_str || '—'}</td></tr>
-                </table>
-                ${task.last_summary ? `<div class="sched-detail-summary"><strong>Last Summary:</strong><pre>${escapeHtml(task.last_summary)}</pre></div>` : ''}
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal || e.target.dataset.action === 'close') modal.remove();
-    });
-}
-
-// ============================================
-// Summary Modal
-// ============================================
-
-function showSummaryModal(task) {
-    document.querySelector('.sched-summary-modal')?.remove();
-
-    const statusBadge = task.last_status
-        ? `<span class="sched-badge sched-badge-${getStatusClass(task.last_status)}">${task.last_status}</span>`
-        : '';
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay sched-summary-modal';
-    modal.innerHTML = `
-        <div class="modal sched-modal">
-            <div class="modal-header">
-                <h3>${escapeHtml(task.name)} — ${escapeHtml(task.last_run)}</h3>
-                <button class="modal-close" data-action="close">&#10005;</button>
-            </div>
-            <div class="modal-body">
-                <div style="margin-bottom: 10px;">${statusBadge} ${task.last_duration != null ? `<span style="color:var(--text-muted);font-size:12px;margin-left:8px;">${task.last_duration}s</span>` : ''}</div>
-                <pre class="sched-summary-pre">${escapeHtml(task.last_summary)}</pre>
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(modal);
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal || e.target.dataset.action === 'close') modal.remove();
-    });
 }
 
 // ============================================
@@ -617,18 +815,9 @@ function getStatusClass(status) {
     }
 }
 
-function getEventTypeClass(type) {
-    if (type?.includes('completed') || type?.includes('complete')) return 'complete';
-    if (type?.includes('started')) return 'started';
-    if (type?.includes('skipped')) return 'skipped';
-    if (type?.includes('sleeping')) return 'sleeping';
-    if (type?.includes('scheduler_started')) return 'started';
-    return 'default';
-}
-
 function formatDuration(seconds) {
     if (seconds == null) return '';
-    const s = Math.floor(seconds);
+    const s = Math.floor(Math.abs(seconds));
     if (s < 60) return `${s}s`;
     if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
     const h = Math.floor(s / 3600);
@@ -642,6 +831,20 @@ function formatTimestamp(ts) {
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch {
         return ts;
+    }
+}
+
+function formatDate(ts) {
+    try {
+        const d = new Date(ts);
+        const today = new Date();
+        if (d.toDateString() === today.toDateString()) return 'Today';
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    } catch {
+        return '';
     }
 }
 

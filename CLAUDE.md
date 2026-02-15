@@ -649,9 +649,9 @@ claudeGLM is available for **interactive/directed work** where Claude Code's ric
 |----------|-------|--------|
 | Human-directed work | `claude` (Anthropic) | `.agentwire.yml` → `type: claude-bypass` |
 | Human-directed, cost-sensitive | `claudeGLM` (Z.AI) | Manual session creation |
-| Scheduled tasks (scheduler) | OpenCode (Z.AI) | `scheduler.yaml` → `type: opencode-bypass` + `--no-save` |
+| Scheduled tasks (scheduler) | OpenCode (Z.AI) | `scheduler.yaml` → `type: opencode-bypass` |
 
-The `--no-save` flag on `agentwire new` prevents the scheduler from overwriting project `.agentwire.yml` files when creating OpenCode sessions for tasks.
+By default, `agentwire new --type X` is a session-level override only and never saves to `.agentwire.yml`. Use `--persist` to opt in to saving.
 
 ## Key Patterns
 

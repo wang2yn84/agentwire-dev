@@ -220,6 +220,9 @@ class AgentWireServer:
         self.app.router.add_post("/api/scheduler/tasks/{name}/enable", self.api_scheduler_task_enable)
         self.app.router.add_post("/api/scheduler/tasks/{name}/disable", self.api_scheduler_task_disable)
         self.app.router.add_post("/api/scheduler/tasks/{name}/run", self.api_scheduler_task_run)
+        self.app.router.add_get("/api/scheduler/tasks/{name}/events", self.api_scheduler_task_events)
+        self.app.router.add_post("/api/scheduler/start", self.api_scheduler_start)
+        self.app.router.add_post("/api/scheduler/stop", self.api_scheduler_stop)
         # Artifact windows: upload and serve agent-generated HTML
         self.app.router.add_post("/api/artifacts/upload", self.api_artifacts_upload)
         self.app.router.add_get("/api/artifacts", self.api_artifacts_list)
@@ -3853,15 +3856,36 @@ projects:
             return web.json_response({"error": str(e)}, status=500)
 
     async def api_scheduler_live(self, request: web.Request) -> web.Response:
-        """GET /api/scheduler/live - Live scheduler state."""
+        """GET /api/scheduler/live - Live scheduler state.
+
+        Checks if the scheduler tmux session is actually running.
+        Returns 404 with running=false if the daemon isn't active,
+        even if a stale state file exists.
+        """
         try:
+            # Check if scheduler tmux session is alive
+            is_running = await self._is_scheduler_running()
+            if not is_running:
+                return web.json_response({"running": False}, status=404)
+
             from .scheduler import read_live_state
             state = read_live_state()
             if state is None:
-                return web.json_response({"error": "Scheduler not running"}, status=404)
+                return web.json_response({"running": False}, status=404)
+            state["running"] = True
             return web.json_response(state)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
+
+    async def _is_scheduler_running(self) -> bool:
+        """Check if the agentwire-scheduler tmux session exists."""
+        proc = await asyncio.create_subprocess_exec(
+            "tmux", "has-session", "-t", "=agentwire-scheduler",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+        return proc.returncode == 0
 
     async def api_scheduler_events(self, request: web.Request) -> web.Response:
         """GET /api/scheduler/events - Recent scheduler events."""
@@ -3915,6 +3939,52 @@ projects:
             # Fire-and-forget: start the task in background, completion comes via WebSocket
             asyncio.create_task(self.run_agentwire_cmd(["scheduler", "run", name]))
             return web.json_response({"success": True, "task": name, "status": "started"})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_start(self, request: web.Request) -> web.Response:
+        """POST /api/scheduler/start - Start the scheduler daemon in tmux."""
+        try:
+            if await self._is_scheduler_running():
+                return web.json_response({"success": True, "status": "already_running"})
+            # Create tmux session and launch scheduler serve (same as CLI but detached)
+            proc = await asyncio.create_subprocess_exec(
+                "tmux", "new-session", "-d", "-s", "agentwire-scheduler",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+            proc2 = await asyncio.create_subprocess_exec(
+                "tmux", "send-keys", "-t", "agentwire-scheduler",
+                "agentwire scheduler serve", "Enter",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc2.wait()
+            return web.json_response({"success": True, "status": "started"})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_stop(self, request: web.Request) -> web.Response:
+        """POST /api/scheduler/stop - Stop the scheduler daemon."""
+        try:
+            if not await self._is_scheduler_running():
+                return web.json_response({"success": True, "status": "already_stopped"})
+            success, result = await self.run_agentwire_cmd(["scheduler", "stop"])
+            if success:
+                return web.json_response({"success": True, "status": "stopped"})
+            return web.json_response({"error": result}, status=500)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_scheduler_task_events(self, request: web.Request) -> web.Response:
+        """GET /api/scheduler/tasks/{name}/events - Events for a specific task."""
+        name = request.match_info["name"]
+        try:
+            from .scheduler import read_events
+            tail = int(request.query.get("tail", "100"))
+            events = read_events(tail=tail, task_filter=name)
+            return web.json_response({"events": events})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -4032,6 +4102,10 @@ projects:
             elif event == "window_activity":
                 # Activity detected in a monitored window
                 await self.broadcast_dashboard("window_activity", {"session": session})
+
+            elif event == "scheduler_state":
+                # Full scheduler state push — broadcast live state to dashboards
+                await self.broadcast_dashboard("scheduler_state", data)
 
             elif event == "scheduler_task_complete":
                 # Scheduler task finished — broadcast to dashboards
