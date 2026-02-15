@@ -127,8 +127,6 @@ class Session:
     is_active: bool = False  # Current active/idle state for transition detection
 
 
-
-
 class AgentWireServer:
     """Main server managing sessions, WebSockets, and agent backends."""
 

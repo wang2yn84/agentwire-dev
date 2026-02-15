@@ -1735,8 +1735,6 @@ def listen_cancel() -> str:
     return f"Failed to cancel recording: {data.get('error', 'Unknown error')}"
 
 
-
-
 # =============================================================================
 # Task Tools (Extended)
 # =============================================================================
