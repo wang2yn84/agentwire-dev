@@ -587,22 +587,35 @@ class AgentWireServer:
         """Get available TTS voices."""
         return await self._tts_get_voices()
 
-    async def run_agentwire_cmd(self, args: list[str]) -> tuple[bool, dict]:
-        """Run agentwire CLI command, parse JSON output.
+    async def run_agentwire_cmd(self, args: list[str], json_output: bool = True) -> tuple[bool, dict]:
+        """Run agentwire CLI command and parse output.
 
         Args:
             args: Command arguments (e.g., ["new", "-s", "myapp/feature"])
+            json_output: If True, appends --json and parses JSON output.
+                If False, returns raw stdout/stderr without JSON parsing.
 
         Returns:
             Tuple of (success, result_dict). On success, result_dict contains
-            the parsed JSON output. On failure, result_dict contains an "error" key.
+            the parsed JSON output (or raw output if json_output=False).
+            On failure, result_dict contains an "error" key.
         """
+        cmd = ["agentwire", *args]
+        if json_output:
+            cmd.append("--json")
         proc = await asyncio.create_subprocess_exec(
-            "agentwire", *args, "--json",
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await proc.communicate()
+
+        if not json_output:
+            out = stdout.decode().strip()
+            err = stderr.decode().strip()
+            if proc.returncode == 0:
+                return True, {"output": out}
+            return False, {"error": err or f"Command failed with exit code {proc.returncode}"}
 
         if proc.returncode == 0:
             try:
@@ -1113,14 +1126,14 @@ class AgentWireServer:
                 session_names = []
 
                 # Local sessions
-                success, result = await self.run_agentwire_cmd(["list", "--local", "--sessions", "--json"])
+                success, result = await self.run_agentwire_cmd(["list", "--local", "--sessions"])
                 if success:
                     for s in result.get("sessions", []):
                         if s.get("name"):
                             session_names.append(s["name"])
 
                 # Remote sessions (names already include @machine suffix)
-                success, result = await self.run_agentwire_cmd(["list", "--remote", "--sessions", "--json"])
+                success, result = await self.run_agentwire_cmd(["list", "--remote", "--sessions"])
                 if success:
                     for s in result.get("sessions", []):
                         if s.get("name"):
@@ -2016,7 +2029,7 @@ class AgentWireServer:
         """Scan projects on a specific machine. Used by CachedStatusChecker."""
         machine_id = machine.get("id")
         try:
-            args = ["projects", "list", "--json", "--machine", machine_id]
+            args = ["projects", "list", "--machine", machine_id]
 
             success, result = await self.run_agentwire_cmd(args)
             if not success:
@@ -2108,7 +2121,7 @@ class AgentWireServer:
             {"roles": [{name, description}, ...]}
         """
         try:
-            success, result = await self.run_agentwire_cmd(["roles", "list", "--json"])
+            success, result = await self.run_agentwire_cmd(["roles", "list"])
             if not success:
                 return web.json_response({"roles": []})
 
@@ -2338,7 +2351,7 @@ class AgentWireServer:
                     roles_list = [r.strip() for r in roles.split(",") if r.strip()]
 
                 # Get available roles
-                success, result = await self.run_agentwire_cmd(["roles", "list", "--json"])
+                success, result = await self.run_agentwire_cmd(["roles", "list"])
                 available_roles = set()
                 if success:
                     for role in result.get("roles", []):
@@ -3971,10 +3984,10 @@ projects:
         try:
             if not await self._is_scheduler_running():
                 return web.json_response({"success": True, "status": "already_stopped"})
-            success, result = await self.run_agentwire_cmd(["scheduler", "stop"])
+            success, result = await self.run_agentwire_cmd(["scheduler", "stop"], json_output=False)
             if success:
                 return web.json_response({"success": True, "status": "stopped"})
-            return web.json_response({"error": result}, status=500)
+            return web.json_response({"error": result.get("error", "Unknown error")}, status=500)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 

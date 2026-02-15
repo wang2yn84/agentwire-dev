@@ -421,23 +421,42 @@ def _parse_ensure_summary(task: SchedulerTask, result) -> tuple[str, list[str], 
     return summary, files_modified, blockers
 
 
-def _ensure_session(task: SchedulerTask) -> None:
-    """Create the session if it doesn't exist, using the specified type.
+def _kill_session(session: str) -> None:
+    """Kill a tmux session if it exists."""
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", f"={session}"],
+        capture_output=True,
+    )
+    if check.returncode == 0:
+        subprocess.run(
+            ["tmux", "kill-session", "-t", f"={session}"],
+            capture_output=True, timeout=15,
+        )
+        print(f"[{_ts()}] Killed session: {session}")
+        time.sleep(2)
 
-    If the session already exists, this is a no-op. If a type override
-    is specified (e.g., opencode-bypass), the session is created with
-    that type instead of the project's .agentwire.yml default.
+
+def _pre_create_session(task: SchedulerTask) -> None:
+    """Pre-create session with scheduler type/role overrides if needed.
+
+    The scheduler may specify a different session type than the project's
+    .agentwire.yml (e.g., opencode-bypass for scheduled tasks). If overrides
+    are set, we need to create the session before ensure runs, because
+    ensure uses project defaults.
+
+    If no overrides, this is a no-op — ensure --fresh handles everything.
     """
-    # Check if session already exists
+    if not task.type and task.roles is None:
+        return  # No overrides, let ensure handle it
+
+    # Only pre-create if session doesn't exist (ensure --fresh will have killed it)
     check = subprocess.run(
         ["tmux", "has-session", "-t", f"={task.session}"],
         capture_output=True,
     )
     if check.returncode == 0:
-        return  # Already running
+        return  # Already exists
 
-    # Create with specified type/roles or let agentwire new use project defaults
-    # Default behavior: --type is session-level override only (never saves to .agentwire.yml)
     cmd = ["agentwire", "new", "-s", task.session, "-p", task.project]
     if task.type:
         cmd.extend(["--type", task.type])
@@ -446,9 +465,9 @@ def _ensure_session(task: SchedulerTask) -> None:
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode == 0:
-        print(f"[{_ts()}] Created session: {task.session} (type={task.type or 'default'})")
+        print(f"[{_ts()}] Pre-created session: {task.session} (type={task.type or 'default'})")
     else:
-        print(f"[{_ts()}] Warning: Failed to create session {task.session}: {result.stderr.strip()}")
+        print(f"[{_ts()}] Warning: Failed to pre-create session {task.session}: {result.stderr.strip()}")
 
 
 def _auto_commit(task: SchedulerTask, task_name: str, status: str) -> None:
@@ -495,11 +514,22 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     task = board.tasks[task_name]
     existing_state = board.state.get(task_name, TaskState())
 
-    # Ensure session exists with the right type (e.g., opencode-bypass)
-    _ensure_session(task)
+    # Clean stale lock for this session before dispatching.
+    # Stale locks (from crashed ensure processes) cause --skip-if-locked
+    # to silently exit 0, making tasks appear to complete instantly.
+    from .locking import remove_stale_lock
+    remove_stale_lock(task.session)
 
     _log_event("task_started", task=task_name, session=task.session,
                project=task.project, attempt=existing_state.run_count + 1)
+
+    has_overrides = bool(task.type or task.roles is not None)
+
+    if has_overrides:
+        # Scheduler has type/role overrides — kill + pre-create ourselves,
+        # then let ensure reuse the session (no --fresh)
+        _kill_session(task.session)
+        _pre_create_session(task)
 
     cmd = [
         "agentwire", "ensure",
@@ -510,6 +540,9 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
         "--skip-if-locked",
         "--json",
     ]
+    if not has_overrides:
+        # No type/role overrides — kill stale session so ensure creates fresh
+        _kill_session(task.session)
 
     start_time = time.time()
     result = None

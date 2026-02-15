@@ -858,7 +858,7 @@ async function forceRunTask(name, btn, container) {
 
 async function openSession(session) {
     const { openSessionTerminal } = await import('../desktop.js');
-    openSessionTerminal(session, 'monitor');
+    openSessionTerminal(session, 'terminal');
 }
 
 // ============================================

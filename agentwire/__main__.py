@@ -6994,10 +6994,19 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
             if result != 0:
                 return _output_result(False, json_mode, f"Failed to create session '{session}'", exit_code=ENSURE_EXIT_SESSION_ERROR)
 
-            # Wait for Claude to initialize
+            # Wait for agent to be ready to accept input
             if not json_mode:
                 print("Waiting for session to initialize...")
-            time.sleep(5)
+            # Determine agent type from session type in .agentwire.yml
+            try:
+                from .config import load_project_config
+                pcfg = load_project_config(project_path)
+                agent_type = "opencode" if pcfg and pcfg.type and pcfg.type.value.startswith("opencode") else "claude"
+            except Exception:
+                agent_type = "claude"
+            if not _wait_for_worker_ready(session, 0, timeout=30, agent_type=agent_type):
+                if not json_mode:
+                    print("Warning: agent may not be fully ready")
 
         # Run pre-commands
         if task.pre:

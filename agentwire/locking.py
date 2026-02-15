@@ -288,6 +288,23 @@ def clean_stale_locks(dry_run: bool = False) -> list[str]:
     return removed
 
 
+def remove_stale_lock(session: str) -> bool:
+    """Remove a lock only if it's stale (not held by a running process).
+
+    Args:
+        session: Session name
+
+    Returns:
+        True if a stale lock was removed, False otherwise
+    """
+    lock_path = _get_lock_path(session)
+    if not lock_path.exists():
+        return False
+    if is_session_locked(session):
+        return False  # Actively held — don't touch
+    return remove_lock(session)
+
+
 def remove_lock(session: str) -> bool:
     """Force-remove a lock file.
 
