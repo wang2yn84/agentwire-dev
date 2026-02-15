@@ -1006,17 +1006,20 @@ def task_run(session: str, task: str, timeout: int = 300) -> str:
     6. Run post-commands
     7. Release lock
 
+    Completes when the agent writes a summary file or the session dies.
+    The timeout parameter controls how long the MCP call waits (not the task).
+
     Args:
         session: Target session name
         task: Task name from .agentwire.yml
-        timeout: Max seconds to wait (default 300)
+        timeout: Max seconds for MCP call to wait (default 300)
 
     Returns:
         Task result with status, summary, and attempt count.
     """
-    args = ["ensure", "-s", session, "--task", task, "--timeout", str(timeout)]
+    args = ["ensure", "-s", session, "--task", task]
 
-    # Use longer timeout for the command itself
+    # MCP call timeout — ensure itself has no timeout, it exits on session death
     data = run_agentwire_cmd(args, timeout=timeout + 60)
 
     if not data.get("success"):

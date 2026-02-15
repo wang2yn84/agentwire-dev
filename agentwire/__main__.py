@@ -360,23 +360,21 @@ def _get_session_project_path(session: str) -> Path | None:
 def tmux_session_has_agent(name: str) -> bool:
     """Check if a tmux session has an agent running (not just a bare shell).
 
-    Returns True if pane 0 is running claude, opencode, or similar agent.
-    Returns False if pane 0 is just zsh/bash (agent died or never started).
+    Returns True if any pane is running claude, opencode, or similar agent.
+    Returns False if all panes are just zsh/bash (agent died or never started).
     """
     result = subprocess.run(
-        ["tmux", "list-panes", "-t", f"={name}", "-F", "#{pane_index}:#{pane_current_command}"],
+        ["tmux", "list-panes", "-t", f"={name}", "-F", "#{pane_current_command}"],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         return False
 
+    bare_shells = {"zsh", "bash", "sh", "fish", "tcsh", "csh"}
     for line in result.stdout.strip().split("\n"):
-        if line.startswith("0:"):
-            cmd = line[2:].lower()
-            # Agent is running if command is not a bare shell
-            bare_shells = {"zsh", "bash", "sh", "fish", "tcsh", "csh"}
-            return cmd not in bare_shells
+        if line.strip().lower() not in bare_shells:
+            return True
 
     return False
 
@@ -6859,7 +6857,6 @@ def cmd_ensure(args) -> int:
 
     session_name = args.session
     task_name = args.task
-    timeout = getattr(args, 'timeout', 300)
     dry_run = getattr(args, 'dry_run', False)
     wait_lock = getattr(args, 'wait_lock', False)
     lock_timeout = getattr(args, 'lock_timeout', 60)
@@ -6952,7 +6949,7 @@ def cmd_ensure(args) -> int:
     try:
         with session_lock(session, wait=wait_lock, timeout=lock_timeout):
             return _run_ensure_task(
-                args, session, task, ctx, shell, project_path, timeout, json_mode
+                args, session, task, ctx, shell, project_path, json_mode
             )
     except LockConflict as e:
         if skip_if_locked:
@@ -6964,7 +6961,7 @@ def cmd_ensure(args) -> int:
         return _output_result(False, json_mode, str(e), exit_code=ENSURE_EXIT_LOCK_CONFLICT)
 
 
-def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, json_mode) -> int:
+def _run_ensure_task(args, session, task, ctx, shell, project_path, json_mode) -> int:
     """Run the task (called within lock context).
 
     Uses hook-based completion detection:
@@ -7107,15 +7104,9 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, timeout, jso
         if not json_mode:
             print("Waiting for task completion...")
 
-        # Scale timeout for loop tasks (each iteration gets the full timeout)
-        effective_timeout = (
-            timeout * task.max_iterations + task.loop_delay * (task.max_iterations - 1)
-            if task.mode == "loop" else timeout
-        )
-
         try:
             signal = wait_for_completion_signal(
-                session, timeout=effective_timeout, summary_path=summary_path
+                session, summary_path=summary_path
             )
             last_status = signal.get("status", "incomplete")
             last_summary = signal.get("summary", "")
@@ -8843,7 +8834,6 @@ def main() -> int:
     ensure_parser.add_argument("-s", "--session", required=True, help="Target session name")
     ensure_parser.add_argument("-p", "--project", help="Project path containing .agentwire.yml (defaults to ~/projects/{session})")
     ensure_parser.add_argument("--task", required=True, help="Task name from .agentwire.yml")
-    ensure_parser.add_argument("--timeout", type=int, default=300, help="Max wait time for completion (default: 300s)")
     ensure_parser.add_argument("--dry-run", action="store_true", help="Show what would execute without running")
     ensure_parser.add_argument("--wait-lock", action="store_true", help="Wait for lock instead of failing if locked")
     ensure_parser.add_argument("--lock-timeout", type=int, default=60, help="Max time to wait for lock (default: 60s)")

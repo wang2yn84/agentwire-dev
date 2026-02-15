@@ -9,6 +9,7 @@ Handles:
 
 import json
 import re
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,25 @@ class CompletionTimeout(CompletionError):
 
 # Directory for task coordination files
 TASKS_DIR = Path.home() / ".agentwire" / "tasks"
+
+# Shells that indicate agent died and fell back to bare shell
+_BARE_SHELLS = {"zsh", "bash", "sh", "fish", "tcsh", "csh"}
+
+
+def _session_has_agent(session: str) -> bool:
+    """Check if session exists and has an agent running in any pane."""
+    result = subprocess.run(
+        ["tmux", "list-panes", "-t", f"={session}", "-F", "#{pane_current_command}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return False  # Session doesn't exist
+
+    for line in result.stdout.strip().split("\n"):
+        if line.strip().lower() not in _BARE_SHELLS:
+            return True
+
+    return False
 
 
 class SummaryResult(NamedTuple):
@@ -208,21 +228,19 @@ def clear_task_context(session: str) -> None:
 
 def wait_for_completion_signal(
     session: str,
-    timeout: float = 300.0,
-    poll_interval: float = 2.0,
+    poll_interval: float = 10.0,
     summary_path: Path | None = None,
 ) -> dict:
     """Wait for task completion by polling the summary file directly.
 
-    Primary detection: polls for the summary file the agent writes after
-    receiving the summary prompt. When found, parses it and returns the result.
+    Exits when:
+    1. Summary file appears (task completed normally)
+    2. Session dies (agent crashed, tmux killed)
 
-    Fallback: also checks for the legacy .complete signal file in case the
-    hook writes one (e.g. manual trigger).
+    There is no wall-clock timeout. Tasks run until one of these conditions.
 
     Args:
         session: tmux session name
-        timeout: Maximum seconds to wait
         poll_interval: Seconds between checks
         summary_path: Path to the summary .md file the agent will write
 
@@ -230,10 +248,9 @@ def wait_for_completion_signal(
         Dict with 'status', 'summary', 'summary_file' keys
 
     Raises:
-        CompletionTimeout: If timeout exceeded
+        CompletionTimeout: If session dies before task completed
     """
     complete_file = TASKS_DIR / f"{session}.complete"
-    start_time = time.time()
 
     while True:
         # Primary: check if the agent has written the summary file AND
@@ -263,10 +280,10 @@ def wait_for_completion_signal(
             except (json.JSONDecodeError, OSError):
                 pass  # File may be partially written, retry
 
-        elapsed = time.time() - start_time
-        if elapsed >= timeout:
+        # Session gone or agent crashed (fell back to bare shell)
+        if not _session_has_agent(session):
             raise CompletionTimeout(
-                f"Timeout waiting for task completion after {timeout:.0f}s"
+                f"Session '{session}' died or agent exited before task completed"
             )
 
         time.sleep(poll_interval)

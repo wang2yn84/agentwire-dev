@@ -62,7 +62,6 @@ class SchedulerTask:
     priority: int = 99    # filler ordering (lower = higher)
     type: str | None = None  # session type override (e.g., opencode-bypass)
     roles: list[str] | None = None  # role override (e.g., ["glm-worker"])
-    timeout: int = 300  # ensure --timeout in seconds
 
 
 @dataclass
@@ -130,7 +129,6 @@ def load_board() -> Board:
             priority=int(t.get("priority", 99)),
             type=t.get("type"),
             roles=roles,
-            timeout=int(t.get("timeout", 300)),
         )
 
     raw_state = raw.get("state", {})
@@ -536,7 +534,6 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
         "-s", task.session,
         "--task", task.task,
         "--project", task.project,
-        "--timeout", str(task.timeout),
         "--skip-if-locked",
         "--json",
     ]
@@ -546,7 +543,10 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
 
     start_time = time.time()
     result = None
-    task_timeout = task.timeout + 120  # hard limit = ensure timeout + 2min buffer
+    # Safety cap for subprocess hard kill. ensure exits naturally when:
+    # - session dies (immediate), or - summary file appears (task complete).
+    # This is just zombie prevention, not a task duration limit.
+    task_timeout = 3900  # 3600s safety cap + 300s buffer
 
     try:
         # Use Popen with process group for reliable timeout killing
