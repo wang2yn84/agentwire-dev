@@ -614,6 +614,45 @@ tail -f /tmp/opencode-plugin-debug.log  # OpenCode
 tail -f /tmp/queue-processor-debug.log
 ```
 
+## claudeGLM (GLM-5 via Claude Code)
+
+A wrapper script at `~/bin/claudeGLM` runs Claude Code against Z.AI's GLM-5 model instead of Anthropic's Claude. Same binary, same hooks, same configs — only the API endpoint and model are overridden via env vars.
+
+```bash
+claudeGLM --dangerously-skip-permissions  # interactive session
+claudeGLM -p "quick task"                 # print mode
+```
+
+### How It Works
+
+The wrapper sets env vars and calls the same `claude` binary:
+
+| Variable | Value |
+|----------|-------|
+| `ANTHROPIC_BASE_URL` | `https://api.z.ai/api/anthropic` |
+| `ANTHROPIC_AUTH_TOKEN` | Z.AI API key |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | `glm-5` |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `glm-5` |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `glm-4.7-flash` |
+
+Everything else is shared: `~/.claude/` config, hooks, skills, MCP servers, damage control. No file conflicts with normal Claude Code instances — env vars are process-scoped.
+
+### Scheduler Decision
+
+The scheduler uses **OpenCode + GLM-5** (not claudeGLM) for scheduled tasks because OpenCode's plugin provides Gate A (retry/rate-limit protection) and Gate B (meaningful work detection) — stateful logic that Claude Code's stateless bash hooks can't replicate. For fire-and-forget scheduled tasks this is a minor advantage, but the OpenCode plugin ecosystem is more mature for automated workloads.
+
+claudeGLM is available for **interactive/directed work** where Claude Code's richer tool ecosystem (MCP, subagents, CLAUDE.md, Chrome extension) provides more value.
+
+### Session Type Separation
+
+| Use Case | Agent | Config |
+|----------|-------|--------|
+| Human-directed work | `claude` (Anthropic) | `.agentwire.yml` → `type: claude-bypass` |
+| Human-directed, cost-sensitive | `claudeGLM` (Z.AI) | Manual session creation |
+| Scheduled tasks (scheduler) | OpenCode (Z.AI) | `scheduler.yaml` → `type: opencode-bypass` + `--no-save` |
+
+The `--no-save` flag on `agentwire new` prevents the scheduler from overwriting project `.agentwire.yml` files when creating OpenCode sessions for tasks.
+
 ## Key Patterns
 
 - **agentwire sessions** coordinate via voice, delegate to workers
