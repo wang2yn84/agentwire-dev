@@ -6811,13 +6811,10 @@ def cmd_ensure(args) -> int:
     10. Handle retries on failure
     """
     from .completion import (
-        CompletionError,
         CompletionTimeout,
         generate_summary_filename,
         get_summary_prompt,
         status_to_exit_code,
-        wait_for_file,
-        wait_for_idle,
     )
     from .locking import LockConflict, LockTimeout, session_lock
     from .tasks import (
