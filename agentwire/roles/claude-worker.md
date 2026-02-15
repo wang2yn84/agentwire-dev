@@ -2,7 +2,6 @@
 name: claude-worker
 description: Claude Code task executor - collaborative, infers context
 disallowedTools: AskUserQuestion
-model: inherit
 ---
 
 # Claude Worker

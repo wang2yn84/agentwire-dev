@@ -1,7 +1,6 @@
 ---
 name: openai-delegation
 description: Guide for delegating tasks to ChatGPT/OpenAI workers via OpenCode
-model: inherit
 ---
 
 # OpenAI/ChatGPT Task Delegation

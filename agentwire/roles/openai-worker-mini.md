@@ -2,7 +2,6 @@
 name: openai-worker-mini
 description: ChatGPT worker using GPT-5.1-codex-mini (cost-optimized)
 disallowedTools: AskUserQuestion
-model: opencode/gpt-5.1-codex-mini
 ---
 
 # OpenAI Worker (Mini)

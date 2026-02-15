@@ -14,7 +14,6 @@ class RoleConfig:
     instructions: str = ""  # markdown body after frontmatter
     tools: list[str] = field(default_factory=list)  # whitelist
     disallowed_tools: list[str] = field(default_factory=list)  # blacklist
-    model: str | None = None  # sonnet, opus, haiku, inherit
     color: str | None = None  # UI hint
 
 
@@ -25,7 +24,6 @@ class MergedRole:
     tools: set[str]  # union of all tools
     disallowed_tools: set[str]  # intersection (only block if ALL agree)
     instructions: str  # concatenated
-    model: str | None  # last non-None model
 
 
 def parse_role_file(path: Path) -> RoleConfig | None:
@@ -93,7 +91,6 @@ def parse_role_file(path: Path) -> RoleConfig | None:
     # Extract fields from frontmatter
     name = frontmatter.get("name", path.stem)
     description = frontmatter.get("description", "")
-    model = frontmatter.get("model")
     color = frontmatter.get("color")
 
     # Handle tools (can be string or list)
@@ -116,7 +113,6 @@ def parse_role_file(path: Path) -> RoleConfig | None:
         instructions=instructions.strip(),
         tools=tools,
         disallowed_tools=disallowed_tools,
-        model=model if model != "inherit" else None,
         color=color,
     )
 
@@ -128,7 +124,6 @@ def merge_roles(roles: list[RoleConfig]) -> MergedRole:
     - tools: Union of all tools (deduplicated) - every tool any role needs is available
     - disallowed_tools: Intersection - only block if ALL roles agree
     - instructions: Concatenated with newlines
-    - model: Last non-None model wins
 
     Args:
         roles: List of RoleConfig objects to merge
@@ -137,7 +132,7 @@ def merge_roles(roles: list[RoleConfig]) -> MergedRole:
         MergedRole with combined configuration
     """
     if not roles:
-        return MergedRole(tools=set(), disallowed_tools=set(), instructions="", model=None)
+        return MergedRole(tools=set(), disallowed_tools=set(), instructions="")
 
     # Union of all tools (deduplicated)
     tools: set[str] = set()
@@ -158,14 +153,10 @@ def merge_roles(roles: list[RoleConfig]) -> MergedRole:
     # Concatenate instructions
     instructions = "\n\n".join(r.instructions for r in roles if r.instructions)
 
-    # Last non-None model wins
-    model = next((r.model for r in reversed(roles) if r.model), None)
-
     return MergedRole(
         tools=tools,
         disallowed_tools=disallowed,
         instructions=instructions,
-        model=model,
     )
 
 

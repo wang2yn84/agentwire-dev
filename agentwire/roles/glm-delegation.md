@@ -1,7 +1,6 @@
 ---
 name: glm-delegation
 description: Guide for delegating tasks to GLM-5/OpenCode workers as focused executors
-model: inherit
 ---
 
 # GLM-5 Task Delegation

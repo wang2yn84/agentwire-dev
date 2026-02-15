@@ -2,7 +2,6 @@
 name: worker
 description: Base worker role - autonomous execution with no user interaction
 disallowedTools: AskUserQuestion
-model: inherit
 ---
 
 # Worker (Base Role)

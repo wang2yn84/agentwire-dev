@@ -2,7 +2,6 @@
 name: openai-worker
 description: ChatGPT/OpenAI task executor - goal-oriented, efficient reasoning
 disallowedTools: AskUserQuestion
-model: inherit
 ---
 
 # OpenAI Worker

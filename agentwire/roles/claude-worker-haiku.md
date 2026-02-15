@@ -2,7 +2,6 @@
 name: claude-worker-haiku
 description: Claude worker using Haiku 4.5 (most cost-efficient)
 disallowedTools: AskUserQuestion
-model: haiku
 ---
 
 # Claude Worker (Haiku)

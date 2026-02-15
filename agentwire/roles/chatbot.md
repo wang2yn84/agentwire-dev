@@ -1,7 +1,6 @@
 ---
 name: chatbot
 description: Conversational voice chatbot
-model: inherit
 ---
 
 # Role: Voice Chatbot

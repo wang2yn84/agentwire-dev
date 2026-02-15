@@ -467,7 +467,7 @@ def _pre_create_session(task: SchedulerTask) -> None:
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode == 0:
-        print(f"[{_ts()}] Pre-created session: {task.session} (type={task.type or 'default'})")
+        print(f"[{_ts()}] Pre-created session: {task.session} (type={task.type or 'default'}, model={task.model or 'default'})")
     else:
         print(f"[{_ts()}] Warning: Failed to pre-create session {task.session}: {result.stderr.strip()}")
 

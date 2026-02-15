@@ -147,6 +147,10 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
             parts.append("--tools Bash")
         # claude-prompted has no special flags
 
+        # Model override
+        if model:
+            parts.append(f"--model {model}")
+
         # Role-based flags (not for restricted mode)
         temp_file = None
         if merged and session_type != "claude-restricted":
@@ -159,18 +163,12 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
             if merged.instructions:
                 # Write to temp file to avoid shell escaping issues
                 # See docs/SHELL_ESCAPING.md for details
+                # MUST be last flag — multiline content can break subsequent args
                 f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
                 f.write(merged.instructions)
                 f.close()
                 temp_file = f.name
                 parts.append(f'--append-system-prompt "$(<{temp_file})"')
-
-            if merged.model and not model:
-                parts.append(f"--model {merged.model}")
-
-        # Explicit model override takes priority over role model
-        if model:
-            parts.append(f"--model {model}")
 
         return AgentCommand(
             command=" ".join(parts),
@@ -193,8 +191,9 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         parts.append("opencode")
 
         # Model flag (OpenCode supports this)
-        if merged and merged.model:
-            parts.append(f"--model {merged.model}")
+        # Model override
+        if model:
+            parts.append(f"--model {model}")
 
         # Create agent file with role instructions for proper system prompt injection
         opencode_agent = None
@@ -4836,8 +4835,6 @@ def cmd_history_resume(args) -> int:
                     f.close()
                     temp_file = f.name
                     cmd_parts.append(f'--prompt "$(<{temp_file})"')
-                if merged.model:
-                    cmd_parts.append(f"--model {merged.model}")
     else:
         # Claude Code: claude --resume <session-id> --fork-session
         cmd_parts = ["claude", "--resume", session_id, "--fork-session"]
@@ -4861,8 +4858,6 @@ def cmd_history_resume(args) -> int:
                     f.close()
                     temp_file = f.name
                     cmd_parts.append(f'--append-system-prompt "$(<{temp_file})"')
-                if merged.model:
-                    cmd_parts.append(f"--model {merged.model}")
 
     agent_cmd = " ".join(cmd_parts)
 
@@ -6113,7 +6108,6 @@ def cmd_roles_list(args) -> int:
                     "source": "user",
                     "path": str(role_file),
                     "disallowed_tools": role.disallowed_tools,
-                    "model": role.model,
                 })
 
     # Bundled roles (agentwire/roles/)
@@ -6132,8 +6126,7 @@ def cmd_roles_list(args) -> int:
                         "source": "bundled",
                         "path": str(role_file),
                         "disallowed_tools": role.disallowed_tools,
-                        "model": role.model,
-                    })
+                        })
     except Exception:
         pass
 
@@ -6229,7 +6222,6 @@ def cmd_roles_show(args) -> int:
             "path": str(role_path),
             "tools": role.tools,
             "disallowed_tools": role.disallowed_tools,
-            "model": role.model,
             "color": role.color,
             "instructions": role.instructions,
         })
@@ -6238,7 +6230,6 @@ def cmd_roles_show(args) -> int:
     print(f"Role: {role.name}")
     print(f"Description: {role.description or '(none)'}")
     print(f"Path: {role_path}")
-    print(f"Model: {role.model or 'inherit'}")
     if role.tools:
         print(f"Tools (whitelist): {', '.join(role.tools)}")
     if role.disallowed_tools:
@@ -6998,22 +6989,13 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, json_mode) -
         if not json_mode and max_attempts > 1:
             print(f"Attempt {attempt}/{max_attempts}")
 
-        # Ensure session exists and has agent running
-        needs_create = False
-
+        # Ensure session exists and has agent running.
+        # The scheduler may have pre-created this session with --model and --type
+        # overrides via _pre_create_session(). Don't kill it — just wait for agent.
         if not tmux_session_exists(session):
-            needs_create = True
             if not json_mode:
                 print(f"Creating session '{session}'...")
-        elif not tmux_session_has_agent(session):
-            # Session exists but agent died (just bare shell)
-            if not json_mode:
-                print(f"Session '{session}' exists but agent not running, recreating...")
-            # Kill the stale session
-            subprocess.run(["tmux", "kill-session", "-t", f"={session}"], capture_output=True)
-            needs_create = True
 
-        if needs_create:
             class NewArgs:
                 def __init__(self):
                     self.session = session
@@ -7021,6 +7003,7 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, json_mode) -
                     self.force = False
                     self.type = None
                     self.roles = None
+                    self.model = None
                     self.json = json_mode
 
             result = cmd_new(NewArgs())
@@ -7028,12 +7011,15 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, json_mode) -
                 return _output_result(False, json_mode, f"Failed to create session '{session}'", exit_code=ENSURE_EXIT_SESSION_ERROR)
 
         # Wait for agent to be ready to accept input.
-        # Returns immediately if already ready (existing session with active agent).
+        # Handles both freshly-created sessions (agent still loading) and
+        # pre-created sessions from scheduler (agent may be mid-startup).
         if not json_mode:
             print("Waiting for agent to be ready...")
         if not _wait_for_agent_ready(session, timeout=30):
+            # Agent never started — session is dead, bail out
             if not json_mode:
-                print("Warning: agent may not be fully ready")
+                print(f"Agent not ready in session '{session}' after 30s")
+            return _output_result(False, json_mode, f"Agent not running in session '{session}'", exit_code=ENSURE_EXIT_SESSION_ERROR)
 
         # Run pre-commands
         if task.pre:

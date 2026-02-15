@@ -1,7 +1,6 @@
 ---
 name: voice
 description: Voice communication capabilities for agentwire sessions
-model: inherit
 ---
 
 # Voice

@@ -2,7 +2,6 @@
 name: glm-worker-flash
 description: GLM-4.7-flash automated task executor (free tier, faster)
 disallowedTools: AskUserQuestion
-model: zai-coding-plan/glm-4.7-flash
 ---
 
 # GLM Worker (Flash)

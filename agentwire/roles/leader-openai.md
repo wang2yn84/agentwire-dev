@@ -1,7 +1,6 @@
 ---
 name: leader-openai
 description: Leader orchestrator that only spawns ChatGPT/OpenAI workers
-model: inherit
 ---
 
 # OpenAI-Only Leader

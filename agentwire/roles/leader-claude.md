@@ -1,7 +1,6 @@
 ---
 name: leader-claude
 description: Leader orchestrator that only spawns Claude Code workers
-model: inherit
 ---
 
 # Claude-Only Leader

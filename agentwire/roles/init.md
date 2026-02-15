@@ -1,7 +1,6 @@
 ---
 name: init
 description: Interactive setup assistant - helps users configure TTS, STT, SSL, and remote machines
-model: inherit
 ---
 
 # Setup Assistant

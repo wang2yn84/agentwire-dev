@@ -1,7 +1,6 @@
 ---
 name: leader-glm
 description: Leader orchestrator that only spawns GLM-5/OpenCode workers
-model: inherit
 ---
 
 # GLM-Only Leader

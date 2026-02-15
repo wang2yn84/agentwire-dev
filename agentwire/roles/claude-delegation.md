@@ -1,7 +1,6 @@
 ---
 name: claude-delegation
 description: Guide for delegating tasks to Claude Code workers as nuanced collaborators
-model: inherit
 ---
 
 # Claude Code Task Delegation

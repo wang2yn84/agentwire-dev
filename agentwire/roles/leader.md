@@ -1,7 +1,6 @@
 ---
 name: leader
 description: Orchestrator at any level - coordinates work, spawns workers, uses voice
-model: inherit
 ---
 
 # Leader

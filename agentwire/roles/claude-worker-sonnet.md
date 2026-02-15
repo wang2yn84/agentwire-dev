@@ -2,7 +2,6 @@
 name: claude-worker-sonnet
 description: Claude worker using Sonnet 4.5 (cost-optimized)
 disallowedTools: AskUserQuestion
-model: sonnet
 ---
 
 # Claude Worker (Sonnet)

@@ -2,7 +2,6 @@
 name: glm-worker
 description: GLM-5 automated task executor for scheduled and on-demand tasks
 disallowedTools: AskUserQuestion
-model: zai-coding-plan/glm-5
 ---
 
 # GLM-5 Worker
