@@ -63,6 +63,7 @@ class SchedulerTask:
     type: str | None = None  # session type override (e.g., claude-bypass)
     roles: list[str] | None = None  # role override (e.g., ["task-runner"])
     model: str | None = None  # model override (e.g., "haiku")
+    gate: dict | None = None  # precondition gate (git_commit, git_diff, command)
 
 
 @dataclass
@@ -72,6 +73,7 @@ class TaskState:
     last_duration: int = 0
     run_count: int = 0
     last_summary: str = ""
+    last_gate_commit: str = ""    # HEAD at last dispatch (for gate checks)
 
 
 @dataclass
@@ -131,6 +133,7 @@ def load_board() -> Board:
             type=t.get("type"),
             roles=roles,
             model=t.get("model"),
+            gate=t.get("gate"),
         )
 
     raw_state = raw.get("state", {})
@@ -155,6 +158,7 @@ def load_board() -> Board:
                 last_duration=int(s.get("last_duration", 0)),
                 run_count=int(s.get("run_count", 0)),
                 last_summary=str(s.get("last_summary", "")),
+                last_gate_commit=str(s.get("last_gate_commit", "")),
             )
 
     return board
@@ -179,6 +183,8 @@ def save_board(board: Board) -> None:
         }
         if s.last_summary:
             entry["last_summary"] = s.last_summary
+        if s.last_gate_commit:
+            entry["last_gate_commit"] = s.last_gate_commit
         state_dict[name] = entry
 
     raw["state"] = state_dict
@@ -199,6 +205,81 @@ def _get_last_run_ts(board: Board, task_name: str) -> float:
     return dt.timestamp()
 
 
+def _check_gate(board: Board, task_name: str) -> bool:
+    """Return True if task should run, False to skip.
+
+    Evaluates gate preconditions defined on the task. Multiple gate keys
+    are AND'd — all must pass. Fails open (returns True) on errors,
+    missing baseline, or no gate defined.
+    """
+    task = board.tasks[task_name]
+    gate = task.gate
+    if not gate or not isinstance(gate, dict):
+        return True
+
+    state = board.state.get(task_name, TaskState())
+    project = task.project
+
+    # git_commit: skip if HEAD unchanged since last run
+    if gate.get("git_commit"):
+        if not state.last_gate_commit:
+            return True  # No baseline, first run
+        try:
+            result = subprocess.run(
+                ["git", "-C", project, "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                current_head = result.stdout.strip()
+                if current_head == state.last_gate_commit:
+                    _log_event("task_gated", task=task_name, gate_type="git_commit",
+                               reason="HEAD unchanged")
+                    print(f"[{_ts()}] Skipping {task_name}: gate git_commit (no new commits)")
+                    return False
+        except Exception:
+            return True  # Fail open
+
+    # git_diff: skip if no commits touched matching paths
+    git_diff_paths = gate.get("git_diff")
+    if git_diff_paths and isinstance(git_diff_paths, list):
+        if not state.last_gate_commit:
+            return True  # No baseline, first run
+        try:
+            cmd = ["git", "-C", project, "diff", "--name-only",
+                   f"{state.last_gate_commit}..HEAD", "--"]
+            cmd.extend(str(p) for p in git_diff_paths)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and not result.stdout.strip():
+                _log_event("task_gated", task=task_name, gate_type="git_diff",
+                           reason="no matching path changes",
+                           paths=git_diff_paths)
+                print(f"[{_ts()}] Skipping {task_name}: gate git_diff (no changes in {', '.join(git_diff_paths)})")
+                return False
+        except Exception:
+            return True  # Fail open
+
+    # command: skip if command exits non-zero
+    gate_cmd = gate.get("command")
+    if gate_cmd and isinstance(gate_cmd, str):
+        try:
+            result = subprocess.run(
+                gate_cmd, shell=True, cwd=project,
+                capture_output=True, timeout=10,
+            )
+            if result.returncode != 0:
+                _log_event("task_gated", task=task_name, gate_type="command",
+                           reason="command exited non-zero",
+                           command=gate_cmd)
+                print(f"[{_ts()}] Skipping {task_name}: gate command (exit {result.returncode})")
+                return False
+        except Exception:
+            return True  # Fail open
+
+    return True
+
+
 def pick_next_task(board: Board) -> tuple[str | None, float]:
     """Pick the next task to run based on overdue score.
 
@@ -213,34 +294,32 @@ def pick_next_task(board: Board) -> tuple[str | None, float]:
         wait_seconds is 0 if task should run now, >0 if should wait.
     """
     now = time.time()
-    best_name: str | None = None
-    best_score = float("-inf")
 
-    # Score non-filler tasks
+    # Collect overdue non-filler candidates sorted by most overdue first
+    candidates: list[tuple[str, float]] = []
     for name, task in board.tasks.items():
         if not task.enabled or task.filler:
             continue
         last_run = _get_last_run_ts(board, name)
         overdue_by = (now - last_run) - task.interval
-        if overdue_by > best_score:
-            best_name = name
-            best_score = overdue_by
+        if overdue_by >= 0:
+            candidates.append((name, overdue_by))
+    candidates.sort(key=lambda x: -x[1])
 
-    # If best task is overdue (score >= 0), run it now
-    if best_name is not None and best_score >= 0:
-        return best_name, 0.0
+    # Pick the first overdue candidate that passes its gate
+    for name, _score in candidates:
+        if _check_gate(board, name):
+            return name, 0.0
 
-    # If best non-filler task exists but isn't overdue yet,
-    # check fillers first (they might be ready)
-    if best_score < 0:
-        # Check fillers sorted by priority (lower = higher priority)
-        fillers = sorted(
-            [(n, t) for n, t in board.tasks.items() if t.filler and t.enabled],
-            key=lambda x: x[1].priority,
-        )
-        for name, task in fillers:
-            last_run = _get_last_run_ts(board, name)
-            if (now - last_run) >= task.interval:
+    # No non-filler passed gate — check fillers sorted by priority
+    fillers = sorted(
+        [(n, t) for n, t in board.tasks.items() if t.filler and t.enabled],
+        key=lambda x: x[1].priority,
+    )
+    for name, task in fillers:
+        last_run = _get_last_run_ts(board, name)
+        if (now - last_run) >= task.interval:
+            if _check_gate(board, name):
                 return name, 0.0
 
     # Nothing to run now — calculate sleep until earliest task is due
@@ -606,12 +685,25 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     # Auto-commit any changes the task made (each task = one revertable commit)
     _auto_commit(task, task_name, status)
 
+    # Capture HEAD for gate checks on next run
+    gate_commit = ""
+    try:
+        head_result = subprocess.run(
+            ["git", "-C", task.project, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if head_result.returncode == 0:
+            gate_commit = head_result.stdout.strip()
+    except Exception:
+        pass
+
     return TaskState(
         last_run=datetime.now(timezone.utc),
         last_status=status,
         last_duration=duration,
         run_count=existing_state.run_count + 1,
         last_summary=summary,
+        last_gate_commit=gate_commit,
     )
 
 
