@@ -2135,7 +2135,7 @@ def cmd_open(args) -> int:
         data = resp.json()
 
         if json_output:
-            print(json_mod.dumps(data))
+            print(json.dumps(data))
         elif data.get("success"):
             print(f"Opened artifact window: {title} (id: {data.get('window_id', 'unknown')})")
         else:
@@ -2145,13 +2145,13 @@ def cmd_open(args) -> int:
     except requests.exceptions.ConnectionError:
         msg = "Portal not reachable. Is it running? (agentwire portal status)"
         if json_output:
-            print(json_mod.dumps({"success": False, "error": msg}))
+            print(json.dumps({"success": False, "error": msg}))
         else:
             print(msg, file=sys.stderr)
         return 1
     except Exception as e:
         if json_output:
-            print(json_mod.dumps({"success": False, "error": str(e)}))
+            print(json.dumps({"success": False, "error": str(e)}))
         else:
             print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -7218,7 +7218,7 @@ def _handle_task_notification(notify_config: str, ctx, session: str, json_mode: 
         try:
             req = urllib.request.Request(
                 url,
-                data=json_module.dumps(payload).encode(),
+                data=json.dumps(payload).encode(),
                 headers={"Content-Type": "application/json"},
             )
             urllib.request.urlopen(req, timeout=10)
