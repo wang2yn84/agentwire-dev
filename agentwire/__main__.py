@@ -14,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -6887,7 +6889,7 @@ def cmd_ensure(args) -> int:
         print(f"Session: {session}")
         print(f"Task: {task_name}")
         print(f"Shell: {shell}")
-        print(f"Timeout: {timeout}s")
+        print(f"Idle timeout: {task.idle_timeout}s")
         print(f"Retries: {task.retries}")
         print()
 
