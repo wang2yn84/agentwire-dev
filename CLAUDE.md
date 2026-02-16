@@ -669,6 +669,27 @@ claudeGLM is available for **interactive/directed work** where Claude Code's ric
 
 By default, `agentwire new --type X` is a session-level override only and never saves to `.agentwire.yml`. Use `--persist` to opt in to saving.
 
+### Scheduler Task Gates
+
+Tasks in `~/.agentwire/scheduler.yaml` can define `gate` preconditions to skip execution when changes aren't relevant:
+
+```yaml
+tasks:
+  code-quality:
+    gate:
+      git_commit: true  # Skip if HEAD unchanged since last run
+  doc-drift:
+    gate:
+      git_diff:         # Skip if no commits touched these paths
+        - docs/
+        - agentwire/
+  custom-check:
+    gate:
+      command: "test -f /tmp/ready.flag"  # Skip if command exits non-zero
+```
+
+Gates are evaluated before dispatching and skip the task (zero AI cost) if conditions fail. Multiple gates are AND'd. Gates fail open on errors. See `docs/missions/completed/master-ralph-loop.md` for details.
+
 ## Key Patterns
 
 - **agentwire sessions** coordinate via voice, delegate to workers

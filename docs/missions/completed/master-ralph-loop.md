@@ -51,6 +51,11 @@ tasks:
     task: doc-drift-check
     interval: 86400                 # once per day
     enabled: true
+    gate:                           # skip task if preconditions fail
+      git_diff:
+        - agentwire/
+        - docs/
+        - CLAUDE.md
 
   # Filler tasks — run when nothing else is due
   housekeeping:
@@ -60,6 +65,8 @@ tasks:
     filler: true                    # only runs in spare cycles
     priority: 1                     # filler ordering (lower = higher priority)
     interval: 3600                  # minimum interval even as filler
+    gate:
+      git_commit: true              # skip if HEAD unchanged since last run
 
 state:
   # Auto-managed by scheduler, don't edit
@@ -68,11 +75,65 @@ state:
     last_status: complete           # complete, failed, incomplete, timeout
     last_duration: 480              # seconds
     run_count: 12
+    last_gate_commit: abc123def456  # HEAD at last dispatch (for gate checks)
   dev-doc-drift:
     last_run: 2026-02-13T09:00:00
     last_status: complete
     last_duration: 120
     run_count: 3
+    last_gate_commit: xyz789abc012
+```
+
+### Task Gates (Skip Unchanged Work)
+
+Gates are preconditions evaluated before dispatching a task. If all gates pass, the task runs. If any gate fails, the task is skipped with zero AI cost. Gates fail open (run the task) on errors or first run.
+
+**Three gate types:**
+
+| Gate | Purpose | Example |
+|------|---------|---------|
+| `git_commit: true` | Skip if HEAD unchanged since last run | Code quality checks that only need to run after new commits |
+| `git_diff: [paths]` | Skip if no commits touched specified paths | Doc drift checks only run when docs/code changed |
+| `command: "cmd"` | Skip if command exits non-zero | Custom preconditions (e.g., "test -f new-data.json") |
+
+**Gate evaluation:**
+- Multiple gate keys are AND'd — all must pass
+- Checks run in order: git_commit → git_diff → command
+- First gate failure aborts (remaining gates not checked)
+- On first run (no baseline commit), gates pass through
+- On error (git command fails, timeout), gates fail open (task runs)
+
+**Example use cases:**
+```yaml
+# Code quality: only run after new commits
+code-quality:
+  interval: 86400
+  gate:
+    git_commit: true
+
+# Doc drift: only check when docs or code changed
+doc-drift:
+  interval: 21600
+  gate:
+    git_diff:
+      - docs/
+      - agentwire/
+      - CLAUDE.md
+
+# Conditional: custom precondition
+api-sync:
+  interval: 3600
+  gate:
+    command: "test -f /tmp/api-ready.flag"
+
+# Combined: must have new commits AND they touched specific paths
+website-seo:
+  interval: 43200
+  gate:
+    git_commit: true
+    git_diff:
+      - src/
+      - public/
 ```
 
 ## CLI Commands
