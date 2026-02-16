@@ -11,7 +11,7 @@ from typing import Optional
 
 import yaml
 
-from agentwire.project_config import detect_default_agent_type
+from .project_config import detect_default_agent_type
 
 
 def _get_default_agent_command() -> str:

@@ -128,7 +128,6 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
     Returns:
         AgentCommand with the command string and metadata
     """
-    import tempfile
 
     if session_type == "bare":
         return AgentCommand(command="")
@@ -576,7 +575,6 @@ def _notify_portal_sessions_changed():
     may not be running.
     """
     import ssl
-    import urllib.request
 
     try:
         # Create SSL context that doesn't verify (localhost self-signed cert)
@@ -770,7 +768,6 @@ def _stop_portal_remote(ssh_target: str, machine_id: str) -> int:
 def _check_portal_health(url: str, timeout: int = 2) -> bool:
     """Check if portal is responding at URL."""
     import ssl
-    import urllib.request
 
     try:
         ctx = ssl.create_default_context()
@@ -1132,7 +1129,6 @@ def _check_tts_health(url: str, timeout: int = 2) -> tuple[bool, list[str] | Non
     Returns:
         (is_healthy, voices_list or None)
     """
-    import urllib.request
 
     try:
         req = urllib.request.urlopen(f"{url}/voices", timeout=timeout)
@@ -1494,7 +1490,6 @@ def cmd_stt_status(args) -> int:
 
     # Check health endpoint
     try:
-        import urllib.request
         req = urllib.request.Request(f"{stt_url}/health")
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
@@ -1816,7 +1811,6 @@ def _check_portal_connections(session: str, portal_url: str) -> tuple[bool, str]
         - actual_session_name: The session name that has connections (may include @machine)
     """
     import ssl
-    import urllib.request
 
     # Try session variants: as-is, with hostname, with @local
     session_variants = [session]
@@ -1890,8 +1884,6 @@ def _local_say_runpod_api(
     tts_config: dict,
 ) -> int:
     """Generate TTS via RunPod serverless API and play locally."""
-    import tempfile
-    import urllib.request
 
     endpoint_id = tts_config.get("runpod_endpoint_id", "")
     api_key = tts_config.get("runpod_api_key", "")
@@ -2114,7 +2106,6 @@ def cmd_open(args) -> int:
         agentwire open https://example.com --title "External"
         agentwire open test.html --artifact-id my-test --json
     """
-    import json as json_mod
     import requests
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -2248,7 +2239,6 @@ def _restart_tts_local_for_venv(venv: str, backend: str) -> bool:
     subprocess.run(["tmux", "send-keys", "-t", session_name, tts_cmd, "Enter"], capture_output=True)
 
     # Wait for server to be ready
-    import urllib.request
     url = f"http://{host}:{port}/health"
     for _ in range(30):  # Wait up to 30 seconds
         time.sleep(1)
@@ -2269,7 +2259,6 @@ def _restart_tts_remote_for_venv(ssh_target: str, machine_id: str, venv: str, ba
     Returns True if restart succeeded, False otherwise.
     """
     import time
-    import urllib.request
     session_name = get_tts_session_name()
     config = load_config()
     tts_config = config.get("tts", {})
@@ -2349,8 +2338,6 @@ def _local_say(
     _retry: bool = False,
 ) -> int:
     """Generate TTS locally and play via system audio."""
-    import tempfile
-    import urllib.request
 
     try:
         # Build request payload
@@ -2446,7 +2433,6 @@ def _local_say(
 def _remote_say(text: str, session: str, portal_url: str) -> int:
     """Send TTS to a session via the portal (for remote sessions)."""
     import ssl
-    import urllib.request
 
     try:
         # Create SSL context that doesn't verify (self-signed certs)
@@ -2559,7 +2545,6 @@ def cmd_notify(args) -> int:
 
     try:
         # Use urllib to avoid requests dependency in core CLI
-        import urllib.request
 
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
@@ -2666,7 +2651,6 @@ def cmd_send(args) -> int:
         use_buffer = len(prompt) > 10 or "\n" in prompt
 
         if use_buffer:
-            import base64
             encoded = base64.b64encode(prompt.encode()).decode()
             cmd = (
                 f"echo {shlex.quote(encoded)} | base64 -d > /tmp/aw-send-$$.txt && "
@@ -2715,7 +2699,6 @@ def cmd_send(args) -> int:
     use_buffer = len(prompt) > 10 or "\n" in prompt
 
     if use_buffer:
-        import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
             f.write(prompt)
             temp_path = f.name
@@ -7223,7 +7206,6 @@ def _handle_task_notification(notify_config: str, ctx, session: str, json_mode: 
 
     elif notify_config.startswith("webhook "):
         # POST to webhook URL
-        import json as json_module
         url = expand_env_vars(notify_config[8:].strip())
         payload = {
             "task": ctx.task,
@@ -7234,7 +7216,6 @@ def _handle_task_notification(notify_config: str, ctx, session: str, json_mode: 
             "attempt": ctx.attempt,
         }
         try:
-            import urllib.request
             req = urllib.request.Request(
                 url,
                 data=json_module.dumps(payload).encode(),

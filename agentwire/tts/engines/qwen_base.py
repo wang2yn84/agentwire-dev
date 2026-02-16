@@ -174,7 +174,6 @@ class QwenBaseEngine(TTSEngine):
         )
 
         # For now, yield the full result as a single chunk
-        # TODO: Implement proper chunk-by-chunk streaming
         wav = wavs[0] if isinstance(wavs, list) else wavs
         if isinstance(wav, np.ndarray):
             wav = torch.from_numpy(wav)
