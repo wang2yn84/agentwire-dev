@@ -135,6 +135,22 @@ agentwire hooks status          # check hook installation status
 agentwire network status        # complete network health check
 agentwire doctor                # auto-diagnose and fix issues
 
+# Notifications
+agentwire notify event          # notify portal of state changes (session/pane events)
+
+# MCP Server
+agentwire mcp                   # expose agentwire as MCP server
+
+# Scheduler
+agentwire scheduler start|serve|stop|status # manage scheduler daemon
+agentwire scheduler board                   # show task board with overdue scores
+agentwire scheduler live                    # show live scheduler state
+agentwire scheduler events                  # show recent scheduler events
+agentwire scheduler history                 # show recent run history
+agentwire scheduler run task                # force-run a task now
+agentwire scheduler enable|disable task     # enable/disable a task
+agentwire scheduler dashboard               # open scheduler dashboard
+
 # Setup & Development
 agentwire init                  # interactive setup wizard
 agentwire generate-certs        # generate SSL certificates
