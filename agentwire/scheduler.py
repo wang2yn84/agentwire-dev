@@ -205,24 +205,46 @@ def _get_last_run_ts(board: Board, task_name: str) -> float:
     return dt.timestamp()
 
 
+_gated_tasks: set[str] = set()
+"""Tracks tasks already reported as gated to avoid log spam.
+
+Cleared per-task when the task is dispatched (runs) or when
+conditions change (new commits make the gate pass).
+"""
+
+
 def _check_gate(board: Board, task_name: str) -> bool:
     """Return True if task should run, False to skip.
 
     Evaluates gate preconditions defined on the task. Multiple gate keys
     are AND'd — all must pass. Fails open (returns True) on errors,
     missing baseline, or no gate defined.
+
+    Only logs the first time a task is gated — subsequent checks for the
+    same task are silent until the task runs or conditions change.
     """
     task = board.tasks[task_name]
     gate = task.gate
     if not gate or not isinstance(gate, dict):
+        _gated_tasks.discard(task_name)
         return True
 
     state = board.state.get(task_name, TaskState())
     project = task.project
 
+    def _gate_skip(gate_type: str, reason: str, **extra):
+        """Record a gate skip, only logging on first occurrence."""
+        if task_name not in _gated_tasks:
+            _log_event("task_gated", task=task_name, gate_type=gate_type,
+                       reason=reason, **extra)
+            print(f"[{_ts()}] Skipping {task_name}: gate {gate_type} ({reason})")
+            _gated_tasks.add(task_name)
+        return False
+
     # git_commit: skip if HEAD unchanged since last run
     if gate.get("git_commit"):
         if not state.last_gate_commit:
+            _gated_tasks.discard(task_name)
             return True  # No baseline, first run
         try:
             result = subprocess.run(
@@ -232,17 +254,16 @@ def _check_gate(board: Board, task_name: str) -> bool:
             if result.returncode == 0:
                 current_head = result.stdout.strip()
                 if current_head == state.last_gate_commit:
-                    _log_event("task_gated", task=task_name, gate_type="git_commit",
-                               reason="HEAD unchanged")
-                    print(f"[{_ts()}] Skipping {task_name}: gate git_commit (no new commits)")
-                    return False
+                    return _gate_skip("git_commit", "no new commits")
         except Exception:
+            _gated_tasks.discard(task_name)
             return True  # Fail open
 
     # git_diff: skip if no commits touched matching paths
     git_diff_paths = gate.get("git_diff")
     if git_diff_paths and isinstance(git_diff_paths, list):
         if not state.last_gate_commit:
+            _gated_tasks.discard(task_name)
             return True  # No baseline, first run
         try:
             cmd = ["git", "-C", project, "diff", "--name-only",
@@ -252,12 +273,10 @@ def _check_gate(board: Board, task_name: str) -> bool:
                 cmd, capture_output=True, text=True, timeout=10,
             )
             if result.returncode == 0 and not result.stdout.strip():
-                _log_event("task_gated", task=task_name, gate_type="git_diff",
-                           reason="no matching path changes",
-                           paths=git_diff_paths)
-                print(f"[{_ts()}] Skipping {task_name}: gate git_diff (no changes in {', '.join(git_diff_paths)})")
-                return False
+                return _gate_skip("git_diff", f"no changes in {', '.join(git_diff_paths)}",
+                                  paths=git_diff_paths)
         except Exception:
+            _gated_tasks.discard(task_name)
             return True  # Fail open
 
     # command: skip if command exits non-zero
@@ -269,14 +288,14 @@ def _check_gate(board: Board, task_name: str) -> bool:
                 capture_output=True, timeout=10,
             )
             if result.returncode != 0:
-                _log_event("task_gated", task=task_name, gate_type="command",
-                           reason="command exited non-zero",
-                           command=gate_cmd)
-                print(f"[{_ts()}] Skipping {task_name}: gate command (exit {result.returncode})")
-                return False
+                return _gate_skip("command", f"exit {result.returncode}",
+                                  command=gate_cmd)
         except Exception:
+            _gated_tasks.discard(task_name)
             return True  # Fail open
 
+    # Gate passed — clear from gated set so it can be re-reported if gated again later
+    _gated_tasks.discard(task_name)
     return True
 
 
@@ -594,6 +613,9 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     """
     task = board.tasks[task_name]
     existing_state = board.state.get(task_name, TaskState())
+
+    # Clear from gated set so gate can be re-evaluated after this run
+    _gated_tasks.discard(task_name)
 
     # Clean stale lock for this session before dispatching.
     # Stale locks (from crashed ensure processes) cause --skip-if-locked
