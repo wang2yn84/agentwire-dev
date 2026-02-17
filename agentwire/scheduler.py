@@ -519,19 +519,143 @@ def _parse_ensure_summary(task: SchedulerTask, result) -> tuple[str, list[str], 
     return summary, files_modified, blockers
 
 
+def _collect_descendants(pid: int, result: list[int]) -> None:
+    """Recursively collect all descendant PIDs."""
+    try:
+        children = subprocess.run(
+            ["pgrep", "-P", str(pid)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if children.returncode == 0:
+            for line in children.stdout.strip().split('\n'):
+                if line.strip():
+                    child_pid = int(line.strip())
+                    result.append(child_pid)
+                    _collect_descendants(child_pid, result)
+    except Exception:
+        pass
+
+
+def _kill_process_tree(pid: int) -> None:
+    """Kill a process and all its descendants. No-op if already dead."""
+    try:
+        descendants: list[int] = []
+        _collect_descendants(pid, descendants)
+
+        # Kill children first (bottom-up), then parent
+        for child_pid in reversed(descendants):
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    except Exception:
+        pass
+
+
+def _sweep_orphaned_processes() -> None:
+    """Kill orphaned agent processes not inside any active tmux session.
+
+    Safety net for processes that survive _kill_session().
+    """
+    # Get all descendant PIDs of active tmux panes
+    active_pids: set[int] = set()
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F", "#{pane_pid}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    try:
+                        pid = int(line.strip())
+                        active_pids.add(pid)
+                        # Collect all descendants of active panes
+                        descendants: list[int] = []
+                        _collect_descendants(pid, descendants)
+                        active_pids.update(descendants)
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+
+    # Find and kill orphaned opencode/yaml-language-server processes
+    killed = 0
+    my_pid = os.getpid()
+    for pattern in ["opencode", "yaml-language-server"]:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", pattern],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        try:
+                            pid = int(line.strip())
+                        except ValueError:
+                            continue
+                        if pid not in active_pids and pid != my_pid:
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                                killed += 1
+                            except OSError:
+                                pass
+        except Exception:
+            pass
+
+    if killed:
+        print(f"[{_ts()}] Sweep: killed {killed} orphaned process(es)")
+        _log_event("orphan_sweep", killed=killed)
+
+
 def _kill_session(session: str) -> None:
-    """Kill a tmux session if it exists."""
+    """Kill a tmux session and all processes inside it."""
     check = subprocess.run(
         ["tmux", "has-session", "-t", f"={session}"],
         capture_output=True,
     )
-    if check.returncode == 0:
-        subprocess.run(
-            ["tmux", "kill-session", "-t", f"={session}"],
-            capture_output=True, timeout=15,
-        )
-        print(f"[{_ts()}] Killed session: {session}")
-        time.sleep(2)
+    if check.returncode != 0:
+        return
+
+    # Step 1: Get PIDs of processes running in all panes
+    pids_result = subprocess.run(
+        ["tmux", "list-panes", "-t", f"={session}", "-F", "#{pane_pid}"],
+        capture_output=True, text=True, timeout=5,
+    )
+    pane_pids = []
+    if pids_result.returncode == 0:
+        for p in pids_result.stdout.strip().split('\n'):
+            if p.strip():
+                try:
+                    pane_pids.append(int(p.strip()))
+                except ValueError:
+                    pass
+
+    # Step 2: Send /exit to pane 0 for clean agent shutdown
+    subprocess.run(
+        ["tmux", "send-keys", "-t", f"={session}:0.0", "/exit", "Enter"],
+        capture_output=True, timeout=5,
+    )
+    time.sleep(3)
+
+    # Step 3: Kill tmux session
+    subprocess.run(
+        ["tmux", "kill-session", "-t", f"={session}"],
+        capture_output=True, timeout=15,
+    )
+
+    # Step 4: Kill any surviving process trees from the panes
+    for pid in pane_pids:
+        _kill_process_tree(pid)
+
+    print(f"[{_ts()}] Killed session: {session}")
+    time.sleep(1)
 
 
 def _pre_create_session(task: SchedulerTask) -> None:
@@ -813,6 +937,7 @@ def run_scheduler_loop() -> None:
     started_at = datetime.now(timezone.utc)
     tasks_completed = 0
     tasks_failed = 0
+    loop_count = 0
 
     print(f"[{_ts()}] Scheduler starting...")
     print(f"[{_ts()}] Board: {BOARD_PATH}")
@@ -916,6 +1041,11 @@ def run_scheduler_loop() -> None:
             tasks_failed += 1
 
         print(f"[{_ts()}] Done: {task_name} → {state.last_status} ({state.last_duration}s)")
+
+        # Periodic orphan sweep (every ~10 iterations)
+        loop_count += 1
+        if loop_count % 10 == 0:
+            _sweep_orphaned_processes()
 
 
 def read_events(tail: int = 20, task_filter: str | None = None) -> list[dict]:
