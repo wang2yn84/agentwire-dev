@@ -373,7 +373,7 @@ function renderQueueTab(container) {
     // Coming later: enabled tasks not overdue
     const later = cachedBoard
         .filter(t => t.enabled && t.name !== currentTask && t.overdue_by <= 0 && t.last_status !== 'never')
-        .sort((a, b) => a.overdue_by - b.overdue_by);  // least negative = soonest
+        .sort((a, b) => b.overdue_by - a.overdue_by);  // least negative (soonest) first
 
     let html = '';
 
@@ -462,9 +462,7 @@ function renderQueueTab(container) {
 }
 
 function renderQueueRow(task, mode) {
-    const timeStr = mode === 'overdue'
-        ? `overdue ${formatDuration(Math.abs(task.overdue_by))}`
-        : `in ${formatDuration(Math.abs(task.overdue_by))}`;
+    const timeStr = formatDuration(Math.abs(task.overdue_by));
     const fillerTag = task.filler ? ' <span class="sched-filler-tag">(filler)</span>' : '';
 
     return `
