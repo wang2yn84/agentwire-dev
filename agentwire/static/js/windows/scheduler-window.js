@@ -47,7 +47,6 @@ let expandedSession = null;
 let elapsedTimer = null;
 let outputRefreshTimer = null;
 let idleTimer = null;
-let idleSince = null;
 
 /**
  * Open the Scheduler window.
@@ -97,6 +96,7 @@ export function openSchedulerWindow() {
         // Task completed — clear progress for that session, stop timers
         if (data.session) delete agentProgress[data.session];
         stopElapsedTimer();
+        stopHeaderElapsedTimer();
         stopOutputRefresh();
         outputExpanded = false;
         expandedSession = null;
@@ -141,6 +141,7 @@ function cleanup() {
     stopElapsedTimer();
     stopOutputRefresh();
     stopIdleTimer();
+    stopHeaderElapsedTimer();
 }
 
 // ============================================
@@ -156,16 +157,15 @@ function buildContainer() {
                 <span class="sched-status-dot not-running"></span>
                 <span class="sched-status-label">Stopped</span>
                 <span class="sched-uptime"></span>
-                <button class="sched-btn sched-power-btn" title="Start scheduler">Start</button>
             </div>
             <div class="sched-status-center">
-                <span class="sched-current-task"></span>
+                <span class="sched-current-activity"></span>
                 <div class="sched-progress-bar"><div class="sched-progress-fill"></div></div>
             </div>
             <div class="sched-status-right">
-                <span class="sched-stat"><span class="sched-stat-value sched-completed">0</span> completed</span>
-                <span class="sched-stat"><span class="sched-stat-value sched-failed">0</span> failed</span>
-                <span class="sched-stat sched-next-stat"><span class="sched-stat-label">Next:</span> <span class="sched-next-task">\u2014</span></span>
+                <span class="sched-stat">\u2713 <span class="sched-stat-value sched-completed">0</span></span>
+                <span class="sched-stat">\u2717 <span class="sched-stat-value sched-failed">0</span></span>
+                <button class="sched-btn sched-power-btn" title="Start scheduler">Start</button>
             </div>
         </div>
         <div class="sched-tabs">
@@ -267,11 +267,10 @@ function renderStatusNotRunning(container) {
     dot.className = 'sched-status-dot not-running';
     container.querySelector('.sched-status-label').textContent = 'Stopped';
     container.querySelector('.sched-uptime').textContent = '';
-    container.querySelector('.sched-current-task').textContent = '';
+    container.querySelector('.sched-current-activity').textContent = '';
     container.querySelector('.sched-progress-bar').style.display = 'none';
     container.querySelector('.sched-completed').textContent = '0';
     container.querySelector('.sched-failed').textContent = '0';
-    container.querySelector('.sched-next-task').textContent = '\u2014';
 
     const btn = container.querySelector('.sched-power-btn');
     btn.textContent = 'Start';
@@ -284,49 +283,52 @@ function renderStatusHeader(container, state) {
     const dot = container.querySelector('.sched-status-dot');
     const isExecuting = !!state.current_task;
 
+    // Left: dot + label + uptime
     dot.className = 'sched-status-dot ' + (isExecuting ? 'executing' : 'running');
-    container.querySelector('.sched-status-label').textContent = isExecuting ? 'Executing' : 'Idle';
-
+    container.querySelector('.sched-status-label').textContent = 'Running';
+    const uptimeEl = container.querySelector('.sched-uptime');
     if (state.uptime_seconds != null) {
-        container.querySelector('.sched-uptime').textContent = formatDuration(state.uptime_seconds);
+        uptimeEl.textContent = formatDuration(state.uptime_seconds);
     }
 
-    const currentEl = container.querySelector('.sched-current-task');
+    // Center: dynamic activity
+    const activityEl = container.querySelector('.sched-current-activity');
     const progressBar = container.querySelector('.sched-progress-bar');
+
     if (state.current_task) {
+        // Executing: task name (clickable) + elapsed timer + progress bar
         stopIdleTimer();
         const taskData = cachedBoard.find(t => t.name === state.current_task);
         const session = state.current_session || taskData?.session;
+        const elapsed = state.current_task_started
+            ? Math.floor((Date.now() - new Date(state.current_task_started).getTime()) / 1000)
+            : 0;
         if (session) {
-            currentEl.innerHTML = `<a class="sched-current-link" title="Open ${escapeHtml(session)}">${escapeHtml(state.current_task)}</a>`;
-            currentEl.querySelector('.sched-current-link').addEventListener('click', () => openSession(session));
+            activityEl.innerHTML = `<a class="sched-current-link" title="Open ${escapeHtml(session)}">${escapeHtml(state.current_task)}</a> <span class="sched-activity-elapsed" data-started="${state.current_task_started || ''}">${formatDuration(elapsed)}</span>`;
+            activityEl.querySelector('.sched-current-link').addEventListener('click', () => openSession(session));
         } else {
-            currentEl.textContent = state.current_task;
+            activityEl.innerHTML = `${escapeHtml(state.current_task)} <span class="sched-activity-elapsed" data-started="${state.current_task_started || ''}">${formatDuration(elapsed)}</span>`;
         }
         progressBar.style.display = 'block';
-    } else {
-        currentEl.innerHTML = '<span class="sched-idle-message">No overdue jobs, sleeping <span class="sched-idle-counter">0s</span></span>';
+        startHeaderElapsedTimer(container);
+    } else if (state.next_task && state.next_in_seconds > 0) {
+        // Idle with upcoming task: "Idle — next: task in countdown"
+        stopHeaderElapsedTimer();
         progressBar.style.display = 'none';
-        idleSince = Date.now();
+        const nextDue = Date.now() + state.next_in_seconds * 1000;
+        activityEl.innerHTML = `Idle \u2014 next: ${escapeHtml(state.next_task)} in <span class="sched-activity-countdown" data-due="${nextDue}">${formatDuration(state.next_in_seconds)}</span>`;
         startIdleTimer(container);
+    } else {
+        // Idle with nothing due
+        stopIdleTimer();
+        stopHeaderElapsedTimer();
+        progressBar.style.display = 'none';
+        activityEl.textContent = 'Idle \u2014 all caught up';
     }
 
+    // Right: stats + stop button
     container.querySelector('.sched-completed').textContent = state.tasks_completed ?? 0;
     container.querySelector('.sched-failed').textContent = state.tasks_failed ?? 0;
-
-    const nextEl = container.querySelector('.sched-next-task');
-    if (state.next_task) {
-        stopIdleTimer();
-        // Store countdown start for live decrement
-        nextEl.dataset.nextTask = state.next_task;
-        nextEl.dataset.nextDue = String(Date.now() + (state.next_in_seconds || 0) * 1000);
-        const countdown = state.next_in_seconds > 0 ? ` (${formatDuration(state.next_in_seconds)})` : '';
-        nextEl.textContent = state.next_task + countdown;
-    } else {
-        nextEl.dataset.nextTask = '';
-        nextEl.dataset.nextDue = '';
-        nextEl.textContent = 'all caught up';
-    }
 
     const btn = container.querySelector('.sched-power-btn');
     btn.textContent = 'Stop';
@@ -1048,21 +1050,16 @@ function stopElapsedTimer() {
     }
 }
 
+/** Tick down the "next: task in X" countdown in the center area */
 function startIdleTimer(container) {
     stopIdleTimer();
     idleTimer = setInterval(() => {
-        // Update idle counter
-        const counterEl = container.querySelector('.sched-idle-counter');
-        if (counterEl && idleSince) {
-            const elapsed = Math.floor((Date.now() - idleSince) / 1000);
-            counterEl.textContent = formatDuration(elapsed);
-        }
-        // Update next task countdown
-        const nextEl = container.querySelector('.sched-next-task');
-        if (nextEl && nextEl.dataset.nextTask && nextEl.dataset.nextDue) {
-            const remaining = Math.max(0, Math.floor((Number(nextEl.dataset.nextDue) - Date.now()) / 1000));
-            nextEl.textContent = `${nextEl.dataset.nextTask} (${formatDuration(remaining)})`;
-        }
+        const countdownEl = container.querySelector('.sched-activity-countdown');
+        if (!countdownEl) { stopIdleTimer(); return; }
+        const due = Number(countdownEl.dataset.due);
+        if (!due) return;
+        const remaining = Math.max(0, Math.floor((due - Date.now()) / 1000));
+        countdownEl.textContent = formatDuration(remaining);
     }, 1000);
 }
 
@@ -1071,5 +1068,26 @@ function stopIdleTimer() {
         clearInterval(idleTimer);
         idleTimer = null;
     }
-    idleSince = null;
+}
+
+/** Tick up the elapsed time in the header center when executing */
+let headerElapsedTimer = null;
+
+function startHeaderElapsedTimer(container) {
+    stopHeaderElapsedTimer();
+    headerElapsedTimer = setInterval(() => {
+        const el = container.querySelector('.sched-activity-elapsed');
+        if (!el) { stopHeaderElapsedTimer(); return; }
+        const started = el.dataset.started;
+        if (!started) return;
+        const elapsed = Math.floor((Date.now() - new Date(started).getTime()) / 1000);
+        el.textContent = formatDuration(elapsed);
+    }, 1000);
+}
+
+function stopHeaderElapsedTimer() {
+    if (headerElapsedTimer) {
+        clearInterval(headerElapsedTimer);
+        headerElapsedTimer = null;
+    }
 }
