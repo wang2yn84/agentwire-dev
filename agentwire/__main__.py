@@ -7625,8 +7625,8 @@ def cmd_scheduler_stop(args) -> int:
 
 def cmd_scheduler_status(args) -> int:
     """Show scheduler status and next task due."""
+    from .config import get_config
     from .scheduler import (
-        BOARD_PATH,
         format_interval,
         load_board,
         pick_next_task,
@@ -7634,11 +7634,12 @@ def cmd_scheduler_status(args) -> int:
 
     json_mode = getattr(args, 'json', False)
     running = tmux_session_exists(SCHEDULER_SESSION)
+    board_path = get_config().scheduler.board_file
 
-    if not BOARD_PATH.exists():
+    if not board_path.exists():
         return _output_result(
             False, json_mode,
-            f"Board file not found: {BOARD_PATH}",
+            f"Board file not found: {board_path}",
             running=running,
         )
 
@@ -7653,7 +7654,7 @@ def cmd_scheduler_status(args) -> int:
 
     result = {
         "running": running,
-        "board_path": str(BOARD_PATH),
+        "board_path": str(board_path),
         "task_count": task_count,
         "enabled_count": enabled_count,
         "next_task": next_task,
@@ -7666,7 +7667,7 @@ def cmd_scheduler_status(args) -> int:
 
     status_str = "running" if running else "stopped"
     print(f"Scheduler: {status_str}")
-    print(f"Board: {BOARD_PATH}")
+    print(f"Board: {board_path}")
     print(f"Tasks: {enabled_count}/{task_count} enabled")
 
     if next_task:
@@ -7802,13 +7803,15 @@ def _set_task_enabled(name: str, enabled: bool) -> int:
     """Toggle a task's enabled field in the board YAML."""
     import yaml
 
-    from .scheduler import BOARD_PATH
+    from .config import get_config
 
-    if not BOARD_PATH.exists():
-        print(f"Board file not found: {BOARD_PATH}", file=sys.stderr)
+    board_path = get_config().scheduler.board_file
+
+    if not board_path.exists():
+        print(f"Board file not found: {board_path}", file=sys.stderr)
         return 1
 
-    with open(BOARD_PATH) as f:
+    with open(board_path) as f:
         raw = yaml.safe_load(f) or {}
 
     tasks = raw.get("tasks", {})
@@ -7818,7 +7821,7 @@ def _set_task_enabled(name: str, enabled: bool) -> int:
 
     tasks[name]["enabled"] = enabled
 
-    with open(BOARD_PATH, "w") as f:
+    with open(board_path, "w") as f:
         yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
     action = "Enabled" if enabled else "Disabled"

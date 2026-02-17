@@ -195,6 +195,26 @@ class SessionConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    """Scheduler daemon configuration."""
+
+    board_file: Path = field(default_factory=lambda: Path.home() / ".agentwire" / "scheduler.yaml")
+    events_file: Path = field(default_factory=lambda: Path.home() / ".agentwire" / "scheduler-events.jsonl")
+    live_state_file: Path = field(default_factory=lambda: Path.home() / ".agentwire" / "scheduler-live.json")
+    git_timeout: int = 10          # git rev-parse, diff, status
+    git_op_timeout: int = 15       # git commit, kill-session
+    gate_timeout: int = 10         # custom gate command
+    portal_notify_timeout: int = 5
+    session_create_timeout: int = 30
+    max_loop_sleep: int = 60
+
+    def __post_init__(self):
+        self.board_file = _expand_path(self.board_file) or self.board_file
+        self.events_file = _expand_path(self.events_file) or self.events_file
+        self.live_state_file = _expand_path(self.live_state_file) or self.live_state_file
+
+
+@dataclass
 class EmailConfig:
     """Email notification configuration (Resend)."""
 
@@ -230,6 +250,7 @@ class Config:
     portal: PortalConfig = field(default_factory=PortalConfig)
     services: ServicesConfig = field(default_factory=ServicesConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
 
@@ -413,6 +434,20 @@ def _dict_to_config(data: dict) -> Config:
     )
     notifications = NotificationsConfig(email=email_config)
 
+    # Scheduler
+    scheduler_data = data.get("scheduler", {})
+    scheduler = SchedulerConfig(
+        board_file=scheduler_data.get("board_file", "~/.agentwire/scheduler.yaml"),
+        events_file=scheduler_data.get("events_file", "~/.agentwire/scheduler-events.jsonl"),
+        live_state_file=scheduler_data.get("live_state_file", "~/.agentwire/scheduler-live.json"),
+        git_timeout=scheduler_data.get("git_timeout", 10),
+        git_op_timeout=scheduler_data.get("git_op_timeout", 15),
+        gate_timeout=scheduler_data.get("gate_timeout", 10),
+        portal_notify_timeout=scheduler_data.get("portal_notify_timeout", 5),
+        session_create_timeout=scheduler_data.get("session_create_timeout", 30),
+        max_loop_sleep=scheduler_data.get("max_loop_sleep", 60),
+    )
+
     return Config(
         server=server,
         projects=projects,
@@ -424,6 +459,7 @@ def _dict_to_config(data: dict) -> Config:
         artifacts=artifacts,
         portal=portal,
         services=services,
+        scheduler=scheduler,
         notifications=notifications,
     )
 

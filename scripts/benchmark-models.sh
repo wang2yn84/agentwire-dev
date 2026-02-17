@@ -6,7 +6,7 @@
 set -euo pipefail
 
 TASK="${1:-cli-test}"
-BASE_DIR="/Users/dotdev/projects"
+BASE_DIR="$HOME/projects"
 MODELS=(haiku sonnet opus)
 BENCHMARK_DIR="$HOME/.agentwire/benchmarks"
 TIMESTAMP=$(date +%Y-%m-%dT%H-%M-%S)

@@ -19,13 +19,13 @@ from pathlib import Path
 
 import yaml
 
+from .config import get_config
 
-# Board file location
-BOARD_PATH = Path.home() / ".agentwire" / "scheduler.yaml"
 
-# Monitoring file locations
-EVENTS_PATH = Path.home() / ".agentwire" / "scheduler-events.jsonl"
-LIVE_STATE_PATH = Path.home() / ".agentwire" / "scheduler-live.json"
+def _sched_config():
+    """Get scheduler config section."""
+    return get_config().scheduler
+
 
 # tmux session name for the scheduler daemon
 SCHEDULER_SESSION = "agentwire-scheduler"
@@ -92,21 +92,22 @@ def load_board() -> Board:
         FileNotFoundError: If board file doesn't exist.
         ValueError: If board file is malformed.
     """
-    if not BOARD_PATH.exists():
+    board_path = _sched_config().board_file
+    if not board_path.exists():
         raise FileNotFoundError(
-            f"Board file not found: {BOARD_PATH}\n"
+            f"Board file not found: {board_path}\n"
             f"Create it with task definitions. See docs/missions/later/master-ralph-loop.md for format."
         )
 
-    with open(BOARD_PATH) as f:
+    with open(board_path) as f:
         raw = yaml.safe_load(f)
 
     if not raw or not isinstance(raw, dict):
-        raise ValueError(f"Board file is empty or malformed: {BOARD_PATH}")
+        raise ValueError(f"Board file is empty or malformed: {board_path}")
 
     raw_tasks = raw.get("tasks", {})
     if not raw_tasks:
-        raise ValueError(f"No tasks defined in board: {BOARD_PATH}")
+        raise ValueError(f"No tasks defined in board: {board_path}")
 
     board = Board()
 
@@ -166,10 +167,11 @@ def load_board() -> Board:
 
 def save_board(board: Board) -> None:
     """Save board state back to YAML (preserves task definitions, rewrites state)."""
-    if not BOARD_PATH.exists():
+    board_path = _sched_config().board_file
+    if not board_path.exists():
         return
 
-    with open(BOARD_PATH) as f:
+    with open(board_path) as f:
         raw = yaml.safe_load(f) or {}
 
     # Only update the state section
@@ -189,7 +191,7 @@ def save_board(board: Board) -> None:
 
     raw["state"] = state_dict
 
-    with open(BOARD_PATH, "w") as f:
+    with open(board_path, "w") as f:
         yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
 
@@ -229,6 +231,7 @@ def _check_gate(board: Board, task_name: str) -> bool:
         _gated_tasks.discard(task_name)
         return True
 
+    cfg = _sched_config()
     state = board.state.get(task_name, TaskState())
     project = task.project
 
@@ -249,7 +252,7 @@ def _check_gate(board: Board, task_name: str) -> bool:
         try:
             result = subprocess.run(
                 ["git", "-C", project, "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, timeout=cfg.git_timeout,
             )
             if result.returncode == 0:
                 current_head = result.stdout.strip()
@@ -270,7 +273,7 @@ def _check_gate(board: Board, task_name: str) -> bool:
                    f"{state.last_gate_commit}..HEAD", "--"]
             cmd.extend(str(p) for p in git_diff_paths)
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10,
+                cmd, capture_output=True, text=True, timeout=cfg.git_timeout,
             )
             if result.returncode == 0 and not result.stdout.strip():
                 return _gate_skip("git_diff", f"no changes in {', '.join(git_diff_paths)}",
@@ -285,7 +288,7 @@ def _check_gate(board: Board, task_name: str) -> bool:
         try:
             result = subprocess.run(
                 gate_cmd, shell=True, cwd=project,
-                capture_output=True, timeout=10,
+                capture_output=True, timeout=cfg.gate_timeout,
             )
             if result.returncode != 0:
                 return _gate_skip("command", f"exit {result.returncode}",
@@ -367,7 +370,7 @@ def seconds_until_next_due(board: Board) -> float:
             earliest_wait = wait
 
     if earliest_wait == float("inf"):
-        return 60.0  # No tasks, just re-check periodically
+        return float(_sched_config().max_loop_sleep)  # No tasks, just re-check periodically
 
     return earliest_wait
 
@@ -380,8 +383,9 @@ def _log_event(event: str, **fields) -> None:
         **fields,
     }
     try:
-        EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(EVENTS_PATH, "a") as f:
+        events_path = _sched_config().events_file
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(events_path, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
         pass
@@ -390,14 +394,15 @@ def _log_event(event: str, **fields) -> None:
 def _write_live_state(**fields) -> None:
     """Atomically write the live state JSON file."""
     try:
-        LIVE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        live_path = _sched_config().live_state_file
+        live_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(
-            dir=str(LIVE_STATE_PATH.parent), suffix=".tmp"
+            dir=str(live_path.parent), suffix=".tmp"
         )
         try:
             with open(fd, "w") as f:
                 json.dump(fields, f, indent=2)
-            Path(tmp_path).rename(LIVE_STATE_PATH)
+            Path(tmp_path).rename(live_path)
         except Exception:
             Path(tmp_path).unlink(missing_ok=True)
             raise
@@ -412,15 +417,8 @@ def _notify_portal(task_name: str, status: str, duration: int, summary: str) -> 
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        # Read portal URL from config
-        config_path = Path.home() / ".agentwire" / "config.yaml"
-        portal_url = "https://localhost:8765"
-        if config_path.exists():
-            try:
-                cfg = yaml.safe_load(config_path.read_text()) or {}
-                portal_url = cfg.get("portal", {}).get("url", portal_url)
-            except Exception:
-                pass
+        portal_url = get_config().portal.url
+        timeout = _sched_config().portal_notify_timeout
 
         requests.post(
             f"{portal_url}/api/notify",
@@ -432,7 +430,7 @@ def _notify_portal(task_name: str, status: str, duration: int, summary: str) -> 
                 "summary": summary,
             },
             verify=False,
-            timeout=5,
+            timeout=timeout,
         )
     except Exception:
         pass  # Portal may not be running
@@ -449,20 +447,14 @@ def _notify_portal_state() -> None:
         if not state:
             return
 
-        config_path = Path.home() / ".agentwire" / "config.yaml"
-        portal_url = "https://localhost:8765"
-        if config_path.exists():
-            try:
-                cfg = yaml.safe_load(config_path.read_text()) or {}
-                portal_url = cfg.get("portal", {}).get("url", portal_url)
-            except Exception:
-                pass
+        portal_url = get_config().portal.url
+        timeout = _sched_config().portal_notify_timeout
 
         requests.post(
             f"{portal_url}/api/notify",
             json={"event": "scheduler_state", **state},
             verify=False,
-            timeout=5,
+            timeout=timeout,
         )
     except Exception:
         pass  # Portal may not be running
@@ -647,7 +639,7 @@ def _kill_session(session: str) -> None:
     # Step 3: Kill tmux session
     subprocess.run(
         ["tmux", "kill-session", "-t", f"={session}"],
-        capture_output=True, timeout=15,
+        capture_output=True, timeout=_sched_config().git_op_timeout,
     )
 
     # Step 4: Kill any surviving process trees from the panes
@@ -687,7 +679,7 @@ def _pre_create_session(task: SchedulerTask) -> None:
     if task.model:
         cmd.extend(["--model", task.model])
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=_sched_config().session_create_timeout)
     if result.returncode == 0:
         print(f"[{_ts()}] Pre-created session: {task.session} (type={task.type or 'default'}, model={task.model or 'default'})")
     else:
@@ -700,12 +692,13 @@ def _auto_commit(task: SchedulerTask, task_name: str, status: str) -> None:
     Creates a standardized commit message so each task run is a single
     revertable commit. No-op if there are no changes to commit.
     """
+    cfg = _sched_config()
     project = task.project
 
     # Check if there are any changes to commit
     check = subprocess.run(
         ["git", "-C", project, "status", "--porcelain"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=cfg.git_timeout,
     )
     if check.returncode != 0 or not check.stdout.strip():
         return  # Not a git repo or no changes
@@ -713,14 +706,14 @@ def _auto_commit(task: SchedulerTask, task_name: str, status: str) -> None:
     # Stage all changes
     subprocess.run(
         ["git", "-C", project, "add", "-A"],
-        capture_output=True, timeout=10,
+        capture_output=True, timeout=cfg.git_timeout,
     )
 
     # Commit with standardized message
-    msg = f"ralph: {task_name} ({status})"
+    msg = f"scheduler: {task_name} ({status})"
     subprocess.run(
         ["git", "-C", project, "commit", "-m", msg, "--no-verify"],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True, text=True, timeout=cfg.git_op_timeout,
     )
     print(f"[{_ts()}] Auto-committed: {msg}")
 
@@ -772,13 +765,8 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
 
     start_time = time.time()
     result = None
-    # Safety cap for subprocess hard kill. ensure exits naturally when:
-    # - session dies (immediate), or - summary file appears (task complete).
-    # This is just zombie prevention, not a task duration limit.
-    task_timeout = 3900  # 3600s safety cap + 300s buffer
 
     try:
-        # Use Popen with process group for reliable timeout killing
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -786,20 +774,9 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
             text=True,
             start_new_session=True,  # Create new process group
         )
-        try:
-            stdout, stderr = proc.communicate(timeout=task_timeout)
-            exit_code = proc.returncode
-            # Create a result-like object for _parse_ensure_summary
-            result = subprocess.CompletedProcess(cmd, exit_code, stdout, stderr)
-        except subprocess.TimeoutExpired:
-            # Kill entire process group (ensures all children die)
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                proc.kill()
-            proc.wait()
-            exit_code = _EXIT_TIMEOUT
-            print(f"[{_ts()}] Timeout: {task_name} killed after {task_timeout}s")
+        stdout, stderr = proc.communicate()
+        exit_code = proc.returncode
+        result = subprocess.CompletedProcess(cmd, exit_code, stdout, stderr)
     except Exception:
         exit_code = _EXIT_FAILED
 
@@ -836,7 +813,7 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     try:
         head_result = subprocess.run(
             ["git", "-C", task.project, "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=_sched_config().git_timeout,
         )
         if head_result.returncode == 0:
             gate_commit = head_result.stdout.strip()
@@ -940,7 +917,7 @@ def run_scheduler_loop() -> None:
     loop_count = 0
 
     print(f"[{_ts()}] Scheduler starting...")
-    print(f"[{_ts()}] Board: {BOARD_PATH}")
+    print(f"[{_ts()}] Board: {_sched_config().board_file}")
 
     try:
         board = load_board()
@@ -967,18 +944,20 @@ def run_scheduler_loop() -> None:
     _notify_portal_state()
 
     while True:
+        max_sleep = _sched_config().max_loop_sleep
+
         try:
             board = load_board()
         except (FileNotFoundError, ValueError) as e:
             print(f"[{_ts()}] Board read error: {e}", file=sys.stderr)
-            time.sleep(60)
+            time.sleep(max_sleep)
             continue
 
         task_name, wait_seconds = pick_next_task(board)
         uptime = int((datetime.now(timezone.utc) - started_at).total_seconds())
 
         if task_name is None:
-            sleep_time = min(wait_seconds, 60)
+            sleep_time = min(wait_seconds, max_sleep)
             print(f"[{_ts()}] Nothing due. Sleeping {int(sleep_time)}s...")
             _write_live_state(
                 status="running",
@@ -996,7 +975,7 @@ def run_scheduler_loop() -> None:
             continue
 
         if wait_seconds > 0:
-            sleep_time = min(wait_seconds, 60)
+            sleep_time = min(wait_seconds, max_sleep)
             print(f"[{_ts()}] Next: {task_name} in {format_interval(int(wait_seconds))}. Sleeping {int(sleep_time)}s...")
             _log_event("scheduler_sleeping", next_task=task_name,
                         sleep_seconds=round(sleep_time, 1))
@@ -1058,12 +1037,13 @@ def read_events(tail: int = 20, task_filter: str | None = None) -> list[dict]:
     Returns:
         List of event dicts, most recent last.
     """
-    if not EVENTS_PATH.exists():
+    events_path = _sched_config().events_file
+    if not events_path.exists():
         return []
 
     events = []
     try:
-        with open(EVENTS_PATH) as f:
+        with open(events_path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -1087,10 +1067,11 @@ def read_live_state() -> dict | None:
     Returns:
         Live state dict or None if file doesn't exist.
     """
-    if not LIVE_STATE_PATH.exists():
+    live_path = _sched_config().live_state_file
+    if not live_path.exists():
         return None
     try:
-        return json.loads(LIVE_STATE_PATH.read_text())
+        return json.loads(live_path.read_text())
     except (json.JSONDecodeError, OSError):
         return None
 
