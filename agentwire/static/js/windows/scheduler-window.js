@@ -46,6 +46,8 @@ let outputExpanded = false;
 let expandedSession = null;
 let elapsedTimer = null;
 let outputRefreshTimer = null;
+let idleTimer = null;
+let idleSince = null;
 
 /**
  * Open the Scheduler window.
@@ -138,6 +140,7 @@ function cleanup() {
     expandedSession = null;
     stopElapsedTimer();
     stopOutputRefresh();
+    stopIdleTimer();
 }
 
 // ============================================
@@ -259,6 +262,7 @@ function renderActiveTab(container) {
 
 function renderStatusNotRunning(container) {
     schedulerRunning = false;
+    stopIdleTimer();
     const dot = container.querySelector('.sched-status-dot');
     dot.className = 'sched-status-dot not-running';
     container.querySelector('.sched-status-label').textContent = 'Stopped';
@@ -281,7 +285,7 @@ function renderStatusHeader(container, state) {
     const isExecuting = !!state.current_task;
 
     dot.className = 'sched-status-dot ' + (isExecuting ? 'executing' : 'running');
-    container.querySelector('.sched-status-label').textContent = isExecuting ? 'Executing' : 'Running';
+    container.querySelector('.sched-status-label').textContent = isExecuting ? 'Executing' : 'Idle';
 
     if (state.uptime_seconds != null) {
         container.querySelector('.sched-uptime').textContent = formatDuration(state.uptime_seconds);
@@ -290,6 +294,7 @@ function renderStatusHeader(container, state) {
     const currentEl = container.querySelector('.sched-current-task');
     const progressBar = container.querySelector('.sched-progress-bar');
     if (state.current_task) {
+        stopIdleTimer();
         const taskData = cachedBoard.find(t => t.name === state.current_task);
         const session = state.current_session || taskData?.session;
         if (session) {
@@ -300,18 +305,27 @@ function renderStatusHeader(container, state) {
         }
         progressBar.style.display = 'block';
     } else {
-        currentEl.textContent = '';
+        currentEl.innerHTML = '<span class="sched-idle-message">No overdue jobs, sleeping <span class="sched-idle-counter">0s</span></span>';
         progressBar.style.display = 'none';
+        idleSince = Date.now();
+        startIdleTimer(container);
     }
 
     container.querySelector('.sched-completed').textContent = state.tasks_completed ?? 0;
     container.querySelector('.sched-failed').textContent = state.tasks_failed ?? 0;
 
+    const nextEl = container.querySelector('.sched-next-task');
     if (state.next_task) {
+        stopIdleTimer();
+        // Store countdown start for live decrement
+        nextEl.dataset.nextTask = state.next_task;
+        nextEl.dataset.nextDue = String(Date.now() + (state.next_in_seconds || 0) * 1000);
         const countdown = state.next_in_seconds > 0 ? ` (${formatDuration(state.next_in_seconds)})` : '';
-        container.querySelector('.sched-next-task').textContent = state.next_task + countdown;
+        nextEl.textContent = state.next_task + countdown;
     } else {
-        container.querySelector('.sched-next-task').textContent = '\u2014';
+        nextEl.dataset.nextTask = '';
+        nextEl.dataset.nextDue = '';
+        nextEl.textContent = 'all caught up';
     }
 
     const btn = container.querySelector('.sched-power-btn');
@@ -434,7 +448,11 @@ function renderQueueTab(container) {
     }
 
     if (!html) {
-        html = '<div class="sched-empty">No tasks scheduled</div>';
+        if (schedulerRunning) {
+            html = '<div class="sched-empty sched-idle-state">All caught up \u2014 no overdue jobs</div>';
+        } else {
+            html = '<div class="sched-empty">Scheduler stopped</div>';
+        }
     }
 
     content.innerHTML = html;
@@ -496,7 +514,9 @@ function renderHistoryTab(container) {
     } else {
         html += '<div class="sched-history-list">';
         events.forEach((evt, i) => {
-            const ts = evt.timestamp ? formatTimestamp(evt.timestamp) : '';
+            const tsDate = evt.ts ? formatDate(evt.ts) : '';
+            const tsTime = evt.ts ? formatTimestamp(evt.ts) : '';
+            const ts = tsDate ? `${tsDate} ${tsTime}` : tsTime;
             const statusClass = getStatusClass(evt.status);
             const durationStr = evt.duration ? `${evt.duration}s` : '';
             const summaryPreview = evt.summary ? evt.summary.substring(0, 120) + (evt.summary.length > 120 ? '...' : '') : '';
@@ -775,8 +795,8 @@ async function openDrilldown(container, taskName) {
         bodyHtml += '<div class="sched-empty">No runs recorded</div>';
     } else {
         events.forEach((evt, i) => {
-            const ts = evt.timestamp ? formatTimestamp(evt.timestamp) : '';
-            const tsDate = evt.timestamp ? formatDate(evt.timestamp) : '';
+            const ts = evt.ts ? formatTimestamp(evt.ts) : '';
+            const tsDate = evt.ts ? formatDate(evt.ts) : '';
             const sc = getStatusClass(evt.status);
             const dur = evt.duration ? `${evt.duration}s` : '';
 
@@ -1026,4 +1046,30 @@ function stopElapsedTimer() {
         clearInterval(elapsedTimer);
         elapsedTimer = null;
     }
+}
+
+function startIdleTimer(container) {
+    stopIdleTimer();
+    idleTimer = setInterval(() => {
+        // Update idle counter
+        const counterEl = container.querySelector('.sched-idle-counter');
+        if (counterEl && idleSince) {
+            const elapsed = Math.floor((Date.now() - idleSince) / 1000);
+            counterEl.textContent = formatDuration(elapsed);
+        }
+        // Update next task countdown
+        const nextEl = container.querySelector('.sched-next-task');
+        if (nextEl && nextEl.dataset.nextTask && nextEl.dataset.nextDue) {
+            const remaining = Math.max(0, Math.floor((Number(nextEl.dataset.nextDue) - Date.now()) / 1000));
+            nextEl.textContent = `${nextEl.dataset.nextTask} (${formatDuration(remaining)})`;
+        }
+    }, 1000);
+}
+
+function stopIdleTimer() {
+    if (idleTimer) {
+        clearInterval(idleTimer);
+        idleTimer = null;
+    }
+    idleSince = null;
 }
