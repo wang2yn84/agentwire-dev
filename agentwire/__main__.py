@@ -137,6 +137,54 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
     # Merge roles if provided
     merged = merge_roles(roles) if roles else None
 
+    # === Claude Code via Z.AI GLM (must check before "claude" since "claudeglm" starts with "claude") ===
+    if session_type.startswith("claudeglm"):
+        config = load_config()
+        zai = config.get("zai", {})
+
+        # Build env var prefix for command line (inline, so the running shell picks them up)
+        env_prefix = (
+            f"ANTHROPIC_AUTH_TOKEN={shlex.quote(zai.get('api_key', ''))} "
+            f"ANTHROPIC_BASE_URL={shlex.quote(zai.get('base_url', 'https://api.z.ai/api/anthropic'))} "
+            f"ANTHROPIC_DEFAULT_OPUS_MODEL={shlex.quote(zai.get('opus_model', 'glm-5'))} "
+            f"ANTHROPIC_DEFAULT_SONNET_MODEL={shlex.quote(zai.get('sonnet_model', 'glm-5'))} "
+            f"ANTHROPIC_DEFAULT_HAIKU_MODEL={shlex.quote(zai.get('haiku_model', 'glm-4.7-flash'))} "
+            f"API_TIMEOUT_MS={shlex.quote(str(zai.get('timeout_ms', 3000000)))} "
+        )
+
+        parts = [env_prefix + "claude"]
+
+        # Permission flags (same as claude-*)
+        if session_type == "claudeglm-bypass":
+            parts.append("--dangerously-skip-permissions")
+        elif session_type == "claudeglm-restricted":
+            parts.append("--tools Bash")
+
+        # Model override
+        if model:
+            parts.append(f"--model {model}")
+
+        # Role-based flags (not for restricted mode)
+        temp_file = None
+        if merged and session_type != "claudeglm-restricted":
+            if merged.tools:
+                parts.append(f"--tools {','.join(merged.tools)}")
+
+            if merged.disallowed_tools:
+                parts.append(f"--disallowedTools {','.join(merged.disallowed_tools)}")
+
+            if merged.instructions:
+                f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                f.write(merged.instructions)
+                f.close()
+                temp_file = f.name
+                parts.append(f'--append-system-prompt "$(<{temp_file})"')
+
+        return AgentCommand(
+            command=" ".join(parts),
+            temp_file=temp_file,
+        )
+
     # === Claude Code ===
     if session_type.startswith("claude"):
         parts = ["claude"]

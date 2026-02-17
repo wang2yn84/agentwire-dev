@@ -19,6 +19,9 @@ class SessionType(str, Enum):
     CLAUDE_BYPASS = "claude-bypass"  # Claude with --dangerously-skip-permissions
     CLAUDE_PROMPTED = "claude-prompted"  # Claude with permission hooks
     CLAUDE_RESTRICTED = "claude-restricted"  # Claude with only say allowed
+    CLAUDEGLM_BYPASS = "claudeglm-bypass"  # Claude via Z.AI GLM-5 with skip permissions
+    CLAUDEGLM_PROMPTED = "claudeglm-prompted"  # Claude via Z.AI GLM-5 with permission hooks
+    CLAUDEGLM_RESTRICTED = "claudeglm-restricted"  # Claude via Z.AI GLM-5 restricted
     OPENCODE_BYPASS = "opencode-bypass"    # OpenCode with full permissions
     OPENCODE_PROMPTED = "opencode-prompted"  # OpenCode with permission prompts
     OPENCODE_RESTRICTED = "opencode-restricted"  # OpenCode worker (bash only)
@@ -105,6 +108,7 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
     # If already agent-specific, return as-is
     agent_specific_types = [
         "claude-bypass", "claude-prompted", "claude-restricted",
+        "claudeglm-bypass", "claudeglm-prompted", "claudeglm-restricted",
         "opencode-bypass", "opencode-prompted", "opencode-restricted",
         "bare"
     ]
