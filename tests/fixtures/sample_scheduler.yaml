@@ -1,0 +1,33 @@
+tasks:
+  code-quality:
+    project: ~/projects/testapp
+    session: testapp
+    task: code-quality
+    interval: 3600
+    enabled: true
+  doc-drift:
+    project: ~/projects/testapp
+    session: testapp
+    task: doc-drift
+    interval: 7200
+    enabled: true
+    filler: true
+    priority: 10
+  disabled-task:
+    project: ~/projects/testapp
+    session: testapp
+    task: disabled-task
+    interval: 1800
+    enabled: false
+
+state:
+  code-quality:
+    last_run: "2026-01-01T12:00:00"
+    last_status: "complete"
+    last_duration: 120
+    run_count: 5
+  doc-drift:
+    last_run: "2026-01-01T10:00:00"
+    last_status: "complete"
+    last_duration: 60
+    run_count: 3

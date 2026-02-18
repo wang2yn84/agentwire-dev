@@ -144,6 +144,14 @@ exclude = [
     "agentwire/static/agentwire-logo-splash-green-dark.jpeg",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow",
+    "integration: requires subprocess mocking",
+]
+asyncio_mode = "auto"
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
