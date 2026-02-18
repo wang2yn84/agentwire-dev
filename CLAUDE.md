@@ -397,11 +397,11 @@ Each project can have a `.agentwire.yml` in its root directory. This configures 
 **Format is FLAT (no nesting):**
 
 ```yaml
-# Leader session (any level of hierarchy)
+# Session with voice and agentwire awareness
 type: claude-bypass
 roles:
-  - leader
-  - glm-delegation
+  - agentwire
+  - voice
 voice: may
 parent: main  # Notify parent session when idle (optional)
 ```
@@ -473,9 +473,9 @@ tasks:
 When a session goes idle, it notifies up the hierarchy via `agentwire alert` (text-only, no audio):
 
 ```
-parent leader ← receives "[ALERT from child] ..."
+parent session ← receives "[ALERT from child] ..."
     ↑ alert --to parent
-child leader   ← receives "[ALERT from pane N] ..."
+child session   ← receives "[ALERT from pane N] ..."
     ↑ auto-notify pane 0
 worker panes
 ```
@@ -510,25 +510,31 @@ worker panes
 # Option 1: Create .agentwire.yml first, then create session
 echo "type: claude-bypass
 roles:
-  - leader" > ~/projects/myproject/.agentwire.yml
+  - agentwire
+  - voice" > ~/projects/myproject/.agentwire.yml
 
 agentwire new -s myproject -p ~/projects/myproject
 
 # Option 2: Specify roles on command line (saves to .agentwire.yml)
-agentwire new -s myproject -p ~/projects/myproject --roles leader
+agentwire new -s myproject -p ~/projects/myproject --roles agentwire,voice
 ```
 
 ### Role System
 
 Roles define agent behavior and are composable. Mix and match roles in `.agentwire.yml` to configure orchestrators, workers, or specialized agents.
 
-**Role types:**
-- **Leader roles** - Orchestrators that spawn workers, use voice, coordinate work
-- **Worker roles** - Focused execution, write exit summaries, auto-kill when idle
-- **Delegation roles** - Agent-specific worker management (Claude vs GLM patterns)
-- **Specialty roles** - Chatbot personality, voice handling, etc.
+**Available roles:**
 
-Use `agentwire roles list` to see available roles. Roles are bundled in `agentwire/roles/` and can reference each other for complementary behavior.
+| Role | Purpose |
+|------|---------|
+| `agentwire` | Core session/pane/MCP tools awareness |
+| `voice` | Voice communication (speak/listen) |
+| `worker` | Receive tasks, execute autonomously, report back |
+| `task-runner` | Scheduled task execution |
+| `chatbot` | Conversational personality |
+| `init` | Setup wizard behavior |
+
+Use `agentwire roles list` to see available roles. Roles are bundled in `agentwire/roles/` and can be composed freely in `.agentwire.yml`.
 
 ## Agent Parity
 
