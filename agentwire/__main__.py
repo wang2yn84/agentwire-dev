@@ -4723,24 +4723,24 @@ def cmd_history_resume(args) -> int:
     cmd_parts = ["claude", "--resume", session_id, "--fork-session"]
     cmd_parts.extend(project_config.type.to_cli_flags())
 
-        # Load and apply roles if specified in config
-        if project_config.roles:
-            roles, missing = load_roles(project_config.roles, project_path)
-            if not missing and roles:
-                merged = merge_roles(roles)
-                if merged.tools:
-                    cmd_parts.append("--tools")
-                    cmd_parts.extend(sorted(merged.tools))
-                if merged.disallowed_tools:
-                    cmd_parts.append("--disallowedTools")
-                    cmd_parts.extend(sorted(merged.disallowed_tools))
-                if merged.instructions:
-                    # Write to temp file to avoid shell escaping issues
-                    f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                    f.write(merged.instructions)
-                    f.close()
-                    temp_file = f.name
-                    cmd_parts.append(f'--append-system-prompt "$(<{temp_file})"')
+    # Load and apply roles if specified in config
+    if project_config.roles:
+        roles, missing = load_roles(project_config.roles, project_path)
+        if not missing and roles:
+            merged = merge_roles(roles)
+            if merged.tools:
+                cmd_parts.append("--tools")
+                cmd_parts.extend(sorted(merged.tools))
+            if merged.disallowed_tools:
+                cmd_parts.append("--disallowedTools")
+                cmd_parts.extend(sorted(merged.disallowed_tools))
+            if merged.instructions:
+                # Write to temp file to avoid shell escaping issues
+                f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                f.write(merged.instructions)
+                f.close()
+                temp_file = f.name
+                cmd_parts.append(f'--append-system-prompt "$(<{temp_file})"')
 
     agent_cmd = " ".join(cmd_parts)
 
