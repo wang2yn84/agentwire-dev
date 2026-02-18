@@ -27,7 +27,7 @@ Old way: Get up. Walk to computer. Type.
 
 ## What It Does
 
-Push-to-talk voice control for [Claude Code](https://github.com/anthropics/claude-code), [OpenCode](https://github.com/opencode-ai/opencode), or any AI coding assistant running in tmux.
+Push-to-talk voice control for [Claude Code](https://github.com/anthropics/claude-code) or any AI coding assistant running in tmux.
 
 <p align="center">
   <img src="https://agentwire.dev/images/demo.gif" alt="Demo" width="600">
@@ -61,7 +61,7 @@ agentwire portal start
 # Open https://localhost:8765
 ```
 
-**Requirements:** Python 3.10+, tmux, ffmpeg, Claude Code or OpenCode
+**Requirements:** Python 3.10+, tmux, ffmpeg, Claude Code
 
 <details>
 <summary><strong>Platform-specific instructions</strong></summary>

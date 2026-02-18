@@ -10,7 +10,7 @@ dotdev — Building tools for AI-powered development
 I build open source developer tools that make working with AI coding agents easier and more natural. My focus is on voice interfaces, multi-agent orchestration, and seamless human-AI collaboration.
 
 🦉 AgentWire - Voice interface for AI coding agents
-Talk to Claude Code, OpenCode, and other AI assistants using push-to-talk from any device. Control multiple sessions from your phone, tablet, or laptop. Let your agents talk back with text-to-speech. Orchestrate workers across local and remote machines.
+Talk to Claude Code and other AI assistants using push-to-talk from any device. Control multiple sessions from your phone, tablet, or laptop. Let your agents talk back with text-to-speech. Orchestrate workers across local and remote machines.
 
 pip install agentwire-dev
 
@@ -22,7 +22,7 @@ I share tutorials, demos, and deep dives into AI-assisted development workflows.
 ```
 AgentWire - Voice Interface for AI Coding Agents
 
-Push-to-talk from your phone, tablet, or laptop to tmux sessions running Claude Code or OpenCode. Let your AI agents talk back.
+Push-to-talk from your phone, tablet, or laptop to tmux sessions running Claude Code. Let your AI agents talk back.
 
 🚀 Get Started:
 pip install agentwire-dev
@@ -35,7 +35,7 @@ agentwire portal start
 • PyPI: https://pypi.org/project/agentwire-dev/
 • Discord: https://discord.gg/e6KxXVdJ25
 
-#AI #CodingAgents #ClaudeCode #OpenCode #VoiceInterface #DevTools
+#AI #CodingAgents #ClaudeCode #VoiceInterface #DevTools
 ```
 
 ## Suggested Tags
@@ -43,7 +43,6 @@ agentwire portal start
 - AI
 - CodingAgents
 - ClaudeCode
-- OpenCode
 - VoiceInterface
 - DevTools
 - Python

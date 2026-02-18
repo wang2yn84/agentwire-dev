@@ -2296,7 +2296,7 @@ class AgentWireServer:
             name: Base session/project name (required)
             path: Custom project path (optional, ignored if worktree=true)
             voice: TTS voice for this session
-            type: Session type (claude-bypass | claude-prompted | claude-restricted | opencode-bypass | opencode-prompted | opencode-restricted | bare)
+            type: Session type (claude-bypass | claude-prompted | claude-restricted | claudeglm-bypass | claudeglm-prompted | claudeglm-restricted | bare)
             roles: Comma-separated list of roles (e.g., "agentwire,worker")
             machine: Machine ID ('local' or remote machine ID)
             worktree: Whether to create a worktree session
@@ -3489,7 +3489,7 @@ projects:
         """POST /api/session/{name}/recreate - Destroy session/worktree and create fresh one via CLI.
 
         Inherits session type from existing session config.
-        Supported types: claude-bypass | claude-prompted | claude-restricted | opencode-bypass | opencode-prompted | opencode-restricted | bare
+        Supported types: claude-bypass | claude-prompted | claude-restricted | claudeglm-bypass | claudeglm-prompted | claudeglm-restricted | bare
         """
         name = request.match_info["name"]
         try:
@@ -3543,7 +3543,7 @@ projects:
         Useful for working on multiple features in the same project simultaneously.
 
         Inherits session type from existing session config.
-        Supported types: claude-bypass | claude-prompted | claude-restricted | opencode-bypass | opencode-prompted | opencode-restricted | bare
+        Supported types: claude-bypass | claude-prompted | claude-restricted | claudeglm-bypass | claudeglm-prompted | claudeglm-restricted | bare
         """
         name = request.match_info["name"]
         try:
@@ -3596,7 +3596,7 @@ projects:
         Creates a new session that continues from the current conversation context.
 
         Inherits session type from existing session config.
-        Supported types: claude-bypass | claude-prompted | claude-restricted | opencode-bypass | opencode-prompted | opencode-restricted | bare
+        Supported types: claude-bypass | claude-prompted | claude-restricted | claudeglm-bypass | claudeglm-prompted | claudeglm-restricted | bare
         """
         name = request.match_info["name"]
         try:
@@ -4137,7 +4137,7 @@ projects:
                 await self.broadcast_dashboard("scheduler_state", data)
 
             elif event == "agent_progress":
-                # Live agent progress from OpenCode plugin — broadcast to dashboards
+                # Live agent progress — broadcast to dashboards
                 await self.broadcast_dashboard("agent_progress", data)
 
             elif event == "scheduler_task_complete":

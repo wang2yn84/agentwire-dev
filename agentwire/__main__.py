@@ -80,50 +80,14 @@ def _check_config_exists() -> bool:
 class AgentCommand:
     """Result of building an agent command."""
     command: str  # The shell command to execute
-    role_instructions: str | None = None  # For OpenCode: prepend to first message
     temp_file: str | None = None  # Temp file to clean up after agent starts
-    opencode_agent: str | None = None  # OpenCode agent name (if using --agent)
-
-
-def _create_opencode_agent_file(role_names: list[str], instructions: str) -> str:
-    """Create an OpenCode agent file with role instructions.
-
-    Args:
-        role_names: List of role names (for generating consistent filename)
-        instructions: The merged role instructions
-
-    Returns:
-        Agent name to use with --agent flag
-    """
-    import hashlib
-
-    # Create agents directory if needed
-    agents_dir = Path.home() / ".config" / "opencode" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate name from sorted role names + content hash
-    # Content hash ensures regeneration if instructions change
-    sorted_roles = sorted(role_names)
-    role_key = ",".join(sorted_roles)
-    content_hash = hashlib.sha256(instructions.encode()).hexdigest()[:8]
-    name_hash = hashlib.sha256(role_key.encode()).hexdigest()[:8]
-    agent_name = f"agentwire-{name_hash}-{content_hash}"
-
-    # Only write if file doesn't exist (content hash guarantees correctness)
-    agent_file = agents_dir / f"{agent_name}.md"
-    if not agent_file.exists():
-        agent_file.write_text(instructions)
-
-    return agent_name
 
 
 def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None, model: str | None = None) -> AgentCommand:
     """Build the agent command for a session.
 
-    Supports both Claude Code and OpenCode with appropriate flags/env vars.
-
     Args:
-        session_type: Session type (e.g., "claude-bypass", "opencode-bypass", "bare")
+        session_type: Session type (e.g., "claude-bypass", "claudeglm-bypass", "bare")
         roles: Optional list of roles to apply
         model: Optional model override (e.g., "haiku", "sonnet", "opus")
 
@@ -222,38 +186,6 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         return AgentCommand(
             command=" ".join(parts),
             temp_file=temp_file,
-        )
-
-    # === OpenCode ===
-    if session_type.startswith("opencode"):
-        parts = []
-
-        # OpenCode uses env var for permissions, prefix the command
-        if session_type == "opencode-bypass":
-            parts.append('OPENCODE_PERMISSION=\'{"*":"allow"}\'')
-        elif session_type == "opencode-prompted":
-            parts.append('OPENCODE_PERMISSION=\'{"*":"ask"}\'')
-        elif session_type == "opencode-restricted":
-            # Read-only mode: deny file edits, restrict bash to safe commands
-            parts.append('OPENCODE_PERMISSION=\'{"edit":"deny","bash":{"*":"deny","git status":"allow","git diff *":"allow","git log *":"allow","ls *":"allow","cat *":"allow","head *":"allow","tail *":"allow","grep *":"allow","find *":"allow","pwd":"allow","echo *":"allow","agentwire *":"allow"},"question":"deny"}\'')
-
-        parts.append("opencode")
-
-        # Model flag (OpenCode supports this)
-        # Model override
-        if model:
-            parts.append(f"--model {model}")
-
-        # Create agent file with role instructions for proper system prompt injection
-        opencode_agent = None
-        if roles and merged and merged.instructions:
-            role_names = [r.name for r in roles]
-            opencode_agent = _create_opencode_agent_file(role_names, merged.instructions)
-            parts.append(f"--agent {opencode_agent}")
-
-        return AgentCommand(
-            command=" ".join(parts),
-            opencode_agent=opencode_agent,
         )
 
     # Unknown session type - return empty
@@ -413,7 +345,7 @@ def _get_session_project_path(session: str) -> Path | None:
 def tmux_session_has_agent(name: str) -> bool:
     """Check if a tmux session has an agent running (not just a bare shell).
 
-    Returns True if any pane is running claude, opencode, or similar agent.
+    Returns True if any pane is running claude or similar agent.
     Returns False if all panes are just zsh/bash (agent died or never started).
     """
     result = subprocess.run(
@@ -2647,9 +2579,6 @@ def cmd_send(args) -> int:
 
         try:
             target_session = session_full or pane_manager.get_current_session()
-            # Note: OpenCode role instructions are now injected via --agent flag (agent files)
-            # so no need to prepend instructions here
-
             pane_manager.send_to_pane(session_full, pane_index, prompt)
             if json_mode:
                 _output_json({
@@ -2682,10 +2611,6 @@ def cmd_send(args) -> int:
 
     # Parse session@machine format
     session, machine_id = _parse_session_target(session_full)
-    # Note: Role instructions are now injected at session/pane start:
-    # - Claude: via --append-system-prompt
-    # - OpenCode: via --agent (agent files in ~/.config/opencode/agents/)
-
     if machine_id:
         # Remote: SSH and run tmux commands
         machine = _get_machine_config(machine_id)
@@ -3089,11 +3014,7 @@ def cmd_new(args) -> int:
         # Build agent command
         agent = build_agent_command(session_type, roles if roles else None)
 
-        # Store role instructions for first message (OpenCode only)
-        if agent.role_instructions:
-            store_session_metadata(session_name, {
-                "role_instructions": agent.role_instructions
-            })
+    
 
         agent_cmd = agent.command
 
@@ -3260,12 +3181,6 @@ def cmd_new(args) -> int:
     # Build agent command
     model_override = getattr(args, 'model', None)
     agent = build_agent_command(session_type, roles if roles else None, model=model_override)
-
-    # Store role instructions for first message (OpenCode only)
-    if agent.role_instructions:
-        store_session_metadata(session_name, {
-            "role_instructions": agent.role_instructions
-        })
 
     agent_cmd = agent.command
 
@@ -3630,13 +3545,10 @@ def cmd_kill(args) -> int:
 def _wait_for_agent_ready(session: str, timeout: int = 30, pane_index: int = 0) -> bool:
     """Wait for an agent to be ready to accept input.
 
-    Checks for both Claude Code and OpenCode ready indicators,
-    regardless of which agent is running (avoids config/runtime mismatch).
-
     Returns True if agent became ready, False if timeout.
     """
     start = time.time()
-    all_indicators = ['❯', 'Claude Code', 'Ask anything', 'GLM', 'Coding Plan', '▣']
+    all_indicators = ['❯', 'Claude Code']
 
     while (time.time() - start) < timeout:
         try:
@@ -3660,9 +3572,7 @@ def _wait_for_agent_ready(session: str, timeout: int = 30, pane_index: int = 0) 
 def _wait_for_worker_ready(session: str, pane_index: int, timeout: int = 30, agent_type: str = "claude") -> bool:
     """Wait for a worker pane to be ready to receive input.
 
-    Polls the pane output looking for ready indicators:
-    - Claude Code: looks for '❯' prompt
-    - OpenCode: looks for 'Ask anything' or similar ready state
+    Polls the pane output looking for Claude Code's '❯' prompt.
 
     Returns True if worker became ready, False if timeout.
     """
@@ -3671,11 +3581,7 @@ def _wait_for_worker_ready(session: str, pane_index: int, timeout: int = 30, age
     start = time.time()
     poll_interval = 0.5  # Check every 500ms
 
-    # Ready indicators
-    claude_ready = ['❯', '>', 'Claude Code']  # Claude's prompt
-    opencode_ready = ['Ask anything', 'GLM', 'Coding Plan', '▣']  # OpenCode's ready state
-
-    ready_indicators = opencode_ready if agent_type.startswith("opencode") else claude_ready
+    ready_indicators = ['❯', '>', 'Claude Code']
 
     while (time.time() - start) < timeout:
         try:
@@ -3775,17 +3681,13 @@ def cmd_spawn(args) -> int:
         )
 
         # Install pane hook to notify portal when pane exits
-        # Note: OpenCode role instructions are now injected via --agent flag (agent files)
-        # so no need to store role_instructions in metadata
         actual_session = session or pane_manager.get_current_session()
         _install_pane_hooks(actual_session, pane_index)
 
         # Wait for worker to be ready (unless --no-wait)
         worker_ready = True
         if not no_wait:
-            # Determine agent type for ready detection
-            agent_type = "opencode" if session_type_str.startswith("opencode") else "claude"
-            worker_ready = _wait_for_worker_ready(actual_session, pane_index, timeout, agent_type)
+            worker_ready = _wait_for_worker_ready(actual_session, pane_index, timeout)
 
         if json_mode:
             result = {
@@ -4260,12 +4162,6 @@ def cmd_recreate(args) -> int:
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
 
-    # Store role instructions for first message (OpenCode only)
-    if agent.role_instructions:
-        store_session_metadata(session_name, {
-            "role_instructions": agent.role_instructions
-        })
-
     agent_cmd = agent.command
 
     # Step 5: Create new session
@@ -4410,12 +4306,6 @@ def cmd_fork(args) -> int:
         # Build agent command
         agent = build_agent_command(session_type_str, roles)
 
-        # Store role instructions for first message (OpenCode only)
-        if agent.role_instructions:
-            store_session_metadata(target_session, {
-                "role_instructions": agent.role_instructions
-            })
-
         agent_cmd = agent.command
 
         create_session_cmd = (
@@ -4509,12 +4399,6 @@ def cmd_fork(args) -> int:
 
         # Build agent command
         agent = build_agent_command(session_type_str, roles)
-
-        # Store role instructions for first message (OpenCode only)
-        if agent.role_instructions:
-            store_session_metadata(target_session, {
-                "role_instructions": agent.role_instructions
-            })
 
         agent_cmd = agent.command
         if agent_cmd:
@@ -4611,13 +4495,6 @@ def cmd_fork(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
-
-    # Store role instructions for first message (OpenCode only)
-    if agent.role_instructions:
-        store_session_metadata(target_session, {
-            "role_instructions": agent.role_instructions
-        })
-
     agent_cmd = agent.command
     if agent_cmd:
         subprocess.run(
@@ -4797,11 +4674,9 @@ def cmd_history_show(args) -> int:
 
 
 def cmd_history_resume(args) -> int:
-    """Resume a session (Claude Code or OpenCode).
+    """Resume a Claude Code session.
 
-    Creates a new tmux session and runs the appropriate resume command:
-    - Claude Code: `claude --resume <session-id> --fork-session`
-    - OpenCode: `opencode --session <session-id>`
+    Creates a new tmux session and runs: `claude --resume <session-id> --fork-session`
 
     Flags are applied based on the project's .agentwire.yml config.
     """
@@ -4811,17 +4686,12 @@ def cmd_history_resume(args) -> int:
     project_path_str = args.project
     json_mode = getattr(args, 'json', False)
 
-    # Detect agent type from session ID format
-    # OpenCode uses "ses_*" format, Claude Code uses UUID format
-    if session_id.startswith("ses_"):
-        agent_type = "opencode"
-    else:
-        agent_type = "claude"
-        # Resolve prefix to full UUID for Claude Code sessions
-        from .history import resolve_session_id
-        resolved = resolve_session_id(session_id, machine_id)
-        if resolved:
-            session_id = resolved
+    agent_type = "claude"
+    # Resolve prefix to full UUID for Claude Code sessions
+    from .history import resolve_session_id
+    resolved = resolve_session_id(session_id, machine_id)
+    if resolved:
+        session_id = resolved
 
     # Resolve project path
     project_path = Path(project_path_str).expanduser().resolve()
@@ -4829,9 +4699,7 @@ def cmd_history_resume(args) -> int:
     # Load project config for type and roles
     project_config = load_project_config(project_path)
     if project_config is None:
-        # Default to bypass for detected agent
-        default_type = SessionType.CLAUDE_BYPASS if agent_type == "claude" else SessionType.OPENCODE_BYPASS
-        project_config = ProjectConfig(type=default_type, roles=[])
+        project_config = ProjectConfig(type=SessionType.CLAUDE_BYPASS, roles=[])
 
     # Generate session name if not provided
     if not name:
@@ -4850,28 +4718,10 @@ def cmd_history_resume(args) -> int:
             counter += 1
             name = f"{base_name}-fork-{counter}"
 
-    # Build resume command based on agent type
+    # Build resume command
     temp_file = None
-    if agent_type == "opencode":
-        # OpenCode: opencode --session <session-id>
-        cmd_parts = ["opencode", "--session", session_id]
-
-        # Load and apply roles if specified in config
-        if project_config.roles:
-            roles, missing = load_roles(project_config.roles, project_path)
-            if not missing and roles:
-                merged = merge_roles(roles)
-                if merged.instructions:
-                    # Write to temp file for --prompt flag
-                    f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                    f.write(merged.instructions)
-                    f.close()
-                    temp_file = f.name
-                    cmd_parts.append(f'--prompt "$(<{temp_file})"')
-    else:
-        # Claude Code: claude --resume <session-id> --fork-session
-        cmd_parts = ["claude", "--resume", session_id, "--fork-session"]
-        cmd_parts.extend(project_config.type.to_cli_flags())
+    cmd_parts = ["claude", "--resume", session_id, "--fork-session"]
+    cmd_parts.extend(project_config.type.to_cli_flags())
 
         # Load and apply roles if specified in config
         if project_config.roles:
@@ -5234,12 +5084,6 @@ def cmd_dev(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
-
-    # Store role instructions for first message (OpenCode only)
-    if agent.role_instructions:
-        store_session_metadata(session_name, {
-            "role_instructions": agent.role_instructions
-        })
 
     agent_cmd = agent.command
 
@@ -5624,23 +5468,6 @@ def cmd_doctor(args) -> int:
         print("  [!!] Idle notification hook: not found (required for worker notifications)")
         print("     This hook enables output capture and auto-kill for Claude Code workers.")
         issues_found += 1
-
-    # Check OpenCode plugin
-    print("\nChecking OpenCode plugin...")
-    # Check both directories — plugins/ (plural, v1.1.63+) takes priority
-    opencode_plugins_dir = Path.home() / ".config" / "opencode" / "plugins"
-    opencode_plugin_dir = Path.home() / ".config" / "opencode" / "plugin"
-    opencode_plugin_new = opencode_plugins_dir / "agentwire-notify.ts"
-    opencode_plugin_old = opencode_plugin_dir / "agentwire-notify.ts"
-    if opencode_plugin_new.exists():
-        print(f"  [ok] OpenCode plugin: {opencode_plugin_new}")
-    elif opencode_plugin_old.exists():
-        print(f"  [!!] OpenCode plugin found at old path: {opencode_plugin_old}")
-        print(f"     Move to {opencode_plugins_dir}/ (plural) for OpenCode v1.1.63+")
-        issues_found += 1
-    else:
-        print("  [..] OpenCode plugin: not found (required for OpenCode worker notifications)")
-        print(f"     Copy from agentwire source to {opencode_plugins_dir}/")
 
     # Check queue processor
     queue_processor = Path.home() / ".agentwire" / "queue-processor.sh"
@@ -8479,8 +8306,8 @@ def main() -> int:
     new_parser.add_argument("-s", "--session", required=True, help="Session name (project, project/branch, or project/branch@machine)")
     new_parser.add_argument("-p", "--path", help="Working directory (default: ~/projects/<name>)")
     new_parser.add_argument("-f", "--force", action="store_true", help="Replace existing session")
-    # Session type (supports Claude Code, OpenCode, and universal types)
-    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, opencode-bypass, opencode-prompted, opencode-restricted, standard, worker, voice)")
+    # Session type
+    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
     new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
@@ -8515,7 +8342,7 @@ def main() -> int:
     spawn_parser.add_argument("-s", "--session", help="Target session (default: auto-detect)")
     spawn_parser.add_argument("--cwd", help="Working directory (default: current)")
     spawn_parser.add_argument("--branch", "-b", help="Create worktree on this branch for isolated commits")
-    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted, opencode-bypass, opencode-prompted, opencode-restricted)")
+    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted)")
     spawn_parser.add_argument("--roles", default="worker", help="Comma-separated roles (default: worker)")
     spawn_parser.add_argument("--no-wait", action="store_true", help="Don't wait for worker to be ready (default: wait up to 30s)")
     spawn_parser.add_argument("--timeout", type=int, default=30, help="Seconds to wait for worker ready (default: 30)")
@@ -8552,8 +8379,8 @@ def main() -> int:
     # === recreate command (top-level) ===
     recreate_parser = subparsers.add_parser("recreate", help="Destroy and recreate session with fresh worktree")
     recreate_parser.add_argument("-s", "--session", required=True, help="Session name (project/branch or project/branch@machine)")
-    # Session type (supports Claude Code, OpenCode, and universal types)
-    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, opencode-bypass, opencode-prompted, opencode-restricted, standard, worker, voice)")
+    # Session type
+    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted, standard, worker, voice)")
     recreate_parser.add_argument("--json", action="store_true", help="Output as JSON")
     recreate_parser.set_defaults(func=cmd_recreate)
 
@@ -8561,8 +8388,8 @@ def main() -> int:
     fork_parser = subparsers.add_parser("fork", help="Fork a session into a new worktree")
     fork_parser.add_argument("-s", "--source", required=True, help="Source session (project or project/branch)")
     fork_parser.add_argument("-t", "--target", required=True, help="Target session (must include branch: project/new-branch)")
-    # Session type (supports Claude Code, OpenCode, and universal types)
-    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, opencode-bypass, opencode-prompted, opencode-restricted, standard, worker, voice)")
+    # Session type
+    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted, standard, worker, voice)")
     fork_parser.add_argument("--json", action="store_true", help="Output as JSON")
     fork_parser.set_defaults(func=cmd_fork)
 

@@ -150,7 +150,7 @@ agentwire ensure -s bot --task daily --wait-lock --lock-timeout 120
 Extend `.agentwire.yml` to support `tasks:` section:
 
 ```yaml
-type: opencode-bypass
+type: claudeglm-bypass
 roles:
   - agentwire
   - voice

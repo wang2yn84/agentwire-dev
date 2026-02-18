@@ -1285,22 +1285,6 @@ body {
     color: var(--error);
 }
 
-/* OpenCode variants */
-.type-tag.type-opencode-bypass {
-    background: rgba(168, 85, 247, 0.15);
-    color: #a855f7;
-}
-
-.type-tag.type-opencode-prompted {
-    background: rgba(251, 191, 36, 0.15);
-    color: #fbbf24;
-}
-
-.type-tag.type-opencode-restricted {
-    background: rgba(248, 113, 113, 0.15);
-    color: var(--error);
-}
-
 /* Bare / other */
 .type-tag.type-bare {
     background: rgba(148, 163, 184, 0.15);

@@ -11,18 +11,12 @@ from typing import Optional
 
 import yaml
 
-from .project_config import detect_default_agent_type
-
-
 def _get_default_agent_command() -> str:
-    """Get the default agent command based on detected agent type.
+    """Get the default agent command.
 
     Returns:
-        Default command string for the detected agent.
+        Default command string for Claude Code.
     """
-    agent_type = detect_default_agent_type()
-    if agent_type == "opencode":
-        return "opencode"  # OpenCode uses env vars for permissions
     return "claude --dangerously-skip-permissions"
 
 

@@ -89,7 +89,7 @@ Projects are folders with `.agentwire.yml` files, discovered from `projects.dir`
 | Field | Description |
 |-------|-------------|
 | Name | Folder name |
-| Type | Session type (`claude-bypass`, `claude-prompted`, `claude-restricted`) |
+| Type | Session type (`claude-bypass`, `claude-prompted`, `claudeglm-bypass`) |
 | Path | Full path to project folder |
 | Roles | Configured roles from `.agentwire.yml` |
 
@@ -216,7 +216,7 @@ Right-click or use the actions menu on session windows for additional operations
 | Fork Session | Forks Claude Code conversation context into new session |
 | Recreate | Destroys session/worktree, pulls latest, creates fresh |
 
-**Fork Session** uses Claude Code's `--resume <id> --fork-session` to create a new session that inherits the conversation context. Creates sessions named `project-fork-1`, `project-fork-2`, etc. Note: `--resume` is Claude Code only; OpenCode does not support this feature.
+**Fork Session** uses Claude Code's `--resume <id> --fork-session` to create a new session that inherits the conversation context. Creates sessions named `project-fork-1`, `project-fork-2`, etc.
 
 **For system sessions** (portal, TTS, main - names configurable via `services.*.session_name`):
 

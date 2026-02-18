@@ -4,7 +4,6 @@ Project-level configuration (.agentwire.yml).
 This file lives in project directories and is the source of truth for session config.
 """
 
-import shutil
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -22,14 +21,10 @@ class SessionType(str, Enum):
     CLAUDEGLM_BYPASS = "claudeglm-bypass"  # Claude via Z.AI GLM-5 with skip permissions
     CLAUDEGLM_PROMPTED = "claudeglm-prompted"  # Claude via Z.AI GLM-5 with permission hooks
     CLAUDEGLM_RESTRICTED = "claudeglm-restricted"  # Claude via Z.AI GLM-5 restricted
-    OPENCODE_BYPASS = "opencode-bypass"    # OpenCode with full permissions
-    OPENCODE_PROMPTED = "opencode-prompted"  # OpenCode with permission prompts
-    OPENCODE_RESTRICTED = "opencode-restricted"  # OpenCode worker (bash only)
-
     # Universal types (agent-agnostic, map to agent-specific types)
-    STANDARD = "standard"  # Full automation -> claude-bypass or opencode-bypass
-    WORKER = "worker"      # Worker pane -> claude-restricted or opencode-restricted
-    VOICE = "voice"        # Voice with prompts -> claude-prompted or opencode-prompted
+    STANDARD = "standard"  # Full automation -> claude-bypass
+    WORKER = "worker"      # Worker pane -> claude-restricted
+    VOICE = "voice"        # Voice with prompts -> claude-prompted
 
     @classmethod
     def from_str(cls, value: str) -> "SessionType":
@@ -54,38 +49,11 @@ class SessionType(str, Enum):
 
 
 def detect_default_agent_type() -> str:
-    """Detect which AI agent is installed from config or by checking PATH.
-
-    Priority:
-    1. Check ~/.agentwire/config.yaml for agent.command
-    2. Use shutil.which() to detect installed agent
-    3. Prefer claude if both are installed
+    """Detect which AI agent is installed.
 
     Returns:
-        "claude" or "opencode"
+        "claude" (only supported agent type)
     """
-
-    # Check config first
-    config_path = Path.home() / ".agentwire" / "config.yaml"
-    if config_path.exists():
-        try:
-            with open(config_path) as f:
-                config = yaml.safe_load(f) or {}
-                agent_command = config.get("agent", {}).get("command", "")
-                if "claude" in agent_command:
-                    return "claude"
-                elif "opencode" in agent_command:
-                    return "opencode"
-        except Exception:
-            pass
-
-    # Detect from PATH
-    if shutil.which("claude"):
-        return "claude"
-    elif shutil.which("opencode"):
-        return "opencode"
-
-    # Prefer claude if both installed
     return "claude"
 
 
@@ -94,7 +62,7 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
 
     Args:
         session_type: "standard", "worker", "voice", or agent-specific type
-        agent_type: "claude" or "opencode"
+        agent_type: "claude" or "claudeglm"
 
     Returns:
         Agent-specific session type
@@ -102,14 +70,11 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
     Examples:
         >>> normalize_session_type("standard", "claude")
         "claude-bypass"
-        >>> normalize_session_type("worker", "opencode")
-        "opencode-restricted"
     """
     # If already agent-specific, return as-is
     agent_specific_types = [
         "claude-bypass", "claude-prompted", "claude-restricted",
         "claudeglm-bypass", "claudeglm-prompted", "claudeglm-restricted",
-        "opencode-bypass", "opencode-prompted", "opencode-restricted",
         "bare"
     ]
     if session_type in agent_specific_types:

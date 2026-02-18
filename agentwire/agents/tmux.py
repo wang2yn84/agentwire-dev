@@ -228,7 +228,7 @@ class TmuxAgent(AgentBackend):
             projects_dir = machine.get("projects_dir", "~/projects")
             remote_path = f"{projects_dir}/{path.name}" if not str(path).startswith("/") else str(path)
 
-            # Parse env var prefix (e.g., OPENCODE_PERMISSION='...' opencode)
+            # Parse env var prefix (e.g., ANTHROPIC_AUTH_TOKEN='...' claude)
             # Must use tmux set-environment for remote sessions since shlex.quote
             # would break the env var assignment
             env_var, env_val, actual_cmd = parse_env_var_prefix(agent_cmd)

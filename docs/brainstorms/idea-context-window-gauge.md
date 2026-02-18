@@ -139,7 +139,7 @@ def count_tokens_accurate(text: str, model: str) -> int:
 ```
 
 **Approach 3: Output Parsing**
-Claude Code and OpenCode sometimes report token usage. Parse it when available:
+Claude Code sometimes reports token usage. Parse it when available:
 ```
 # Claude sometimes outputs:
 # "Context: 45,234 tokens used"

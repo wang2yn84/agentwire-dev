@@ -576,34 +576,6 @@ def _sweep_orphaned_processes() -> None:
     except Exception:
         pass
 
-    # Find and kill orphaned opencode/yaml-language-server processes
-    killed = 0
-    my_pid = os.getpid()
-    for pattern in ["opencode", "yaml-language-server"]:
-        try:
-            result = subprocess.run(
-                ["pgrep", "-f", pattern],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if line.strip():
-                        try:
-                            pid = int(line.strip())
-                        except ValueError:
-                            continue
-                        if pid not in active_pids and pid != my_pid:
-                            try:
-                                os.kill(pid, signal.SIGKILL)
-                                killed += 1
-                            except OSError:
-                                pass
-        except Exception:
-            pass
-
-    if killed:
-        print(f"[{_ts()}] Sweep: killed {killed} orphaned process(es)")
-        _log_event("orphan_sweep", killed=killed)
 
 
 def _kill_session(session: str) -> None:
@@ -654,7 +626,7 @@ def _pre_create_session(task: SchedulerTask) -> None:
     """Pre-create session with scheduler type/role overrides if needed.
 
     The scheduler may specify a different session type than the project's
-    .agentwire.yml (e.g., opencode-bypass for scheduled tasks). If overrides
+    .agentwire.yml (e.g., claudeglm-bypass for scheduled tasks). If overrides
     are set, we need to create the session before ensure runs, because
     ensure uses project defaults.
 

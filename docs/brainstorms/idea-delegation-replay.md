@@ -23,7 +23,7 @@ task_description: "Implement auth middleware + update 4 route files"
 decision:
   strategy: parallel-workers
   worker_count: 2
-  worker_type: opencode-bypass
+  worker_type: claude-bypass
   instructions:
     - pane: 1
       prompt: "Implement auth middleware in src/middleware/auth.ts..."
@@ -114,7 +114,7 @@ agentwire delegation advise "Implement auth middleware + update 4 route files"
 # Recommended: 2 workers (parallel)
 #   Worker 1: middleware + types (historically self-contained)
 #   Worker 2: route files (group by dependency)
-# Worker type: opencode-bypass (sufficient complexity, cost-effective)
+# Worker type: claude-bypass (sufficient complexity, cost-effective)
 # Prompt tips:
 #   - Include "verify imports after changes" (prevents top retry cause)
 #   - List exact file paths (reduces ambiguity retries by 60%)

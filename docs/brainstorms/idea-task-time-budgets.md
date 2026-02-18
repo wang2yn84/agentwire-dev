@@ -39,7 +39,7 @@ CREATE TABLE task_durations (
   completed_at TIMESTAMP,
   duration_seconds INTEGER,
   status TEXT,             -- done, stuck, escalated, timeout
-  worker_type TEXT         -- claude, opencode, glm
+  worker_type TEXT         -- claude, glm
 );
 ```
 

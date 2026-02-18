@@ -778,9 +778,9 @@ const SESSION_TYPES = [
     { value: 'claude-bypass', label: 'Claude (Bypass)' },
     { value: 'claude-prompted', label: 'Claude (Prompted)' },
     { value: 'claude-restricted', label: 'Claude (Restricted)' },
-    { value: 'opencode-bypass', label: 'OpenCode (Bypass)' },
-    { value: 'opencode-prompted', label: 'OpenCode (Prompted)' },
-    { value: 'opencode-restricted', label: 'OpenCode (Restricted)' },
+    { value: 'claudeglm-bypass', label: 'ClaudeGLM (Bypass)' },
+    { value: 'claudeglm-prompted', label: 'ClaudeGLM (Prompted)' },
+    { value: 'claudeglm-restricted', label: 'ClaudeGLM (Restricted)' },
     { value: 'bare', label: 'Bare (no agent)' }
 ];
 

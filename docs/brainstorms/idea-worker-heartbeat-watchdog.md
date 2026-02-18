@@ -103,9 +103,9 @@ Need to define what "progress" looks like for each agent type:
 - Tool calls: `Read`, `Edit`, `Write`, `Bash`
 - Output patterns: "I'll", "Let me", file paths
 
-**OpenCode:**
+**Claude Code (GLM):**
 - Similar patterns, different formatting
-- Look for `[tool]` blocks in output
+- Look for tool call blocks in output
 
 ### Context Injection
 
@@ -134,7 +134,7 @@ Worker might complete naturally while watchdog is responding. Handle by:
 
 4. **Cross-machine complexity** - For remote workers, health checks need SSH round-trips. May need local watchdog on each machine reporting to central portal.
 
-5. **Different agent behaviors** - Claude Code and OpenCode have different output patterns. Need agent-specific progress detection.
+5. **Different agent behaviors** - Different Claude Code configurations have different output patterns. Need agent-specific progress detection.
 
 ## Success Metrics
 

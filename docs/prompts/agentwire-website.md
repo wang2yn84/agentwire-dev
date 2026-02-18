@@ -4,7 +4,7 @@
 
 ## What is AgentWire?
 
-Voice interface for AI coding agents. Push-to-talk from any device to tmux sessions running Claude Code or OpenCode. Talk to your code.
+Voice interface for AI coding agents. Push-to-talk from any device to tmux sessions running Claude Code. Talk to your code.
 
 ## Target Audience
 
@@ -23,7 +23,7 @@ Voice interface for AI coding agents. Push-to-talk from any device to tmux sessi
 
 **Headline:** Talk to your code.
 
-**Subhead:** Voice interface for AI coding agents. Push-to-talk from any device to Claude Code, OpenCode, or any terminal session.
+**Subhead:** Voice interface for AI coding agents. Push-to-talk from any device to Claude Code or any terminal session.
 
 **Use cases to highlight:**
 - "Refactor while you make coffee"

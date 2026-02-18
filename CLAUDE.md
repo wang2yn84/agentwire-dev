@@ -1,6 +1,6 @@
 # AgentWire
 
-Voice interface for AI coding agents. Push-to-talk from any device to tmux sessions running Claude Code or OpenCode.
+Voice interface for AI coding agents. Push-to-talk from any device to tmux sessions running Claude Code.
 
 **No Backwards Compatibility** - Pre-launch, no customers. Change things completely, no legacy fallbacks.
 
@@ -343,7 +343,7 @@ stt:
   timeout: 30
 
 agent:
-  command: "claude --dangerously-skip-permissions"  # or "opencode" for OpenCode
+  command: "claude --dangerously-skip-permissions"
 
 dev:
   source_dir: "~/projects/agentwire-dev"  # agentwire source for TTS/STT venv
@@ -415,7 +415,7 @@ session:
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type` | `claude-bypass`, `claude-prompted`, `opencode-bypass`, etc. | Session permission level |
+| `type` | `claude-bypass`, `claude-prompted`, etc. | Session permission level |
 | `roles` | List of role names | Roles to load (from bundled or `~/.agentwire/roles/`) |
 | `voice` | Voice name | TTS voice for this project |
 | `parent` | Session name | Parent session for hierarchical notifications |
@@ -500,9 +500,7 @@ worker panes
 4. Start queue processor if not running
 5. Worker auto-exits
 
-**Both Claude Code and OpenCode** support idle notifications:
-- Claude Code: via `~/.claude/hooks/idle-handler.sh`
-- OpenCode: via `~/.config/opencode/plugins/agentwire-notify.ts`
+**Idle notifications** are handled via `~/.claude/hooks/idle-handler.sh`.
 
 **Creating a project with roles:**
 
@@ -536,31 +534,9 @@ Roles define agent behavior and are composable. Mix and match roles in `.agentwi
 
 Use `agentwire roles list` to see available roles. Roles are bundled in `agentwire/roles/` and can be composed freely in `.agentwire.yml`.
 
-## Agent Parity
+## Hook Installation
 
-**Both agents share the same core behavior but differ in capabilities.** Claude Code uses a stateless bash hook invoked once per idle cycle. OpenCode uses an event-bus plugin that tracks activity across the full session lifecycle.
-
-### Feature Comparison
-
-| Feature | Claude Code | OpenCode |
-|---------|-------------|----------|
-| Two-pass idle (summary → notify → kill) | Same | Same |
-| Scheduled task support (`ensure`) | Same | Same |
-| Queue-based notifications | Same | Same |
-| Output capture (last 20 lines) | Same | Same |
-| Gate A (retry/rate-limit protection) | No | Yes |
-| Gate B (meaningful work detection) | No | Yes |
-| Activity tracking (responses, diffs) | No | Yes |
-| Enriched notifications (activity context) | No | Yes |
-| Session resume | `--resume` | `--session` |
-
-**Why the difference:** Claude Code hooks are stateless bash scripts. Each `idle_prompt` fires a fresh process with no memory of prior events. OpenCode plugins live in the event bus and observe every session event (busy/idle/retry transitions, completed responses, file diffs) to make smarter decisions about when to act.
-
-### Hook/Plugin Installation
-
-Both agents need idle notification hooks installed to work with the agentwire system.
-
-**Claude Code** - Install the idle hook:
+Install the idle notification hook for the agentwire system:
 
 ```bash
 # Create hooks directory
@@ -575,43 +551,9 @@ agentwire doctor
 
 The hook lives at `~/.claude/hooks/idle-handler.sh` and fires on `idle_prompt` notifications.
 
-**OpenCode** - Install the plugin:
-
-```bash
-# Create plugins directory (plural — OpenCode v1.1.63+ requires this)
-mkdir -p ~/.config/opencode/plugins
-
-# Copy the plugin from agentwire source
-cp ~/projects/agentwire-dev/opencode-plugin/agentwire-notify.ts ~/.config/opencode/plugins/
-
-# Restart OpenCode to load the plugin
-```
-
-The plugin lives at `~/.config/opencode/plugins/agentwire-notify.ts` and subscribes to the full OpenCode event bus:
-
-| Event | Purpose |
-|-------|---------|
-| `session.idle` | Trigger idle handling (with gate logic) |
-| `session.status` | Track busy/idle/retry transitions |
-| `message.updated` | Count completed assistant responses (role=assistant + time.completed) |
-| `session.diff` | Detect file changes (non-empty diff array) |
-| `session.deleted` | Clean up state |
-
-**Gate logic prevents spurious idle handling:**
-- **Gate A (retry):** Skips idle if in retry/rate-limit state or last retry within 10s
-- **Gate B (work):** Workers must have at least 1 completed response before getting summary prompts. Workers with no activity get a grace period on first idle, then notified as failed and killed on second idle.
-
-**Scheduled task support:** Plugin handles `agentwire ensure` tasks for pane 0 (reads `~/.agentwire/tasks/{session}.json`, sends summary prompt on first idle, exits session on second idle if `exit_on_complete: true`).
-
-**Plugin gotchas:**
-- Directory is `plugins/` (plural), NOT `plugin/` (singular)
-- Do NOT use `import type { Plugin } from "@opencode-ai/plugin"` — silently breaks loading
-- Use `: any` for event handler params: `event: async ({ event }: any) => { ... }`
-- Plugins show in `/status` even when broken — use debug logging to verify execution
-
 ### Queue Processor
 
-Both hooks use a shared queue processor for notifications:
+The idle hook uses a shared queue processor for notifications:
 
 ```bash
 # Install the queue processor
@@ -629,8 +571,7 @@ The processor sends queued alerts with 15-second gaps to prevent overwhelming or
 agentwire doctor
 
 # View hook debug logs
-tail -f /tmp/claude-hook-debug.log      # Claude Code
-tail -f /tmp/opencode-plugin-debug.log  # OpenCode
+tail -f /tmp/claude-hook-debug.log
 
 # View queue processor logs
 tail -f /tmp/queue-processor-debug.log
@@ -661,9 +602,7 @@ Everything else is shared: `~/.claude/` config, hooks, skills, MCP servers, dama
 
 ### Scheduler Decision
 
-The scheduler uses **OpenCode + GLM-5** (not claudeGLM) for scheduled tasks because OpenCode's plugin provides Gate A (retry/rate-limit protection) and Gate B (meaningful work detection) — stateful logic that Claude Code's stateless bash hooks can't replicate. For fire-and-forget scheduled tasks this is a minor advantage, but the OpenCode plugin ecosystem is more mature for automated workloads.
-
-claudeGLM is available for **interactive/directed work** where Claude Code's richer tool ecosystem (MCP, subagents, CLAUDE.md, Chrome extension) provides more value.
+The scheduler uses **claudeGLM** (Claude Code + GLM-5) for scheduled tasks. claudeGLM provides the full Claude Code tool ecosystem (MCP, subagents, CLAUDE.md, Chrome extension) while using cost-effective Z.AI models.
 
 ### Session Type Separation
 
@@ -671,7 +610,7 @@ claudeGLM is available for **interactive/directed work** where Claude Code's ric
 |----------|-------|--------|
 | Human-directed work | `claude` (Anthropic) | `.agentwire.yml` → `type: claude-bypass` |
 | Human-directed, cost-sensitive | `claudeGLM` (Z.AI) | Manual session creation |
-| Scheduled tasks (scheduler) | OpenCode (Z.AI) | `scheduler.yaml` → `type: opencode-bypass` |
+| Scheduled tasks (scheduler) | `claudeGLM` (Z.AI) | `scheduler.yaml` → `type: claude-bypass` |
 
 By default, `agentwire new --type X` is a session-level override only and never saves to `.agentwire.yml`. Use `--persist` to opt in to saving.
 
@@ -706,7 +645,7 @@ Gates are evaluated before dispatching and skip the task (zero AI cost) if condi
 
 ### Worker Pane Lifecycle
 
-**Workers auto-kill after sending idle notification.** The OpenCode plugin captures output, sends alert to pane 0, then kills itself.
+**Workers auto-kill after sending idle notification.** The idle hook captures output, sends alert to pane 0, then kills the worker.
 
 Manual kill (if needed):
 ```bash

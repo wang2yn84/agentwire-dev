@@ -149,7 +149,7 @@ async function processSessions(sessions) {
         path: s.path || null,
         machine: s.machine || null,
         // Chat button shown for agent session types (not bare)
-        hasVoice: s.type && (s.type.startsWith('claude-') || s.type.startsWith('opencode-')),
+        hasVoice: s.type && (s.type.startsWith('claude') || s.type.startsWith('claudeglm')),
         // Attached client count for presence indicator
         clientCount: s.client_count || 0,
         // Icon URL from IconManager (persistent, name-matched or random)

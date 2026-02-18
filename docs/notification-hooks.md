@@ -134,56 +134,13 @@ parent: main  # Notify parent session when idle
 
 ## Claude Code Limitations
 
-The Claude Code hook is a stateless bash script (`idle-handler.sh`). Key differences from OpenCode:
+The Claude Code hook is a stateless bash script (`idle-handler.sh`):
 
 - **No memory between invocations** — each `idle_prompt` fires a fresh process with no state from prior calls
 - **No event bus** — only fires on `idle_prompt` (once per prompt cycle, after 60s idle). Cannot observe retries, busy/idle transitions, or message completions
-- **No Gate A (retry detection)** — will inject summary prompts even during rate-limit retry cycles
-- **No Gate B (meaningful work detection)** — workers always get the summary prompt on first idle, regardless of whether they did any actual work
 - **No activity tracking** — cannot count tool calls, file edits, or completed responses
-- **No enriched notifications** — parent notifications are plain text without activity context
 
 **Possible future improvement:** Parse `transcript_path` from the idle_prompt payload for basic activity detection (check if transcript contains tool calls or file modifications).
-
-## OpenCode Support
-
-OpenCode uses an event-bus-aware plugin at `~/.config/opencode/plugins/agentwire-notify.ts`.
-
-### Event Subscriptions
-
-| Event | Purpose |
-|-------|---------|
-| `session.idle` | Trigger idle handling (gated) |
-| `session.status` | Track `busy`/`idle`/`retry` transitions, count busy cycles |
-| `message.updated` | Count completed assistant responses (`role=assistant` + `time.completed`) |
-| `session.diff` | Detect file changes (non-empty diff array) |
-| `session.deleted` | Clean up per-session state |
-
-Note: OpenCode does **not** dispatch `tool.execute.after`, `file.edited`, or `message.part.updated` to plugins. The `message.updated` event with `time.completed` is the primary "real work" signal. The `sessionID` is at `event.properties.info.sessionID` for message events, and `event.properties.sessionID` for session events.
-
-### Activity Tracking
-
-The plugin maintains a `SessionState` per session ID with counters:
-- `completedResponses` — from `message.updated` with `role=assistant` + `time.completed`
-- `busyCount` — from `session.status` with `type=busy`
-- `hasDiffs` — from `session.diff` with non-empty diff array
-- `retryCount`, `lastRetryAt`, `inRetryState` — from `session.status` retry events
-- `idlePassCount` — how many times idle handler fired
-- `summaryRequested` — prevents duplicate summary prompts
-
-### Gate Logic
-
-Before handling idle, two gates must pass:
-
-**Gate A — Rate-limit retry:**
-Skip entirely if `inRetryState` is true or `lastRetryAt` is within 10 seconds. Prevents injecting summary prompts during retry cycles (which would cause more API calls, worsening rate limits).
-
-**Gate B — Meaningful work (workers only):**
-Requires `completedResponses >= 1` (at least one completed assistant response):
-- First idle with no work → grace period (do nothing)
-- Second idle with no work → notify `[WORKER FAILED pane N]` + kill pane
-
-Workers that pass both gates get the standard two-pass summary treatment.
 
 ### Scheduled Task Support (pane 0)
 
@@ -224,13 +181,6 @@ ensure                              idle hook (bash)
 
 **TASK-ORPHAN safety net (pane 0 only):** If no context file exists but a recent session-scoped summary file is found (within 5 minutes), the hook assumes a scheduled task lost its context. It sends `/exit`, cleans up the orphan summary, and kills the session. This handles edge cases where the context file was deleted prematurely.
 
-### Enriched Notifications
-
-Parent notifications now include activity context:
-- Workers: `[WORKER SUMMARY pane 1] (after work: 5 tool calls, 2 file edits)`
-- Failed workers: `[WORKER FAILED pane 1] No meaningful activity detected (3 retries)`
-- Orchestrators: `myproject is idle (after work: 12 tool calls, 3 file edits)`
-
 ## Notes
 
 - Hook scripts need full paths to executables (PATH may not be set)
@@ -238,6 +188,5 @@ Parent notifications now include activity context:
 - Restart Claude Code after changing settings.json
 - Debug logs:
   - `/tmp/claude-hook-debug.log` - Claude Code hook
-  - `/tmp/opencode-plugin-debug.log` - OpenCode plugin
   - `/tmp/queue-processor-debug.log` - Queue processor
 - Summary files: `.agentwire/{session_id}.md` (per-session worker summaries)

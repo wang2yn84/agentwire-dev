@@ -396,7 +396,7 @@ energy:
 
 1. **Proxy accuracy** - Coherence and context headroom are estimated from indirect signals, not ground truth. The energy score may not always reflect actual session quality. Mitigation: weight the reliable signals (freshness, debt) higher, treat coherence as a loose signal. Calibrate weights based on observed correlation between energy and actual outcome quality.
 
-2. **Agent-specific differences** - Claude Code and OpenCode have different context windows, compression behaviors, and failure modes. The energy model needs per-agent calibration. Mitigation: agent-type parameter in the calculator that adjusts base assumptions (context size, compression impact).
+2. **Agent-specific differences** - Different Claude Code configurations have different context windows, compression behaviors, and failure modes. The energy model needs per-agent calibration. Mitigation: agent-type parameter in the calculator that adjusts base assumptions (context size, compression impact).
 
 3. **Premature renewal** - Auto-renewing a session that was actually fine wastes the context already built up. Mitigation: default auto-renew to off. Suggestions are cheap (voice prompt); forced renewal should require very low energy with multiple confirming signals.
 

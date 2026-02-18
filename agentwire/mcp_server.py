@@ -301,7 +301,7 @@ def session_create(
         name: Session name (required)
         project_dir: Project directory path (optional)
         roles: Comma-separated list of roles to apply (optional)
-        session_type: Session type like 'claude-bypass', 'opencode-bypass' (optional)
+        session_type: Session type like 'claude-bypass', 'claudeglm-bypass' (optional)
 
     Returns:
         Success message or error description.
@@ -428,7 +428,7 @@ def pane_spawn(
     Args:
         session: Session name (defaults to current session if in tmux)
         roles: Comma-separated list of roles for the worker
-        pane_type: Session type like 'opencode-bypass' (optional)
+        pane_type: Session type like 'claude-bypass' (optional)
 
     Returns:
         Pane index of the spawned worker or error description.

@@ -35,7 +35,7 @@ Redesign onboarding to ask fewer questions upfront (3 max) and let Claude handle
 ### Phase 1: Minimal Questions (Python wizard)
 ```
 1. Projects directory [~/projects]:
-2. Which agent? [Claude Code / OpenCode]
+2. Which agent? [Claude Code / claudeGLM]
 3. Setup type? [Standalone / Multi-machine]
 ```
 

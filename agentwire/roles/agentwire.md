@@ -39,7 +39,7 @@ Workers auto-exit when idle. They write summary files before exiting, and you re
 | `pane_type` | Agent |
 |-------------|-------|
 | `claude-bypass` | Claude Code (skip permissions) |
-| `opencode-bypass` | OpenCode / GLM-5 |
+| `claudeglm-bypass` | Claude Code via Z.AI GLM-5 |
 
 ### Example
 

@@ -13,7 +13,7 @@ You're helping a user complete their AgentWire setup. The basic config (projects
 
 The user has already set:
 - Projects directory
-- Agent command (Claude Code or OpenCode)
+- Agent command (Claude Code)
 - Network topology (standalone or multi-machine)
 
 Read `~/.agentwire/config.yaml` to see their current settings.

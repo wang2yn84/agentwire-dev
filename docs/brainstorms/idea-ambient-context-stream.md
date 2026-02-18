@@ -41,9 +41,8 @@ Workers can query this stream:
 ### Integration Points
 
 1. **Claude Code hook** - Capture significant events (file reads, decisions, errors)
-2. **OpenCode plugin** - Same event capture for OpenCode sessions
-3. **Stream writer** - Append events to session's context file
-4. **Stream reader** - Workers read/query via MCP tool or CLI
+2. **Stream writer** - Append events to session's context file
+3. **Stream reader** - Workers read/query via MCP tool or CLI
 
 ### New MCP Tools
 

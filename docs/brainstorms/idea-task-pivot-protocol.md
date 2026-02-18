@@ -338,7 +338,7 @@ agentwire_pane_pivot(pane=1,
 2. Checkpoints capture enough detail to resume work
 3. No progress lost when using graceful mode
 4. Orchestrators can redirect workers without killing
-5. Works for both Claude Code and OpenCode workers
+5. Works for Claude Code workers
 
 ## Future Extensions
 

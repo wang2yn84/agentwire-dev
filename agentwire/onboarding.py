@@ -134,14 +134,6 @@ def check_claude() -> tuple[bool, str]:
     return False, "not found"
 
 
-def check_opencode() -> tuple[bool, str]:
-    """Check if OpenCode CLI is installed."""
-    opencode_path = shutil.which("opencode")
-    if opencode_path:
-        return True, opencode_path
-    return False, "not found"
-
-
 def get_install_instructions(platform: str) -> dict[str, str]:
     """Get platform-specific install instructions."""
     if platform == "macos":
@@ -166,7 +158,7 @@ def run_onboarding(skip_session: bool = False) -> int:
 
     Asks 3 questions:
     1. Projects directory
-    2. Agent (Claude Code / OpenCode)
+    2. Agent (Claude Code)
     3. Topology (Standalone / Multi-machine)
 
     Then writes minimal config and spawns Claude for interactive setup.
@@ -213,16 +205,12 @@ def run_onboarding(skip_session: bool = False) -> int:
 
     # Check agents
     claude_ok, claude_path = check_claude()
-    opencode_ok, opencode_path = check_opencode()
 
     if claude_ok:
         print_success(f"claude: {claude_path}")
-    if opencode_ok:
-        print_success(f"opencode: {opencode_path}")
-    if not claude_ok and not opencode_ok:
-        print_warning("No AI agent found (claude or opencode)")
+    else:
+        print_warning("Claude Code not found")
         print_info("Install Claude Code: https://github.com/anthropics/claude-code")
-        print_info("Install OpenCode: https://github.com/opencode-ai/opencode")
 
     # ─────────────────────────────────────────────────────────────
     # Question 1: Projects Directory
@@ -246,28 +234,7 @@ def run_onboarding(skip_session: bool = False) -> int:
     # ─────────────────────────────────────────────────────────────
     print_header("2. AI Agent")
 
-    print("Which AI coding agent should AgentWire use?")
-    print()
-
-    agent_options = []
-    default_agent = 1
-
-    if claude_ok:
-        agent_options.append(("claude", "Claude Code (Anthropic)"))
-    if opencode_ok:
-        agent_options.append(("opencode", "OpenCode"))
-
-    if not agent_options:
-        agent_options.append(("claude", "Claude Code (not installed yet)"))
-        agent_options.append(("opencode", "OpenCode (not installed yet)"))
-
-    agent_choice = prompt_choice("", agent_options, default=default_agent)
-
-    if agent_choice == "claude":
-        agent_command = "claude --dangerously-skip-permissions"
-    else:
-        agent_command = "opencode"
-
+    agent_command = "claude --dangerously-skip-permissions"
     print_success(f"Agent: {agent_command}")
 
     # ─────────────────────────────────────────────────────────────

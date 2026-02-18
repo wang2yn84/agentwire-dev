@@ -1,14 +1,14 @@
 # Agent Hot-Swap
 
-**One-liner:** Seamlessly switch the underlying agent (Claude Code ↔ OpenCode ↔ others) mid-session without losing context or conversation history.
+**One-liner:** Seamlessly switch the underlying agent (Claude Code ↔ others) mid-session without losing context or conversation history.
 
 ## Problem It Solves
 
 Currently, an agentwire session is locked to a single agent type for its lifetime. This creates friction in several scenarios:
 
-1. **Rate limits** - Claude hits rate limits during intense work; you want to continue with OpenCode but lose all context
+1. **Rate limits** - Claude hits rate limits during intense work; you want to continue with another agent but lose all context
 2. **Cost optimization** - Started exploration with Claude but now doing simple edits; want cheaper GLM but can't switch
-3. **Agent strengths** - Claude excels at planning, OpenCode at execution; can't leverage both in one workflow
+3. **Agent strengths** - Different agents excel at different tasks; can't leverage both in one workflow
 4. **Outages** - If one provider goes down, work stops entirely
 5. **A/B testing** - Want to compare how different agents handle the same task; requires separate sessions
 6. **Capability access** - Need computer use for browser testing, then back to code editing
@@ -32,7 +32,7 @@ The voice-first philosophy makes this worse - you're speaking to "your session" 
 │  └─ Task progress                               │
 │                                                 │
 │  Agent Layer (swappable)                        │
-│  └─ [Claude Code] ←→ [OpenCode] ←→ [Custom]    │
+│  └─ [Claude Code] ←→ [GLM] ←→ [Custom]           │
 │                                                 │
 └─────────────────────────────────────────────────┘
 ```
@@ -41,17 +41,17 @@ The voice-first philosophy makes this worse - you're speaking to "your session" 
 
 **Manual swap:**
 ```bash
-agentwire swap -s myproject --to opencode
+agentwire swap -s myproject --to glm
 agentwire swap -s myproject --to claude
 agentwire swap -s myproject --to "custom-agent-cmd"
 ```
 
 **Voice swap:**
 ```
-[You]: "Switch to OpenCode"
-[System]: "Switching to OpenCode. Context preserved."
+[You]: "Switch to GLM"
+[System]: "Switching to GLM. Context preserved."
 [You]: "Continue where we left off"
-[OpenCode]: "I see we were working on the auth middleware..."
+[GLM]: "I see we were working on the auth middleware..."
 ```
 
 **Automatic swap (rule-based):**
@@ -59,7 +59,7 @@ agentwire swap -s myproject --to "custom-agent-cmd"
 # .agentwire.yml
 swap_rules:
   - when: rate_limited
-    to: opencode
+    to: glm
     announce: true
 
   - when: task_type == "simple_edit"
@@ -119,7 +119,7 @@ When swapping agents, agentwire:
 
 3. **Announces transition:**
    ```
-   [TTS]: "Switched to OpenCode. Conversation context preserved.
+   [TTS]: "Switched to GLM. Conversation context preserved.
           Ready to continue with the auth middleware."
    ```
 
@@ -136,13 +136,6 @@ agents:
     context_window: 200000
     cost_tier: high
     capabilities: [code, vision, computer_use]
-
-  opencode:
-    command: "opencode"
-    resume_flag: "--session"
-    context_window: 128000
-    cost_tier: medium
-    capabilities: [code]
 
   glm:
     command: "glm-cli"
@@ -178,18 +171,18 @@ agents:
 
 ```bash
 # Basic swap
-agentwire swap -s myproject --to opencode
+agentwire swap -s myproject --to glm
 
 # Swap with mode
 agentwire swap -s myproject --to claude --mode warm
 
 # A/B comparison
-agentwire swap -s myproject --parallel claude,opencode
+agentwire swap -s myproject --parallel claude,glm
 agentwire swap -s myproject --compare  # Show diff of responses
 
 # Auto-swap rules
 agentwire swap rules list
-agentwire swap rules add "rate_limited → opencode"
+agentwire swap rules add "rate_limited → glm"
 agentwire swap rules remove 1
 
 # Check swap history
@@ -201,7 +194,7 @@ agentwire swap history -s myproject
 ```python
 @mcp.tool()
 def agent_swap(
-    agent: str,  # "claude", "opencode", or custom
+    agent: str,  # "claude", "glm", or custom
     mode: Literal["hot", "warm", "parallel"] = "hot",
     reason: str | None = None
 ) -> str:
@@ -221,7 +214,7 @@ def agent_status() -> str:
 @mcp.tool()
 def agent_compare(
     prompt: str,
-    agents: list[str] = ["claude", "opencode"]
+    agents: list[str] = ["claude", "glm"]
 ) -> str:
     """Send prompt to multiple agents and compare responses.
 
@@ -235,7 +228,7 @@ Natural swap commands:
 
 | Voice Command | Action |
 |---------------|--------|
-| "Switch to OpenCode" | Hot swap to OpenCode |
+| "Switch to GLM" | Hot swap to GLM |
 | "Use Claude for this" | Swap to Claude |
 | "Finish this then switch" | Warm swap after task |
 | "Try both agents" | Parallel comparison mode |
@@ -249,7 +242,7 @@ Orchestrators can swap worker agents based on task:
 ```python
 # In orchestrator logic
 if task.is_simple_edit:
-    agentwire_pane_spawn(pane_type="opencode-bypass", ...)
+    agentwire_pane_spawn(pane_type="claude-bypass", ...)
 elif task.needs_vision:
     agentwire_pane_spawn(pane_type="claude-bypass", ...)
 ```
@@ -300,7 +293,7 @@ def can_swap(from_agent: str, to_agent: str, context: SwapContext) -> bool:
 
 Warn user when swapping loses capabilities:
 ```
-[TTS]: "Warning: OpenCode doesn't support browser control.
+[TTS]: "Warning: GLM doesn't support browser control.
         You'll need Claude for that part."
 ```
 
@@ -323,8 +316,8 @@ When swapping TO an agent that supports resume:
 # Claude: Resume existing conversation ID
 claude --resume conv_abc123
 
-# OpenCode: Resume session
-opencode --session myproject
+# Claude Code: Resume session
+claude --resume conv_abc123
 ```
 
 When resume not available:
@@ -343,7 +336,7 @@ When resume not available:
    - **Mitigation:** Capability checks, user warnings, swap rules
 
 3. **Response Style Differences**
-   - Claude vs OpenCode have different "personalities"
+   - Different agents have different "personalities"
    - User may find transitions jarring
    - **Mitigation:** Normalize output formatting, announce transitions
 

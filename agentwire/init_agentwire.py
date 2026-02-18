@@ -5,7 +5,6 @@ import subprocess
 import time
 from pathlib import Path
 
-from .project_config import detect_default_agent_type
 
 # ANSI colors (matching onboarding.py)
 BOLD = "\033[1m"
@@ -150,19 +149,15 @@ def spawn_init_session() -> int:
 
     print_success("Created tmux session")
 
-    # Detect which agent to use and start it
-    agent_type = detect_default_agent_type()
-    if agent_type == "opencode":
-        agent_command = "opencode"
-    else:
-        agent_command = "claude --dangerously-skip-permissions"
+    # Start Claude Code
+    agent_command = "claude --dangerously-skip-permissions"
 
     subprocess.run([
         "tmux", "send-keys", "-t", session_name,
         agent_command, "Enter"
     ])
 
-    print(f"Waiting for {agent_type} to start...")
+    print("Waiting for Claude Code to start...")
 
     # Wait for agent to be ready (check for prompt)
     # Agents typically take 2-4 seconds to initialize
@@ -178,7 +173,7 @@ def spawn_init_session() -> int:
 
         # Use agentwire send which handles multiline prompts properly
         if send_to_session(session_name, init_prompt):
-            print_success(f"Sent init instructions to {agent_type}")
+            print_success("Sent init instructions to Claude Code")
         else:
             print_warning("Could not send via agentwire, trying direct tmux...")
             # Fallback: send a shorter intro if agentwire send fails

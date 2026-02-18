@@ -135,4 +135,4 @@ Temperature state lives in memory (portal process), with periodic snapshots to `
 
 4. **Cascading throttles**: If a worker overheats and the orchestrator spawns a replacement that also overheats, the orchestrator itself heats up from re-spawning. Need to handle this cascade without the whole hierarchy freezing.
 
-5. **Tuning per agent type**: Claude Code and OpenCode have different output patterns. Error detection regexes and "productive work" heuristics may need agent-specific calibration.
+5. **Tuning per agent type**: Different Claude Code configurations have different output patterns. Error detection regexes and "productive work" heuristics may need agent-specific calibration.

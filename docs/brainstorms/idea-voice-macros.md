@@ -7,7 +7,7 @@
 Voice commands are verbose. Common operations require saying the same long phrases repeatedly:
 
 ```
-"Spawn an opencode worker with the glm-worker role"
+"Spawn a worker with the glm-worker role"
 "Check the output of pane two"
 "Kill all workers and start fresh"
 "Send to the website session: check the build"
@@ -32,7 +32,7 @@ Define in `~/.agentwire/macros.yaml`:
 macros:
   # Simple expansion
   helper:
-    expand: "spawn an opencode worker with the glm-worker role"
+    expand: "spawn a worker with the glm-worker role"
 
   scout:
     expand: "spawn a claude worker with the explorer role"
@@ -53,7 +53,7 @@ macros:
 Usage:
 ```
 [User]: "Helper"
-[System interprets as]: "Spawn an opencode worker with the glm-worker role"
+[System interprets as]: "Spawn a worker with the glm-worker role"
 
 [User]: "Check two"
 [System interprets as]: "Show me the last 20 lines from pane 2"
@@ -72,7 +72,7 @@ macros:
     steps:
       - "kill all worker panes"
       - "wait 2 seconds"
-      - "spawn an opencode worker with glm-worker role"
+      - "spawn a worker with glm-worker role"
     confirm: true  # Ask before executing
 
   ship-it:
@@ -104,7 +104,7 @@ macros:
 Detect repeated patterns and suggest macros:
 
 ```
-[System]: "You've said 'spawn an opencode worker with glm-worker role'
+[System]: "You've said 'spawn a worker with glm-worker role'
           8 times today. Create a shortcut?"
 [User]: "Yes, call it helper"
 [System]: "Done. Say 'helper' to spawn a GLM worker."
@@ -182,7 +182,7 @@ Short confirmation so user knows the macro fired. Configurable verbosity.
 # CLI
 agentwire macros list
 agentwire macros show helper
-agentwire macros add helper "spawn an opencode worker with glm-worker role"
+agentwire macros add helper "spawn a worker with glm-worker role"
 
 # Voice
 [User]: "What macros do I have?"

@@ -122,7 +122,7 @@ Project templates override bundled templates of the same name.
 ```yaml
 name: string              # Template identifier
 description: string       # Human-readable description
-type: string              # Session type (claude-bypass, opencode-bypass, etc.)
+type: string              # Session type (claude-bypass, etc.)
 roles: list[string]       # Roles to apply
 voice: string             # TTS voice (optional)
 parent: string            # Parent session for hierarchy (optional)

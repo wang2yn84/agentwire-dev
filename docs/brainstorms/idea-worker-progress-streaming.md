@@ -30,7 +30,7 @@ interface ProgressEvent {
 
 ### Emission Mechanism
 
-Workers emit events via a simple file-based protocol (works with both Claude Code and OpenCode):
+Workers emit events via a simple file-based protocol (works with Claude Code):
 
 ```bash
 # Worker writes events to a JSONL file
@@ -119,7 +119,7 @@ Progress files are ephemeral - deleted when worker pane exits. The orchestrator'
 
 2. **Event noise** - Too many events could overwhelm orchestrators. Need smart filtering/aggregation.
 
-3. **Cross-agent protocol** - Claude Code and OpenCode have different tool access. File-based protocol is the common denominator but feels clunky.
+3. **Cross-agent protocol** - Different agent configurations have different tool access. File-based protocol is the common denominator but feels clunky.
 
 4. **Latency** - File watching adds latency vs direct IPC. Acceptable for progress updates (not for commands).
 

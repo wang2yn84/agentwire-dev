@@ -41,9 +41,9 @@ For **Claude Code**:
 - Parse `~/.claude/logs/` for token counts (already logged)
 - Or: Custom hook that logs to `.agentwire/costs/`
 
-For **OpenCode**:
-- Parse OpenCode's native logging
-- Or: OpenCode plugin writes cost events
+For **Claude Code (GLM)**:
+- Parse Claude Code's logs for GLM model usage
+- Or: Custom hook writes cost events
 
 ### 2. Cost Calculation
 
@@ -311,7 +311,7 @@ Natural cost queries:
 ## Potential Challenges
 
 1. **Log Format Changes**
-   - Claude Code/OpenCode might change log formats
+   - Claude Code might change log formats
    - Mitigation: Version-aware parsers, graceful degradation
 
 2. **Attribution Accuracy**

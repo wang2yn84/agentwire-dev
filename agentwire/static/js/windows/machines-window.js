@@ -280,8 +280,8 @@ async function showNewSessionModal(machine) {
         { value: 'bare', label: 'Bare' },
         { value: 'claude-bypass', label: 'Claude (Bypass)' },
         { value: 'claude-prompted', label: 'Claude (Prompted)' },
-        { value: 'opencode-bypass', label: 'OpenCode (Bypass)' },
-        { value: 'opencode-prompted', label: 'OpenCode (Prompted)' }
+        { value: 'claudeglm-bypass', label: 'ClaudeGLM (Bypass)' },
+        { value: 'claudeglm-prompted', label: 'ClaudeGLM (Prompted)' }
     ];
 
     const typeOptions = SESSION_TYPES.map(t =>

@@ -57,7 +57,7 @@ Three phases, all optional:
 Tasks live in `.agentwire.yml`:
 
 ```yaml
-type: opencode-bypass
+type: claudeglm-bypass
 roles:
   - agentwire
   - voice
@@ -247,7 +247,7 @@ launchctl unload ~/Library/LaunchAgents/dev.agentwire.my-task.plist
 
 ```yaml
 # ~/projects/newsbot/.agentwire.yml
-type: opencode-bypass
+type: claudeglm-bypass
 roles:
   - agentwire
   - voice
