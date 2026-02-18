@@ -152,8 +152,8 @@ Extend `.agentwire.yml` to support `tasks:` section:
 ```yaml
 type: opencode-bypass
 roles:
-  - leader
-voice: may
+  - agentwire
+  - voice
 shell: /bin/sh               # Optional: default shell for task commands (default: /bin/sh)
 
 tasks:
@@ -318,7 +318,7 @@ output:
 
 ### Phase 11: Roles
 - [ ] Create `task-runner` role for scheduled execution
-- [ ] Update `leader` role with scheduled context section
+- [x] Role system simplified (leader → agentwire + voice)
 - [ ] Consider `--role` override for tasks
 
 ### Phase 12: Documentation
@@ -671,7 +671,7 @@ Additional notes can follow the front matter if needed.
 - Be concise - this runs repeatedly
 ```
 
-### Update: `leader` Role
+### Update: `task-runner` Role
 
 Add section for scheduled context awareness:
 

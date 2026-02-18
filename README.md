@@ -120,22 +120,23 @@ Agent responses are spoken back via TTS (optional, requires GPU for self-hosted 
 
 ## Multi-Agent Orchestration
 
-AgentWire supports leader/worker patterns for complex tasks:
+AgentWire supports orchestrator/worker patterns for complex tasks:
 
 ```yaml
 # .agentwire.yml in your project
-type: standard
+type: claude-bypass
 roles:
-  - leader
+  - agentwire
+  - voice
 ```
 
-**Leader sessions** can spawn workers:
+**Sessions** can spawn workers:
 ```bash
 agentwire spawn --roles worker  # Creates a worker pane
 agentwire send --pane 1 "Implement the auth module"
 ```
 
-Workers execute tasks autonomously while the leader coordinates.
+Workers execute tasks autonomously while the orchestrator coordinates.
 
 ---
 

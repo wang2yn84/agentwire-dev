@@ -122,9 +122,9 @@ worker panes         ← write .agentwire/{session_id}.md on first idle
 ```yaml
 type: claude-bypass
 roles:
-  - leader
-voice: may
-parent: main  # Notify parent session when idle (orchestrator only)
+  - agentwire
+  - voice
+parent: main  # Notify parent session when idle
 ```
 
 **For worker panes:**

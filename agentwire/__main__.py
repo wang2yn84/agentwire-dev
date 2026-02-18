@@ -2980,12 +2980,12 @@ def cmd_new(args) -> int:
             else:
                 # Use configured default role for new projects
                 config = load_config()
-                default_role = config.get("session", {}).get("default_role", "leader")
+                default_role = config.get("session", {}).get("default_role", "agentwire")
                 role_names = [default_role] if default_role else []
         else:
             # Use configured default role when no path specified
             config = load_config()
-            default_role = config.get("session", {}).get("default_role", "leader")
+            default_role = config.get("session", {}).get("default_role", "agentwire")
             role_names = [default_role] if default_role else []
 
     # Load and validate roles
@@ -5221,8 +5221,8 @@ def cmd_dev(args) -> int:
         print(f"Project directory not found: {project_dir}", file=sys.stderr)
         return 1
 
-    # Dev session uses leader role by default
-    role_names = ["leader"]
+    # Dev session uses agentwire role by default
+    role_names = ["agentwire"]
     roles, missing = load_roles(role_names, project_dir)
     if missing:
         print(f"Warning: Roles not found: {', '.join(missing)}", file=sys.stderr)

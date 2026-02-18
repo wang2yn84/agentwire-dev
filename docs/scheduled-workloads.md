@@ -59,8 +59,8 @@ Tasks live in `.agentwire.yml`:
 ```yaml
 type: opencode-bypass
 roles:
-  - leader
-voice: may
+  - agentwire
+  - voice
 
 tasks:
   news-check:
@@ -249,8 +249,8 @@ launchctl unload ~/Library/LaunchAgents/dev.agentwire.my-task.plist
 # ~/projects/newsbot/.agentwire.yml
 type: opencode-bypass
 roles:
-  - leader
-voice: may
+  - agentwire
+  - voice
 
 tasks:
   morning-briefing:

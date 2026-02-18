@@ -191,7 +191,7 @@ class ServicesConfig:
 class SessionConfig:
     """Default session configuration."""
 
-    default_role: str = "leader"  # Default role for new sessions
+    default_role: str = "agentwire"  # Default role for new sessions
 
 
 @dataclass
