@@ -149,6 +149,7 @@ testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow",
     "integration: requires subprocess mocking",
+    "e2e: end-to-end portal tests",
 ]
 asyncio_mode = "auto"
 
