@@ -435,6 +435,7 @@ shell: /bin/sh  # Project-level default shell
 tasks:
   morning-briefing:
     shell: /bin/bash           # Task-level override
+    priority: 10               # Pipeline ordering (lower = higher priority, default: 99)
     retries: 2                 # Retry on failure (default: 0)
     retry_delay: 30            # Seconds between retries (default: 30)
     idle_timeout: 30           # Seconds of idle before completion (default: 30)
@@ -637,6 +638,24 @@ tasks:
 ```
 
 Gates are evaluated before dispatching and skip the task (zero AI cost) if conditions fail. Multiple gates are AND'd. Gates fail open on errors. See `docs/missions/completed/master-ralph-loop.md` for details.
+
+### Scheduler Task Priority & Intervals
+
+Tasks sort by `priority` first (lower = runs first), with overdue score as tiebreaker. This ensures pipeline ordering — upstream stages run before downstream when multiple tasks are overdue (e.g., after scheduler restart).
+
+**Pipeline interval pattern (3-4-5):** Use a Pythagorean triple for core pipeline stages. Upstream stages get shorter intervals so they naturally produce more input for downstream stages. When intervals overlap, priority breaks the tie.
+
+| Priority | Stage | Interval | Rationale |
+|----------|-------|----------|-----------|
+| 10 | Research | 2d | Foundational, infrequent |
+| 20 | Ideate | **3h** | Highest throughput — feed the funnel |
+| 30 | Refine | **4h** | Less frequent than ideation |
+| 40 | Design | **5h** | Consumes refined ideas |
+| 50 | Product | **5h** | Consumes approved designs |
+| 60 | Sales | 1d | Monitoring, not producing |
+| 70 | Meta | 1d+ | Housekeeping (fillers ok) |
+
+Tasks with default priority (99) sort after all prioritized tasks. Fillers always run after all regular tasks regardless of priority.
 
 ## Key Patterns
 

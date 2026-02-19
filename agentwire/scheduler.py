@@ -59,7 +59,7 @@ class SchedulerTask:
     interval: int         # seconds between runs
     enabled: bool = True
     filler: bool = False  # only runs in spare cycles
-    priority: int = 99    # filler ordering (lower = higher)
+    priority: int = 99    # task ordering (lower = higher priority)
     type: str | None = None  # session type override (e.g., claude-bypass)
     roles: list[str] | None = None  # role override (e.g., ["task-runner"])
     model: str | None = None  # model override (e.g., "haiku")
@@ -303,11 +303,11 @@ def _check_gate(board: Board, task_name: str) -> bool:
 
 
 def pick_next_task(board: Board) -> tuple[str | None, float]:
-    """Pick the next task to run based on overdue score.
+    """Pick the next task to run based on priority then overdue score.
 
     Algorithm:
     1. Score each enabled non-filler task by overdue_by = (now - last_run) - interval
-    2. Most overdue wins
+    2. Sort by priority first (lower = higher priority), overdue score as tiebreaker
     3. If nothing overdue, check fillers (respecting their interval)
     4. If nothing at all, return sleep time until earliest task is due
 
@@ -326,7 +326,7 @@ def pick_next_task(board: Board) -> tuple[str | None, float]:
         overdue_by = (now - last_run) - task.interval
         if overdue_by >= 0:
             candidates.append((name, overdue_by))
-    candidates.sort(key=lambda x: -x[1])
+    candidates.sort(key=lambda x: (board.tasks[x[0]].priority, -x[1]))
 
     # Pick the first overdue candidate that passes its gate
     for name, _score in candidates:

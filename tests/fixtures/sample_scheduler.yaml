@@ -4,6 +4,7 @@ tasks:
     session: testapp
     task: code-quality
     interval: 3600
+    priority: 10
     enabled: true
   doc-drift:
     project: ~/projects/testapp

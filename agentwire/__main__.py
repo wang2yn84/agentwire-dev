@@ -7534,8 +7534,8 @@ def cmd_scheduler_board(args) -> int:
     print(f"Scheduler board: {total} tasks ({regular} regular + {fillers} filler), {enabled} enabled\n")
 
     for proj, items in groups.items():
-        # Sort: regular first (by interval), then filler (by priority)
-        reg = sorted([r for r in items if not r["filler"]], key=lambda r: r["interval"])
+        # Sort: regular first (by priority, then interval), then filler (by priority)
+        reg = sorted([r for r in items if not r["filler"]], key=lambda r: (r["priority"], r["interval"]))
         fil = sorted([r for r in items if r["filler"]], key=lambda r: r["priority"])
 
         session = items[0]["session"]
@@ -7550,6 +7550,8 @@ def cmd_scheduler_board(args) -> int:
 
             if r["filler"]:
                 type_str = f"filler (p{r['priority']})"
+            elif r["priority"] != 99:
+                type_str = f"regular (p{r['priority']})"
             else:
                 type_str = "regular"
 

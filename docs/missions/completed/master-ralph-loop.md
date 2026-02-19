@@ -63,7 +63,7 @@ tasks:
     session: agentwire-dev
     task: cleanup
     filler: true                    # only runs in spare cycles
-    priority: 1                     # filler ordering (lower = higher priority)
+    priority: 1                     # task ordering (lower = higher priority)
     interval: 3600                  # minimum interval even as filler
     gate:
       git_commit: true              # skip if HEAD unchanged since last run
@@ -171,6 +171,7 @@ def pick_next_task(board):
 
     # If nothing is overdue, pick highest-priority filler
     # (only if its own interval has elapsed)
+    # Note: regular tasks also sort by priority first, overdue as tiebreaker
     if best_score < 0:
         for name, task in sorted(board.tasks.items(),
                                   key=lambda t: t[1].get("priority", 99)):
