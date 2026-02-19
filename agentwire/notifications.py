@@ -83,130 +83,24 @@ def _is_html_content(text: str) -> bool:
     return False
 
 
-def _simple_markdown_to_html(text: str) -> str:
-    """Convert simple markdown to HTML.
+def _markdown_to_html(text: str) -> str:
+    """Convert markdown to HTML using the markdown library.
 
-    Handles basic formatting without external dependencies.
-    For full markdown support, install 'markdown' package.
-
+    Supports tables, nested lists, code blocks, and all standard markdown.
     If text already appears to be HTML, returns it unchanged.
     """
     if not text:
         return ""
 
-    # If the text is already HTML, return it unchanged
     if _is_html_content(text):
         return text
 
-    lines = text.split("\n")
-    html_lines = []
-    in_code_block = False
-    in_list = False
-    list_type = None
+    import markdown
 
-    for line in lines:
-        # Code blocks
-        if line.startswith("```"):
-            if in_code_block:
-                html_lines.append("</code></pre>")
-                in_code_block = False
-            else:
-                lang = line[3:].strip()
-                html_lines.append(f'<pre><code class="language-{lang}">' if lang else "<pre><code>")
-                in_code_block = True
-            continue
-
-        if in_code_block:
-            # Escape HTML in code blocks
-            escaped = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            html_lines.append(escaped)
-            continue
-
-        # Headers
-        if line.startswith("### "):
-            html_lines.append(f"<h3>{line[4:]}</h3>")
-            continue
-        if line.startswith("## "):
-            html_lines.append(f"<h2>{line[3:]}</h2>")
-            continue
-        if line.startswith("# "):
-            html_lines.append(f"<h1>{line[2:]}</h1>")
-            continue
-
-        # Lists
-        if line.startswith("- ") or line.startswith("* "):
-            if not in_list or list_type != "ul":
-                if in_list:
-                    html_lines.append(f"</{list_type}>")
-                html_lines.append("<ul>")
-                in_list = True
-                list_type = "ul"
-            html_lines.append(f"<li>{_inline_markdown(line[2:])}</li>")
-            continue
-
-        if re.match(r"^\d+\. ", line):
-            if not in_list or list_type != "ol":
-                if in_list:
-                    html_lines.append(f"</{list_type}>")
-                html_lines.append("<ol>")
-                in_list = True
-                list_type = "ol"
-            content = re.sub(r"^\d+\. ", "", line)
-            html_lines.append(f"<li>{_inline_markdown(content)}</li>")
-            continue
-
-        # Close list if we're no longer in one
-        if in_list and line.strip():
-            html_lines.append(f"</{list_type}>")
-            in_list = False
-            list_type = None
-
-        # Blockquotes
-        if line.startswith("> "):
-            html_lines.append(f"<blockquote>{_inline_markdown(line[2:])}</blockquote>")
-            continue
-
-        # Empty lines
-        if not line.strip():
-            if in_list:
-                html_lines.append(f"</{list_type}>")
-                in_list = False
-                list_type = None
-            html_lines.append("")
-            continue
-
-        # Regular paragraphs
-        html_lines.append(f"<p>{_inline_markdown(line)}</p>")
-
-    # Close any open tags
-    if in_code_block:
-        html_lines.append("</code></pre>")
-    if in_list:
-        html_lines.append(f"</{list_type}>")
-
-    return "\n".join(html_lines)
-
-
-def _inline_markdown(text: str) -> str:
-    """Convert inline markdown (bold, italic, code, links)."""
-    # Escape HTML first
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    # Code (backticks) - do this first to avoid processing inside code
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-
-    # Bold
-    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"__([^_]+)__", r"<strong>\1</strong>", text)
-
-    # Italic
-    text = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", text)
-    text = re.sub(r"_([^_]+)_", r"<em>\1</em>", text)
-
-    # Links
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
-
-    return text
+    return markdown.markdown(
+        text,
+        extensions=["tables", "fenced_code", "nl2br"],
+    )
 
 
 def _render_email_template(
@@ -241,7 +135,7 @@ def _render_email_template(
     template = env.get_template("email_notification.html")
 
     # Convert markdown body to HTML
-    body_html = _simple_markdown_to_html(body)
+    body_html = _markdown_to_html(body)
 
     # Pick random greeting if not specified
     if greeting is None:
