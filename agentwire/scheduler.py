@@ -495,7 +495,7 @@ def _parse_ensure_summary(task: SchedulerTask, result) -> tuple[str, list[str], 
             agentwire_dir = Path(task.project) / ".agentwire"
             if agentwire_dir.exists():
                 summaries = sorted(
-                    agentwire_dir.glob(f"task-summary-{task.session}-*.md"),
+                    agentwire_dir.glob(f"task-summary-{task.session}-{task.task}-*.md"),
                     key=lambda p: p.stat().st_mtime,
                     reverse=True,
                 )
@@ -728,7 +728,6 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
         "-s", task.session,
         "--task", task.task,
         "--project", task.project,
-        "--skip-if-locked",
         "--json",
     ]
     if not has_overrides:
