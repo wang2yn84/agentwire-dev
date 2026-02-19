@@ -4133,18 +4133,8 @@ def cmd_recreate(args) -> int:
     project_config = load_project_config(session_path)
 
     if type_arg:
-        # CLI flag specified - use it directly and normalize
+        # CLI flag specified - use it directly and normalize (session-level only, not saved)
         session_type_str = normalize_session_type(type_arg, agent_type)
-        # Update .agentwire.yml with new type
-        updated_config = ProjectConfig(
-            type=SessionType.from_str(session_type_str),
-            roles=project_config.roles if project_config else [],
-            voice=project_config.voice if project_config else None,
-            parent=project_config.parent if project_config else None,
-            shell=project_config.shell if project_config else None,
-            tasks=project_config.tasks if project_config else {},
-        )
-        save_project_config(updated_config, session_path)
         roles = None
         if project_config and project_config.roles:
             roles, _ = load_roles(project_config.roles, session_path)

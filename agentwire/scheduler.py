@@ -675,11 +675,27 @@ def _auto_commit(task: SchedulerTask, task_name: str, status: str) -> None:
     if check.returncode != 0 or not check.stdout.strip():
         return  # Not a git repo or no changes
 
-    # Stage all changes
+    # Stage all changes, but protect project config from agent modifications
     subprocess.run(
         ["git", "-C", project, "add", "-A"],
         capture_output=True, timeout=cfg.git_timeout,
     )
+    subprocess.run(
+        ["git", "-C", project, "reset", "HEAD", "--", ".agentwire.yml"],
+        capture_output=True, timeout=cfg.git_timeout,
+    )
+    subprocess.run(
+        ["git", "-C", project, "checkout", "--", ".agentwire.yml"],
+        capture_output=True, timeout=cfg.git_timeout,
+    )
+
+    # Re-check if anything is still staged after excluding protected files
+    check = subprocess.run(
+        ["git", "-C", project, "diff", "--cached", "--quiet"],
+        capture_output=True, timeout=cfg.git_timeout,
+    )
+    if check.returncode == 0:
+        return  # Nothing left to commit
 
     # Commit with standardized message
     msg = f"scheduler: {task_name} ({status})"
