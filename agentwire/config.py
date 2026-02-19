@@ -201,6 +201,7 @@ class SchedulerConfig:
     portal_notify_timeout: int = 5
     session_create_timeout: int = 30
     max_loop_sleep: int = 60
+    dispatch_cooldown: int = 60
 
     def __post_init__(self):
         self.board_file = _expand_path(self.board_file) or self.board_file
@@ -440,6 +441,7 @@ def _dict_to_config(data: dict) -> Config:
         portal_notify_timeout=scheduler_data.get("portal_notify_timeout", 5),
         session_create_timeout=scheduler_data.get("session_create_timeout", 30),
         max_loop_sleep=scheduler_data.get("max_loop_sleep", 60),
+        dispatch_cooldown=scheduler_data.get("dispatch_cooldown", 60),
     )
 
     return Config(

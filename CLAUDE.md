@@ -388,6 +388,9 @@ notifications:
     echo_image_url: "https://yourdomain.com/images/echo.png"
     echo_small_url: "https://yourdomain.com/images/echo-small.png"
     logo_image_url: "https://yourdomain.com/images/logo.png"
+
+scheduler:
+  dispatch_cooldown: 60  # Seconds between task dispatches (default: 60)
 ```
 
 ### .agentwire.yml (Project Config)

@@ -992,6 +992,11 @@ def run_scheduler_loop() -> None:
 
         print(f"[{_ts()}] Done: {task_name} → {state.last_status} ({state.last_duration}s)")
 
+        cooldown = _sched_config().dispatch_cooldown
+        if cooldown > 0:
+            print(f"[{_ts()}] Cooldown: {cooldown}s")
+            time.sleep(cooldown)
+
         # Periodic orphan sweep (every ~10 iterations)
         loop_count += 1
         if loop_count % 10 == 0:
