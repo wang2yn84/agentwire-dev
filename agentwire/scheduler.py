@@ -8,6 +8,7 @@ and time math.
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -49,6 +50,26 @@ _EXIT_TO_STATUS = {
     _EXIT_SESSION_ERROR: "failed",
 }
 
+# In-flight grace period: tasks dispatched less than 2h ago are considered running
+_IN_FLIGHT_GRACE = 7200
+
+# Day name constants for schedule matching
+_DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_CALENDAR_EVERY = {"day", "weekday", "weekend"} | set(_DAY_NAMES)
+
+
+@dataclass
+class Schedule:
+    every: str | None = None          # "2h", "day", "weekday", "monday", etc.
+    at: str | None = None             # "HH:MM"
+    except_days: list[str] | None = None
+    after: str | None = None          # dependency task name
+    delay: int = 0                    # seconds after dependency
+    cooldown: int | None = None       # min seconds between runs
+    require_status: str = "complete"
+    not_before: str | None = None     # "HH:MM"
+    not_after: str | None = None      # "HH:MM"
+
 
 @dataclass
 class SchedulerTask:
@@ -56,7 +77,7 @@ class SchedulerTask:
     project: str          # ~/projects/foo (expanded at load time)
     session: str          # session name for ensure
     task: str             # task name in project's .agentwire.yml
-    interval: int         # seconds between runs
+    schedule: Schedule    # REQUIRED (replaces interval)
     enabled: bool = True
     filler: bool = False  # only runs in spare cycles
     priority: int = 99    # task ordering (lower = higher priority)
@@ -74,12 +95,81 @@ class TaskState:
     run_count: int = 0
     last_summary: str = ""
     last_gate_commit: str = ""    # HEAD at last dispatch (for gate checks)
+    last_dispatch: datetime | None = None  # set BEFORE running (restart safety)
 
 
 @dataclass
 class Board:
     tasks: dict[str, SchedulerTask] = field(default_factory=dict)
     state: dict[str, TaskState] = field(default_factory=dict)
+
+
+def _parse_duration(s: str | None) -> int | None:
+    """Parse a duration string like '2h', '30m', '1d' to seconds.
+
+    Returns None if input is None or unparseable.
+    """
+    if not s:
+        return None
+    s = s.strip().lower()
+    m = re.fullmatch(r"(\d+)\s*(s|m|h|d)", s)
+    if not m:
+        # Try bare integer (seconds)
+        try:
+            return int(s)
+        except ValueError:
+            return None
+    value, unit = int(m.group(1)), m.group(2)
+    return value * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+
+
+def _parse_time(s: str | None) -> tuple[int, int] | None:
+    """Parse 'HH:MM' to (hour, minute). Returns None on failure."""
+    if not s:
+        return None
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", s.strip())
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def _parse_schedule(raw: dict | None) -> Schedule:
+    """Parse a schedule dict from YAML into a Schedule dataclass."""
+    if not raw or not isinstance(raw, dict):
+        raise ValueError("task missing required 'schedule' field")
+
+    except_days = raw.get("except")
+    if isinstance(except_days, str):
+        except_days = [except_days]
+    if except_days:
+        except_days = [d.strip().lower() for d in except_days]
+
+    delay_seconds = _parse_duration(str(raw["delay"])) if raw.get("delay") else 0
+    cooldown_seconds = _parse_duration(str(raw["cooldown"])) if raw.get("cooldown") else None
+
+    return Schedule(
+        every=raw.get("every"),
+        at=raw.get("at"),
+        except_days=except_days,
+        after=raw.get("after"),
+        delay=delay_seconds or 0,
+        cooldown=cooldown_seconds,
+        require_status=str(raw.get("require_status", "complete")),
+        not_before=raw.get("not_before"),
+        not_after=raw.get("not_after"),
+    )
+
+
+def _parse_datetime_field(raw_value) -> datetime | None:
+    """Parse a datetime from YAML (handles datetime objects and ISO strings)."""
+    if not raw_value:
+        return None
+    if isinstance(raw_value, datetime):
+        return raw_value
+    try:
+        return datetime.fromisoformat(str(raw_value))
+    except (ValueError, TypeError):
+        return None
 
 
 def load_board() -> Board:
@@ -96,7 +186,7 @@ def load_board() -> Board:
     if not board_path.exists():
         raise FileNotFoundError(
             f"Board file not found: {board_path}\n"
-            f"Create it with task definitions. See docs/missions/later/master-ralph-loop.md for format."
+            f"Create it with task definitions."
         )
 
     with open(board_path) as f:
@@ -122,12 +212,14 @@ def load_board() -> Board:
         else:
             roles = None
 
+        schedule = _parse_schedule(t.get("schedule"))
+
         board.tasks[name] = SchedulerTask(
             name=name,
             project=str(Path(t.get("project", "")).expanduser()),
             session=t.get("session", name),
             task=t.get("task", name),
-            interval=int(t.get("interval", 3600)),
+            schedule=schedule,
             enabled=bool(t.get("enabled", True)),
             filler=bool(t.get("filler", False)),
             priority=int(t.get("priority", 99)),
@@ -142,24 +234,14 @@ def load_board() -> Board:
         for name, s in raw_state.items():
             if not isinstance(s, dict):
                 continue
-            last_run = None
-            raw_lr = s.get("last_run")
-            if raw_lr:
-                if isinstance(raw_lr, datetime):
-                    last_run = raw_lr
-                else:
-                    try:
-                        last_run = datetime.fromisoformat(str(raw_lr))
-                    except (ValueError, TypeError):
-                        pass
-
             board.state[name] = TaskState(
-                last_run=last_run,
+                last_run=_parse_datetime_field(s.get("last_run")),
                 last_status=str(s.get("last_status", "never")),
                 last_duration=int(s.get("last_duration", 0)),
                 run_count=int(s.get("run_count", 0)),
                 last_summary=str(s.get("last_summary", "")),
                 last_gate_commit=str(s.get("last_gate_commit", "")),
+                last_dispatch=_parse_datetime_field(s.get("last_dispatch")),
             )
 
     return board
@@ -187,6 +269,8 @@ def save_board(board: Board) -> None:
             entry["last_summary"] = s.last_summary
         if s.last_gate_commit:
             entry["last_gate_commit"] = s.last_gate_commit
+        if s.last_dispatch:
+            entry["last_dispatch"] = s.last_dispatch.isoformat()
         state_dict[name] = entry
 
     raw["state"] = state_dict
@@ -195,16 +279,177 @@ def save_board(board: Board) -> None:
         yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
 
-def _get_last_run_ts(board: Board, task_name: str) -> float:
-    """Get last run as a Unix timestamp (0 if never run)."""
-    state = board.state.get(task_name)
-    if not state or not state.last_run:
+def _dt_to_ts(dt: datetime | None) -> float:
+    """Convert a datetime to a Unix timestamp (0 if None)."""
+    if not dt:
         return 0.0
-    # Convert to timestamp
-    dt = state.last_run
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
+
+
+def _get_last_run_ts(board: Board, task_name: str) -> float:
+    """Get effective last run as a Unix timestamp (0 if never run).
+
+    Returns max(last_run, last_dispatch) for restart safety — a recently
+    dispatched task should not be re-dispatched even if we crash before
+    recording last_run.
+    """
+    state = board.state.get(task_name)
+    if not state:
+        return 0.0
+    return max(_dt_to_ts(state.last_run), _dt_to_ts(state.last_dispatch))
+
+
+def _is_in_flight(state: TaskState | None) -> bool:
+    """Return True if a task was dispatched recently but hasn't completed.
+
+    Uses a 2h grace period — if last_dispatch is more recent than last_run
+    and within 2h, the task is still considered running.
+    """
+    if not state or not state.last_dispatch:
+        return False
+    dispatch_ts = _dt_to_ts(state.last_dispatch)
+    run_ts = _dt_to_ts(state.last_run)
+    if run_ts >= dispatch_ts:
+        return False  # Completed after dispatch
+    now = time.time()
+    return (now - dispatch_ts) < _IN_FLIGHT_GRACE
+
+
+def _day_matches(dt: datetime, every: str | None, except_days: list[str] | None) -> bool:
+    """Check if a datetime matches day-of-week constraints.
+
+    Returns True if the day is allowed by `every` and not excluded by `except_days`.
+    """
+    day_name = _DAY_NAMES[dt.weekday()]
+
+    # Check except_days first
+    if except_days and day_name in except_days:
+        return False
+
+    if not every or every in ("day",):
+        return True
+    if every == "weekday":
+        return dt.weekday() < 5
+    if every == "weekend":
+        return dt.weekday() >= 5
+    if every in _DAY_NAMES:
+        return day_name == every
+
+    # Duration-based every (like "4h") — day check only via except_days
+    return True
+
+
+def _in_time_window(schedule: Schedule) -> bool:
+    """Check if current local time is within not_before/not_after window."""
+    now_local = datetime.now()
+    current_minutes = now_local.hour * 60 + now_local.minute
+
+    nb = _parse_time(schedule.not_before)
+    if nb:
+        nb_minutes = nb[0] * 60 + nb[1]
+        if current_minutes < nb_minutes:
+            return False
+
+    na = _parse_time(schedule.not_after)
+    if na:
+        na_minutes = na[0] * 60 + na[1]
+        if current_minutes > na_minutes:
+            return False
+
+    return True
+
+
+def _compute_recurrence(schedule: Schedule, last_run_ts: float) -> float:
+    """Compute next eligible timestamp from the recurrence rule (every + at).
+
+    Returns a Unix timestamp of when the task becomes eligible.
+    """
+    now = time.time()
+    every = schedule.every
+
+    if not every:
+        # No recurrence — only dependency-driven. Eligible immediately if never run.
+        return last_run_ts if last_run_ts > 0 else 0.0
+
+    # Duration-based every (e.g., "2h", "30m")
+    duration = _parse_duration(every)
+    if duration is not None:
+        if last_run_ts == 0:
+            return 0.0  # Never run, eligible now
+        return last_run_ts + duration
+
+    # Calendar-based every (day, weekday, weekend, monday..sunday)
+    at_time = _parse_time(schedule.at)
+    if not at_time:
+        # Calendar without 'at' — treat like 24h interval
+        if last_run_ts == 0:
+            return 0.0
+        return last_run_ts + 86400
+
+    target_h, target_m = at_time
+    now_local = datetime.now()
+
+    # Find today's target time
+    import calendar
+    from datetime import timedelta
+    target_today = now_local.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
+
+    # Search forward up to 8 days for the next matching day
+    for day_offset in range(8):
+        candidate = target_today + timedelta(days=day_offset)
+        if _day_matches(candidate, every, schedule.except_days):
+            candidate_ts = candidate.timestamp()
+            if candidate_ts > last_run_ts and (day_offset > 0 or candidate_ts > now_local.timestamp() - 60):
+                return candidate_ts
+
+    # Fallback: 24h from last run
+    return last_run_ts + 86400 if last_run_ts > 0 else 0.0
+
+
+def _compute_next_eligible(board: Board, task_name: str) -> float | None:
+    """Central scheduling logic. Compute when a task becomes eligible.
+
+    Returns:
+        Unix timestamp of next eligible time, or None if blocked indefinitely.
+    """
+    task = board.tasks[task_name]
+    schedule = task.schedule
+    state = board.state.get(task_name, TaskState())
+    last_run_ts = _get_last_run_ts(board, task_name)
+
+    # Start with recurrence-based eligibility
+    eligible_ts = _compute_recurrence(schedule, last_run_ts)
+
+    # Dependency: after another task
+    if schedule.after:
+        dep_name = schedule.after
+        dep_state = board.state.get(dep_name)
+
+        if not dep_state or not dep_state.last_run:
+            return None  # Dependency never ran — blocked
+
+        # Check require_status
+        if schedule.require_status == "complete" and dep_state.last_status != "complete":
+            return None  # Dependency didn't complete successfully
+
+        dep_run_ts = _dt_to_ts(dep_state.last_run)
+
+        # Dependency must have completed more recently than this task last ran
+        if dep_run_ts <= last_run_ts and last_run_ts > 0:
+            return None  # No new dependency completion
+
+        # Apply delay after dependency completion
+        dep_eligible = dep_run_ts + schedule.delay
+        eligible_ts = max(eligible_ts, dep_eligible)
+
+    # Cooldown: minimum time between runs
+    if schedule.cooldown and last_run_ts > 0:
+        cooldown_eligible = last_run_ts + schedule.cooldown
+        eligible_ts = max(eligible_ts, cooldown_eligible)
+
+    return eligible_ts
 
 
 _gated_tasks: set[str] = set()
@@ -303,13 +548,14 @@ def _check_gate(board: Board, task_name: str) -> bool:
 
 
 def pick_next_task(board: Board) -> tuple[str | None, float]:
-    """Pick the next task to run based on priority then overdue score.
+    """Pick the next task to run based on schedule eligibility, priority, and overdue score.
 
     Algorithm:
-    1. Score each enabled non-filler task by overdue_by = (now - last_run) - interval
-    2. Sort by priority first (lower = higher priority), overdue score as tiebreaker
-    3. If nothing overdue, check fillers (respecting their interval)
-    4. If nothing at all, return sleep time until earliest task is due
+    1. For each enabled non-filler task, compute eligible_ts via _compute_next_eligible()
+    2. Skip if in-flight, outside time window, or day excluded
+    3. Sort by (priority, -overdue_by), pick first passing gate
+    4. Same for fillers
+    5. If nothing due, return sleep time
 
     Returns:
         (task_name, wait_seconds) — task_name is None if nothing to do,
@@ -317,13 +563,22 @@ def pick_next_task(board: Board) -> tuple[str | None, float]:
     """
     now = time.time()
 
-    # Collect overdue non-filler candidates sorted by most overdue first
+    # Collect overdue non-filler candidates
     candidates: list[tuple[str, float]] = []
     for name, task in board.tasks.items():
         if not task.enabled or task.filler:
             continue
-        last_run = _get_last_run_ts(board, name)
-        overdue_by = (now - last_run) - task.interval
+        state = board.state.get(name)
+        if _is_in_flight(state):
+            continue
+        if not _in_time_window(task.schedule):
+            continue
+        if not _day_matches(datetime.now(), task.schedule.every, task.schedule.except_days):
+            continue
+        eligible_ts = _compute_next_eligible(board, name)
+        if eligible_ts is None:
+            continue  # Blocked by dependency
+        overdue_by = now - eligible_ts
         if overdue_by >= 0:
             candidates.append((name, overdue_by))
     candidates.sort(key=lambda x: (board.tasks[x[0]].priority, -x[1]))
@@ -333,16 +588,29 @@ def pick_next_task(board: Board) -> tuple[str | None, float]:
         if _check_gate(board, name):
             return name, 0.0
 
-    # No non-filler passed gate — check fillers sorted by priority
-    fillers = sorted(
-        [(n, t) for n, t in board.tasks.items() if t.filler and t.enabled],
-        key=lambda x: x[1].priority,
-    )
-    for name, task in fillers:
-        last_run = _get_last_run_ts(board, name)
-        if (now - last_run) >= task.interval:
-            if _check_gate(board, name):
-                return name, 0.0
+    # No non-filler passed gate — check fillers
+    filler_candidates: list[tuple[str, float]] = []
+    for name, task in board.tasks.items():
+        if not task.filler or not task.enabled:
+            continue
+        state = board.state.get(name)
+        if _is_in_flight(state):
+            continue
+        if not _in_time_window(task.schedule):
+            continue
+        if not _day_matches(datetime.now(), task.schedule.every, task.schedule.except_days):
+            continue
+        eligible_ts = _compute_next_eligible(board, name)
+        if eligible_ts is None:
+            continue
+        overdue_by = now - eligible_ts
+        if overdue_by >= 0:
+            filler_candidates.append((name, overdue_by))
+    filler_candidates.sort(key=lambda x: (board.tasks[x[0]].priority, -x[1]))
+
+    for name, _score in filler_candidates:
+        if _check_gate(board, name):
+            return name, 0.0
 
     # Nothing to run now — calculate sleep until earliest task is due
     wait = seconds_until_next_due(board)
@@ -361,16 +629,17 @@ def seconds_until_next_due(board: Board) -> float:
     for name, task in board.tasks.items():
         if not task.enabled:
             continue
-        last_run = _get_last_run_ts(board, name)
-        next_due = last_run + task.interval
-        wait = next_due - now
+        eligible_ts = _compute_next_eligible(board, name)
+        if eligible_ts is None:
+            continue  # Blocked by dependency, skip
+        wait = eligible_ts - now
         if wait <= 0:
             return 0.0
         if wait < earliest_wait:
             earliest_wait = wait
 
     if earliest_wait == float("inf"):
-        return float(_sched_config().max_loop_sleep)  # No tasks, just re-check periodically
+        return float(_sched_config().max_loop_sleep)
 
     return earliest_wait
 
@@ -728,6 +997,11 @@ def dispatch_task(board: Board, task_name: str) -> TaskState:
     from .locking import remove_stale_lock
     remove_stale_lock(task.session)
 
+    # Set last_dispatch BEFORE running for restart safety
+    existing_state.last_dispatch = datetime.now(timezone.utc)
+    board.state[task_name] = existing_state
+    save_board(board)
+
     _log_event("task_started", task=task_name, session=task.session,
                project=task.project, attempt=existing_state.run_count + 1)
 
@@ -839,6 +1113,28 @@ def format_overdue(seconds: float) -> str:
     return f"{prefix}{format_interval(abs_s)}"
 
 
+def format_schedule(schedule: Schedule) -> str:
+    """Format a Schedule into a human-readable string."""
+    parts = []
+    if schedule.every:
+        parts.append(f"every {schedule.every}")
+    if schedule.at:
+        parts.append(f"at {schedule.at}")
+    if schedule.after:
+        parts.append(f"after {schedule.after}")
+    if schedule.delay:
+        parts.append(f"+{format_interval(schedule.delay)}")
+    if schedule.cooldown:
+        parts.append(f"cd {format_interval(schedule.cooldown)}")
+    if schedule.except_days:
+        parts.append(f"except {','.join(schedule.except_days)}")
+    if schedule.not_before:
+        parts.append(f">={schedule.not_before}")
+    if schedule.not_after:
+        parts.append(f"<={schedule.not_after}")
+    return " ".join(parts) if parts else "?"
+
+
 def get_board_display(board: Board) -> list[dict]:
     """Get board data formatted for display.
 
@@ -850,8 +1146,13 @@ def get_board_display(board: Board) -> list[dict]:
 
     for name, task in board.tasks.items():
         state = board.state.get(name, TaskState())
-        last_run_ts = _get_last_run_ts(board, name)
-        overdue_by = (now - last_run_ts) - task.interval
+        eligible_ts = _compute_next_eligible(board, name)
+        if eligible_ts is not None:
+            overdue_by = now - eligible_ts
+        else:
+            overdue_by = 0.0  # Blocked by dependency
+
+        in_flight = _is_in_flight(state)
 
         # Format last run time
         if state.last_run:
@@ -868,14 +1169,19 @@ def get_board_display(board: Board) -> list[dict]:
         if task.filler:
             label = f"{name} (filler)"
 
+        schedule_str = format_schedule(task.schedule)
+
+        status_str = state.last_status
+        if in_flight:
+            status_str = "in-flight"
+
         row = {
             "name": name,
             "label": label,
-            "interval": task.interval,
-            "interval_str": format_interval(task.interval),
+            "schedule_str": schedule_str,
             "last_run": last_run_str,
             "last_run_iso": state.last_run.isoformat() if state.last_run else None,
-            "last_status": state.last_status,
+            "last_status": status_str,
             "last_duration": state.last_duration,
             "run_count": state.run_count,
             "overdue_by": round(overdue_by, 1),
@@ -886,6 +1192,7 @@ def get_board_display(board: Board) -> list[dict]:
             "session": task.session,
             "task": task.task,
             "project": task.project,
+            "in_flight": in_flight,
         }
         if state.last_summary:
             row["last_summary"] = state.last_summary
@@ -1066,6 +1373,57 @@ def read_live_state() -> dict | None:
         return json.loads(live_path.read_text())
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def validate_board(board: Board) -> list[str]:
+    """Validate board configuration for errors.
+
+    Returns list of error/warning strings (empty = valid).
+    """
+    errors = []
+
+    for name, task in board.tasks.items():
+        sched = task.schedule
+        if not sched.every and not sched.after:
+            errors.append(f"{name}: schedule must have 'every' or 'after' (or both)")
+
+        if sched.every and sched.every in _CALENDAR_EVERY and sched.at:
+            t = _parse_time(sched.at)
+            if not t:
+                errors.append(f"{name}: invalid 'at' time '{sched.at}' (expected HH:MM)")
+
+        if sched.every and sched.every not in _CALENDAR_EVERY:
+            d = _parse_duration(sched.every)
+            if d is None:
+                errors.append(f"{name}: invalid 'every' value '{sched.every}'")
+
+        if sched.after and sched.after not in board.tasks:
+            errors.append(f"{name}: dependency '{sched.after}' not found in board")
+
+        if sched.after and sched.after in board.tasks and not board.tasks[sched.after].enabled:
+            errors.append(f"{name}: warning: dependency '{sched.after}' is disabled")
+
+    # Circular dependency detection via DFS
+    def _has_cycle(start: str, visited: set, path: set) -> bool:
+        if start in path:
+            return True
+        if start in visited:
+            return False
+        visited.add(start)
+        path.add(start)
+        task = board.tasks.get(start)
+        if task and task.schedule.after:
+            if _has_cycle(task.schedule.after, visited, path):
+                return True
+        path.discard(start)
+        return False
+
+    visited: set[str] = set()
+    for name in board.tasks:
+        if _has_cycle(name, visited, set()):
+            errors.append(f"{name}: circular dependency detected")
+
+    return errors
 
 
 def _ts() -> str:

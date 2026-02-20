@@ -8,6 +8,7 @@ import pytest
 
 from agentwire.scheduler import (
     Board,
+    Schedule,
     SchedulerTask,
     TaskState,
     format_interval,
@@ -78,15 +79,15 @@ class TestExitCodeMapping:
 
 class TestPickNextTask:
     def _make_board(self, tasks_and_states):
-        """Helper: build a Board from list of (name, interval, enabled, filler, last_run_ts)."""
+        """Helper: build a Board from list of (name, every, enabled, filler, last_run_ts)."""
         board = Board()
-        for name, interval, enabled, filler, last_run_ts in tasks_and_states:
+        for name, every, enabled, filler, last_run_ts in tasks_and_states:
             board.tasks[name] = SchedulerTask(
                 name=name,
                 project="/tmp/test",
                 session=name,
                 task=name,
-                interval=interval,
+                schedule=Schedule(every=every),
                 enabled=enabled,
                 filler=filler,
             )
@@ -99,8 +100,8 @@ class TestPickNextTask:
     def test_most_overdue_wins(self, mock_gate):
         now = time.time()
         board = self._make_board([
-            ("task-a", 3600, True, False, now - 7200),  # 1h overdue
-            ("task-b", 3600, True, False, now - 10800), # 2h overdue
+            ("task-a", "1h", True, False, now - 7200),  # 1h overdue
+            ("task-b", "1h", True, False, now - 10800), # 2h overdue
         ])
         name, wait = pick_next_task(board)
         assert name == "task-b"  # More overdue
@@ -110,8 +111,8 @@ class TestPickNextTask:
     def test_disabled_skipped(self, mock_gate):
         now = time.time()
         board = self._make_board([
-            ("enabled-task", 60, True, False, now - 120),
-            ("disabled-task", 60, False, False, now - 120),
+            ("enabled-task", "1m", True, False, now - 120),
+            ("disabled-task", "1m", False, False, now - 120),
         ])
         name, wait = pick_next_task(board)
         assert name == "enabled-task"
@@ -120,8 +121,8 @@ class TestPickNextTask:
     def test_fillers_after_main(self, mock_gate):
         now = time.time()
         board = self._make_board([
-            ("main-task", 3600, True, False, now - 60),  # Not overdue (1h interval, 60s ago)
-            ("filler-task", 60, True, True, now - 120),   # Overdue filler
+            ("main-task", "1h", True, False, now - 60),  # Not overdue (1h interval, 60s ago)
+            ("filler-task", "1m", True, True, now - 120),   # Overdue filler
         ])
         name, wait = pick_next_task(board)
         assert name == "filler-task"
@@ -130,7 +131,7 @@ class TestPickNextTask:
     def test_nothing_due_returns_wait(self, mock_gate):
         now = time.time()
         board = self._make_board([
-            ("task-a", 3600, True, False, now - 10),  # 3590s until due
+            ("task-a", "1h", True, False, now - 10),  # 3590s until due
         ])
         name, wait = pick_next_task(board)
         assert name is None
@@ -139,7 +140,7 @@ class TestPickNextTask:
     @patch("agentwire.scheduler._check_gate", return_value=True)
     def test_never_run_task_is_overdue(self, mock_gate):
         board = self._make_board([
-            ("new-task", 3600, True, False, 0),  # Never run (ts=0)
+            ("new-task", "1h", True, False, 0),  # Never run (ts=0)
         ])
         name, wait = pick_next_task(board)
         assert name == "new-task"

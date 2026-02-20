@@ -7534,14 +7534,14 @@ def cmd_scheduler_board(args) -> int:
     print(f"Scheduler board: {total} tasks ({regular} regular + {fillers} filler), {enabled} enabled\n")
 
     for proj, items in groups.items():
-        # Sort: regular first (by priority, then interval), then filler (by priority)
-        reg = sorted([r for r in items if not r["filler"]], key=lambda r: (r["priority"], r["interval"]))
+        # Sort: regular first (by priority), then filler (by priority)
+        reg = sorted([r for r in items if not r["filler"]], key=lambda r: r["priority"])
         fil = sorted([r for r in items if r["filler"]], key=lambda r: r["priority"])
 
         session = items[0]["session"]
         print(f"  {proj} ({len(items)} tasks) → {session}")
-        print(f"  {'Task':<30} {'Type':<16} {'Interval':<10} {'Last Run':<16} {'Status':<12} {'Overdue'}")
-        print(f"  {'-' * 100}")
+        print(f"  {'Task':<30} {'Type':<16} {'Schedule':<24} {'Last Run':<16} {'Status':<12} {'Overdue'}")
+        print(f"  {'-' * 114}")
 
         for r in reg + fil:
             task_name = r["task"]
@@ -7555,12 +7555,20 @@ def cmd_scheduler_board(args) -> int:
             else:
                 type_str = "regular"
 
+            status_str = r["last_status"]
+            if r.get("in_flight"):
+                status_str = "[in-flight]"
+
+            schedule_display = r.get("schedule_str", "?")
+            if len(schedule_display) > 22:
+                schedule_display = schedule_display[:21] + "…"
+
             print(
                 f"  {task_name:<30} "
                 f"{type_str:<16} "
-                f"{r['interval_str']:<10} "
+                f"{schedule_display:<24} "
                 f"{r['last_run']:<16} "
-                f"{r['last_status']:<12} "
+                f"{status_str:<12} "
                 f"{r['overdue_str']}"
             )
 
@@ -7891,7 +7899,7 @@ def _generate_dashboard_html() -> str:
 
 <h2>Task Board</h2>
 <table>
-  <thead><tr><th>Task</th><th>Interval</th><th>Last Run</th><th>Status</th><th>Duration</th><th>Overdue</th><th>Runs</th></tr></thead>
+  <thead><tr><th>Task</th><th>Schedule</th><th>Last Run</th><th>Status</th><th>Duration</th><th>Overdue</th><th>Runs</th></tr></thead>
   <tbody id="board-body"></tbody>
 </table>
 
@@ -7964,7 +7972,7 @@ async function refreshBoard() {
       var label = esc(t.label) + (t.enabled ? "" : " <span style=\"color:#555\">[off]</span>");
       return "<tr class=\"" + cls + "\">" +
         "<td>" + label + "</td>" +
-        "<td>" + esc(t.interval_str) + "</td>" +
+        "<td>" + esc(t.schedule_str || "?") + "</td>" +
         "<td>" + esc(t.last_run) + "</td>" +
         "<td class=\"" + esc(t.last_status) + "\">" + esc(t.last_status) + "</td>" +
         "<td>" + t.last_duration + "s</td>" +

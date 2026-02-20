@@ -639,21 +639,54 @@ tasks:
 
 Gates are evaluated before dispatching and skip the task (zero AI cost) if conditions fail. Multiple gates are AND'd. Gates fail open on errors. See `docs/missions/completed/master-ralph-loop.md` for details.
 
-### Scheduler Task Priority & Intervals
+### Scheduler Task Scheduling
 
-Tasks sort by `priority` first (lower = runs first), with overdue score as tiebreaker. This ensures pipeline ordering — upstream stages run before downstream when multiple tasks are overdue (e.g., after scheduler restart).
+Each task has a `schedule` field (replaces the old `interval`). The scheduler uses `_compute_next_eligible()` as the single source of truth for when a task becomes eligible.
 
-**Pipeline interval pattern (3-4-5):** Use a Pythagorean triple for core pipeline stages. Upstream stages get shorter intervals so they naturally produce more input for downstream stages. When intervals overlap, priority breaks the tie.
+**`schedule` field reference:**
 
-| Priority | Stage | Interval | Rationale |
-|----------|-------|----------|-----------|
-| 10 | Research | 2d | Foundational, infrequent |
-| 20 | Ideate | **3h** | Highest throughput — feed the funnel |
-| 30 | Refine | **4h** | Less frequent than ideation |
-| 40 | Design | **5h** | Consumes refined ideas |
-| 50 | Product | **5h** | Consumes approved designs |
-| 60 | Sales | 1d | Monitoring, not producing |
-| 70 | Meta | 1d+ | Housekeeping (fillers ok) |
+| Key | Type | Description |
+|-----|------|-------------|
+| `every` | `str` | `30m`, `2h`, `1d` (duration) or `day`, `weekday`, `weekend`, `monday`..`sunday` (calendar) |
+| `at` | `str` | Target time `"HH:MM"` local. Only with calendar `every` values |
+| `except` | `list[str]` | Days to skip: `["saturday"]` |
+| `after` | `str` | Dependency task name |
+| `delay` | `str` | Wait after dependency: `"1h"`, `"30m"` |
+| `cooldown` | `str` | Min time between runs: `"4h"` |
+| `require_status` | `str` | `"complete"` (default) or `"any"` |
+| `not_before` | `str` | Earliest time of day: `"08:00"` |
+| `not_after` | `str` | Latest time of day: `"22:00"` |
+
+Must have at least `every` OR `after` (or both).
+
+**Examples:**
+```yaml
+# Duration-based interval
+schedule:
+  every: 4h
+
+# Time-anchored daily
+schedule:
+  every: day
+  at: "08:00"
+
+# Dependency with delay
+schedule:
+  after: upstream-task
+  delay: 1h
+  cooldown: 3h
+
+# Weekend exclusion
+schedule:
+  every: 4h
+  except: [saturday, sunday]
+```
+
+**Restart safety:** `last_dispatch` is persisted before running. Tasks dispatched within 2h are considered "in-flight" and won't be re-dispatched after restart.
+
+### Scheduler Task Priority
+
+Tasks sort by `priority` first (lower = runs first), with overdue score as tiebreaker. This ensures pipeline ordering — upstream stages run before downstream when multiple tasks are overdue.
 
 Tasks with default priority (99) sort after all prioritized tasks. Fillers always run after all regular tasks regardless of priority.
 

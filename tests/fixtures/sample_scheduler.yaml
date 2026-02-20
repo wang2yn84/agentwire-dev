@@ -3,14 +3,16 @@ tasks:
     project: ~/projects/testapp
     session: testapp
     task: code-quality
-    interval: 3600
+    schedule:
+      every: 1h
     priority: 10
     enabled: true
   doc-drift:
     project: ~/projects/testapp
     session: testapp
     task: doc-drift
-    interval: 7200
+    schedule:
+      every: 2h
     enabled: true
     filler: true
     priority: 10
@@ -18,8 +20,27 @@ tasks:
     project: ~/projects/testapp
     session: testapp
     task: disabled-task
-    interval: 1800
+    schedule:
+      every: 30m
     enabled: false
+  dep-task:
+    project: ~/projects/testapp
+    session: testapp
+    task: dep-task
+    schedule:
+      after: code-quality
+      delay: 30m
+      cooldown: 2h
+  daily-task:
+    project: ~/projects/testapp
+    session: testapp
+    task: daily-task
+    schedule:
+      every: day
+      at: "08:00"
+      except:
+        - saturday
+        - sunday
 
 state:
   code-quality:

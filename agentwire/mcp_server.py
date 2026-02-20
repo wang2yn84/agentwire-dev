@@ -1503,9 +1503,9 @@ def scheduler_board() -> str:
             label = f"{label} [disabled]"
         status = t.get("last_status", "never")
         overdue = t.get("overdue_str", "?")
-        interval = t.get("interval_str", "?")
+        schedule = t.get("schedule_str", "?")
         last_run = t.get("last_run", "never")
-        lines.append(f"  - {label}: {status}, interval {interval}, last run {last_run}, overdue {overdue}")
+        lines.append(f"  - {label}: {status}, schedule {schedule}, last run {last_run}, overdue {overdue}")
 
     return "\n".join(lines)
 

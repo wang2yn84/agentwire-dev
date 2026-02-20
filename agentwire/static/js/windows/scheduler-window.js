@@ -592,7 +592,7 @@ function renderTasksTab(container) {
                 <th class="sched-col-toggle"></th>
                 <th>Task</th>
                 <th>Session</th>
-                <th>Interval</th>
+                <th>Schedule</th>
                 <th>Last Run</th>
                 <th>Status</th>
                 <th>Duration</th>
@@ -664,7 +664,7 @@ function renderTaskRow(task) {
             <td><span class="${toggleDotClass}" data-action="toggle" data-task="${task.name}" data-enabled="${task.enabled}" title="${task.enabled ? 'Disable' : 'Enable'}"></span></td>
             <td class="sched-task-name sched-clickable" data-action="drilldown" data-task="${task.name}">${escapeHtml(task.name)}${fillerTag}</td>
             <td class="sched-task-session">${task.session ? `<a class="sched-session-link" data-action="open-session" data-session="${escapeHtml(task.session)}" title="Open session">${escapeHtml(task.session)}</a>` : '\u2014'}</td>
-            <td>${task.interval_str || '\u2014'}</td>
+            <td>${task.schedule_str || '\u2014'}</td>
             <td>${task.last_run && task.last_run !== 'never' ? escapeHtml(task.last_run) : 'never'}</td>
             <td>${statusBadge}</td>
             <td>${durationStr}</td>
@@ -774,7 +774,7 @@ async function openDrilldown(container, taskName) {
                     <tr><td>Session</td><td>${escapeHtml(task.session || '\u2014')}</td></tr>
                     <tr><td>Project</td><td>${escapeHtml(task.project || '\u2014')}</td></tr>
                     <tr><td>Task</td><td>${escapeHtml(task.task || '\u2014')}</td></tr>
-                    <tr><td>Interval</td><td>${task.interval_str || '\u2014'} (${task.interval}s)</td></tr>
+                    <tr><td>Schedule</td><td>${task.schedule_str || '\u2014'}</td></tr>
                     <tr><td>Priority</td><td>${task.priority ?? '\u2014'}</td></tr>
                     <tr><td>Filler</td><td>${task.filler ? 'Yes' : 'No'}</td></tr>
                     <tr><td>Enabled</td><td>${task.enabled ? 'Yes' : 'No'}</td></tr>
