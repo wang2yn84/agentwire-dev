@@ -92,8 +92,93 @@ def load_config() -> Dict[str, Any]:
     return config
 
 
+ALL_OPERATIONS = {"read", "write", "edit", "delete", "move", "chmod"}
+
+
+def _parse_allowed_entry(entry: dict) -> dict:
+    """Parse an allowed-path entry to {path: str, allow: set}.
+
+    Entry must be a dict with "path" key and optional "allow" (defaults to "all").
+    """
+    allow = entry.get("allow", "all")
+    if isinstance(allow, str) and allow.strip().lower() == "all":
+        return {"path": entry["path"], "allow": ALL_OPERATIONS.copy()}
+    if isinstance(allow, list):
+        return {"path": entry["path"], "allow": {a.strip().lower() for a in allow}}
+    if isinstance(allow, str):
+        return {"path": entry["path"], "allow": {allow.strip().lower()}}
+    return {"path": entry["path"], "allow": ALL_OPERATIONS.copy()}
+
+
+def _find_project_config() -> Tuple[str, list]:
+    """Walk up from $PWD to find .agentwire.yml and return (project_root, allowed_paths)."""
+    cwd = os.environ.get("PWD", os.getcwd())
+    current = os.path.abspath(cwd)
+    while True:
+        config_file = os.path.join(current, ".agentwire.yml")
+        if os.path.isfile(config_file):
+            try:
+                with open(config_file, "r") as f:
+                    data = yaml.safe_load(f) or {}
+                safety = data.get("safety", {})
+                if isinstance(safety, dict):
+                    paths = safety.get("allowed_paths", [])
+                    if isinstance(paths, list):
+                        return current, paths
+            except Exception:
+                pass
+            return current, []
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return cwd, []
+
+
+def load_allowed_paths(config: Dict[str, Any]) -> list:
+    """Load allowed paths from global config and per-project .agentwire.yml.
+
+    Returns list of {"path": str, "allow": set} entries.
+    """
+    raw = list(config.get("allowedPaths", []))
+
+    project_root, project_paths = _find_project_config()
+    for p in project_paths:
+        if not isinstance(p, dict):
+            continue
+        entry = _parse_allowed_entry(p)
+        if not os.path.isabs(os.path.expanduser(entry["path"])):
+            entry["path"] = os.path.join(project_root, entry["path"])
+        raw.append(entry)
+
+    result = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if "allow" in item and isinstance(item["allow"], set):
+            result.append(item)
+        else:
+            result.append(_parse_allowed_entry(item))
+    return result
+
+
+def is_path_allowed(file_path: str, allowed_paths: list, operation: str) -> bool:
+    """Check if file_path has the given operation permitted by any allowed-path entry."""
+    for entry in allowed_paths:
+        if match_path(file_path, entry["path"]):
+            if operation in entry["allow"]:
+                return True
+    return False
+
+
 def check_path(file_path: str, config: Dict[str, Any]) -> Tuple[bool, str]:
     """Check if file_path is blocked. Returns (blocked, reason)."""
+    allowed = load_allowed_paths(config)
+
+    # Check allowlist with "write" permission
+    if is_path_allowed(file_path, allowed, "write"):
+        return False, ""
+
     # Check zero-access paths first (no access at all)
     for zero_path in config.get("zeroAccessPaths", []):
         if match_path(file_path, zero_path):

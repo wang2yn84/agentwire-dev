@@ -1,5 +1,6 @@
 """Safety CLI commands for AgentWire damage control integration."""
 
+import fnmatch
 import importlib.resources
 import json
 import os
@@ -122,6 +123,155 @@ def matches_path_in_command(pattern: str, command: str) -> bool:
     return True
 
 
+ALL_OPERATIONS = {"read", "write", "edit", "delete", "move", "chmod"}
+
+
+def _parse_allowed_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse an allowed-path entry to {path: str, allow: set}.
+
+    Entry must be a dict with "path" key and optional "allow" (defaults to "all").
+    """
+    allow = entry.get("allow", "all")
+    if isinstance(allow, str) and allow.strip().lower() == "all":
+        return {"path": entry["path"], "allow": ALL_OPERATIONS.copy()}
+    if isinstance(allow, list):
+        return {"path": entry["path"], "allow": {a.strip().lower() for a in allow}}
+    if isinstance(allow, str):
+        return {"path": entry["path"], "allow": {allow.strip().lower()}}
+    return {"path": entry["path"], "allow": ALL_OPERATIONS.copy()}
+
+
+def _find_project_config_for_safety() -> tuple:
+    """Walk up from $PWD to find .agentwire.yml and return (project_root, allowed_paths)."""
+    cwd = os.environ.get("PWD", os.getcwd())
+    current = os.path.abspath(cwd)
+    while True:
+        config_file = os.path.join(current, ".agentwire.yml")
+        if os.path.isfile(config_file):
+            try:
+                if yaml:
+                    with open(config_file, "r") as f:
+                        data = yaml.safe_load(f) or {}
+                    safety = data.get("safety", {})
+                    if isinstance(safety, dict):
+                        paths = safety.get("allowed_paths", [])
+                        if isinstance(paths, list):
+                            return current, paths
+            except Exception:
+                pass
+            return current, []
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return cwd, []
+
+
+def load_allowed_paths(patterns: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Load allowed paths from patterns config and per-project .agentwire.yml.
+
+    Returns list of {"path": str, "allow": set} entries.
+    """
+    raw = list(patterns.get("allowedPaths", []))
+
+    project_root, project_paths = _find_project_config_for_safety()
+    for p in project_paths:
+        if not isinstance(p, dict):
+            continue
+        entry = _parse_allowed_entry(p)
+        if not os.path.isabs(os.path.expanduser(entry["path"])):
+            entry["path"] = os.path.join(project_root, entry["path"])
+        raw.append(entry)
+
+    # Parse all entries (skip non-dict items)
+    result = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if "allow" in item and isinstance(item["allow"], set):
+            result.append(item)
+        else:
+            result.append(_parse_allowed_entry(item))
+    return result
+
+
+def _match_allowed_path(file_path: str, pattern: str) -> bool:
+    """Check if file_path matches an allowed-path pattern (glob or prefix)."""
+    expanded_pattern = os.path.expanduser(pattern)
+    normalized = os.path.normpath(file_path)
+    expanded_normalized = os.path.expanduser(normalized)
+
+    if is_glob_pattern(pattern):
+        lower_path = expanded_normalized.lower()
+        lower_pattern = expanded_pattern.lower()
+        if fnmatch.fnmatch(lower_path, lower_pattern):
+            return True
+        basename = os.path.basename(expanded_normalized)
+        if fnmatch.fnmatch(basename.lower(), lower_pattern):
+            return True
+        return False
+    else:
+        if expanded_normalized.startswith(expanded_pattern) or expanded_normalized == expanded_pattern.rstrip('/'):
+            return True
+        return False
+
+
+def is_path_allowed_for_op(file_path: str, allowed_paths: List[Dict[str, Any]], operation: str) -> bool:
+    """Check if file_path has the given operation permitted by any allowed-path entry."""
+    for entry in allowed_paths:
+        if _match_allowed_path(file_path, entry["path"]):
+            if operation in entry["allow"]:
+                return True
+    return False
+
+
+def _extract_command_paths(command: str) -> List[str]:
+    """Extract file/directory paths from a command string."""
+    paths = []
+    for m in re.finditer(r'''["']([^"']+)["']''', command):
+        candidate = m.group(1)
+        if '/' in candidate or candidate.startswith('.'):
+            paths.append(os.path.expanduser(candidate))
+    for token in re.split(r'\s+', command):
+        token = token.strip("\"'")
+        if token.startswith(('/', '~/', './')):
+            paths.append(os.path.expanduser(token))
+        elif '/' in token and not token.startswith('-'):
+            paths.append(os.path.expanduser(token))
+    return paths
+
+
+def is_command_path_allowed(command: str, allowed_paths: List[Dict[str, Any]], operation: str = "write") -> bool:
+    """Check if ALL file paths in a command have the required operation permitted.
+
+    Security: ALL paths must match (not any). This prevents commands like
+    `rm /tmp/safe.txt /etc/passwd` from being allowed just because /tmp is allowlisted.
+    """
+    if not allowed_paths:
+        return False
+    paths = _extract_command_paths(command)
+    if not paths:
+        return False
+    for p in paths:
+        if not is_path_allowed_for_op(p, allowed_paths, operation):
+            return False
+    return True
+
+
+def _infer_operation_from_reason(reason: str) -> str:
+    """Infer the required operation from a bash pattern's reason field."""
+    reason_lower = reason.lower()
+    if "rm" in reason_lower or "delet" in reason_lower or "trash" in reason_lower or "rmdir" in reason_lower:
+        return "delete"
+    if "chmod" in reason_lower or "permission" in reason_lower:
+        return "chmod"
+    if "chown" in reason_lower or "chgrp" in reason_lower:
+        return "chmod"
+    if "mv" in reason_lower or "move" in reason_lower:
+        return "move"
+    return "write"
+
+
 def load_patterns() -> Dict[str, Any]:
     """Load patterns from patterns.yaml."""
     if not yaml:
@@ -147,39 +297,74 @@ def check_command_safety(command: str, verbose: bool = False) -> Dict[str, Any]:
         - decision: "allow" | "block" | "ask"
         - reason: string description
         - pattern: matched pattern (if any)
+
+    Evaluation order:
+      1. Hard-blocked bash patterns (bypassable=false or unset) → BLOCK always
+      2. Ask patterns → ASK always
+      3. Bypassable bash patterns → check if ALL target paths have the required permission
+      4. zeroAccessPaths → check allowlist with "read" permission
+      5. readOnlyPaths → check allowlist with operation-specific permission
+      6. noDeletePaths → check allowlist with "delete" permission
     """
     patterns = load_patterns()
+    allowed = load_allowed_paths(patterns)
 
-    # Check bash tool patterns
+    # Phase 1: Hard-blocked and ask bash patterns
+    # Phase 2: Bypassable bash patterns
     bash_patterns = patterns.get("bashToolPatterns", [])
+    bypassable_matches = []
+
     for pattern_obj in bash_patterns:
-        if isinstance(pattern_obj, dict):
-            pattern = pattern_obj.get("pattern", "")
-            action = pattern_obj.get("action", "block")
-            reason = pattern_obj.get("reason", "Matched pattern")
-        else:
+        if not isinstance(pattern_obj, dict):
             continue
+
+        pattern = pattern_obj.get("pattern", "")
+        reason = pattern_obj.get("reason", "Matched pattern")
+        should_ask = pattern_obj.get("ask", False)
+        bypassable = pattern_obj.get("bypassable", False)
 
         try:
             if re.search(pattern, command, re.IGNORECASE):
-                return {
-                    "decision": action,
-                    "reason": reason,
-                    "pattern": pattern,
-                    "command": command
-                }
+                if should_ask:
+                    return {
+                        "decision": "ask",
+                        "reason": reason,
+                        "pattern": pattern,
+                        "command": command
+                    }
+                elif bypassable:
+                    bypassable_matches.append((pattern, reason))
+                else:
+                    return {
+                        "decision": "block",
+                        "reason": reason,
+                        "pattern": pattern,
+                        "command": command
+                    }
         except re.error:
             if verbose:
                 print(f"Warning: Invalid regex pattern: {pattern}", file=sys.stderr)
 
-    # Check path-based restrictions (simplified check)
+    # Phase 2: Check bypassable matches against allowlist
+    for pattern, reason in bypassable_matches:
+        operation = _infer_operation_from_reason(reason)
+        if not is_command_path_allowed(command, allowed, operation):
+            return {
+                "decision": "block",
+                "reason": reason,
+                "pattern": pattern,
+                "command": command
+            }
+
+    # Check path-based restrictions
     zero_access = patterns.get("zeroAccessPaths", [])
     read_only = patterns.get("readOnlyPaths", [])
     no_delete = patterns.get("noDeletePaths", [])
 
-
     for path in zero_access:
         if matches_path_in_command(path, command):
+            if is_command_path_allowed(command, allowed, "read"):
+                continue
             return {
                 "decision": "block",
                 "reason": f"Zero-access path: {path}",
@@ -189,6 +374,14 @@ def check_command_safety(command: str, verbose: bool = False) -> Dict[str, Any]:
 
     for path in read_only:
         if matches_path_in_command(path, command) and any(op in command for op in ["rm", "mv", "sed -i", ">"]):
+            # Infer operation
+            op = "write"
+            if "rm" in command:
+                op = "delete"
+            elif "mv" in command:
+                op = "move"
+            if is_command_path_allowed(command, allowed, op):
+                continue
             return {
                 "decision": "block",
                 "reason": f"Read-only path: {path}",
@@ -198,6 +391,8 @@ def check_command_safety(command: str, verbose: bool = False) -> Dict[str, Any]:
 
     for path in no_delete:
         if matches_path_in_command(path, command) and "rm" in command:
+            if is_command_path_allowed(command, allowed, "delete"):
+                continue
             return {
                 "decision": "block",
                 "reason": f"No-delete path: {path}",
@@ -228,6 +423,7 @@ def get_safety_status() -> Dict[str, Any]:
             "zero_access_paths": len(patterns.get("zeroAccessPaths", [])),
             "read_only_paths": len(patterns.get("readOnlyPaths", [])),
             "no_delete_paths": len(patterns.get("noDeletePaths", [])),
+            "allowed_paths": len(load_allowed_paths(patterns)),
         },
         "recent_blocks": []
     }

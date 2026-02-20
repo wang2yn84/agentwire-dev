@@ -427,6 +427,7 @@ session:
 | `parent` | Session name | Parent session for hierarchical notifications |
 | `shell` | `/bin/sh`, `/bin/bash`, etc. | Default shell for task commands |
 | `tasks` | Task definitions | Scheduled workload configurations |
+| `safety` | `{allowed_paths: [...]}` | Per-project damage control allowlist |
 
 ### Task Schema
 

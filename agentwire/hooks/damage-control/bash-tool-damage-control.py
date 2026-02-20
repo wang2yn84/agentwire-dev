@@ -18,6 +18,7 @@ JSON output for ask patterns:
   {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "..."}}
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -153,6 +154,168 @@ def load_config() -> Dict[str, Any]:
 
 
 # ============================================================================
+# ALLOWED PATHS (Granular Permissions)
+# ============================================================================
+# Operations: "all", "read", "write", "edit", "delete", "move", "chmod"
+
+ALL_OPERATIONS = {"read", "write", "edit", "delete", "move", "chmod"}
+
+
+def _parse_allowed_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse an allowed-path entry to {path: str, allow: set}.
+
+    Entry must be a dict with "path" key and optional "allow" (defaults to "all").
+    """
+    allow = entry.get("allow", "all")
+    if isinstance(allow, str) and allow.strip().lower() == "all":
+        return {"path": entry["path"], "allow": ALL_OPERATIONS.copy()}
+    if isinstance(allow, list):
+        return {"path": entry["path"], "allow": {a.strip().lower() for a in allow}}
+    if isinstance(allow, str):
+        return {"path": entry["path"], "allow": {allow.strip().lower()}}
+    return {"path": entry["path"], "allow": ALL_OPERATIONS.copy()}
+
+
+def _find_project_config() -> Tuple[str, List[Any]]:
+    """Walk up from $PWD to find .agentwire.yml and return (project_root, allowed_paths)."""
+    cwd = os.environ.get("PWD", os.getcwd())
+    current = os.path.abspath(cwd)
+    while True:
+        config_file = os.path.join(current, ".agentwire.yml")
+        if os.path.isfile(config_file):
+            try:
+                with open(config_file, "r") as f:
+                    data = yaml.safe_load(f) or {}
+                safety = data.get("safety", {})
+                if isinstance(safety, dict):
+                    paths = safety.get("allowed_paths", [])
+                    if isinstance(paths, list):
+                        return current, paths
+            except Exception:
+                pass
+            return current, []
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return cwd, []
+
+
+def load_allowed_paths(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Load allowed paths from global config and per-project .agentwire.yml.
+
+    Returns list of {"path": str, "allow": set} entries.
+    """
+    raw = list(config.get("allowedPaths", []))
+
+    # Merge per-project allowed paths (relative to project root)
+    project_root, project_paths = _find_project_config()
+    for p in project_paths:
+        if not isinstance(p, dict):
+            continue
+        entry = _parse_allowed_entry(p)
+        if not os.path.isabs(os.path.expanduser(entry["path"])):
+            entry["path"] = os.path.join(project_root, entry["path"])
+        raw.append(entry)
+
+    # Parse all entries (skip non-dict items)
+    result = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if "allow" in item and isinstance(item["allow"], set):
+            result.append(item)
+        else:
+            result.append(_parse_allowed_entry(item))
+    return result
+
+
+def _match_allowed(file_path: str, pattern: str) -> bool:
+    """Check if file_path matches an allowed-path pattern (glob or prefix)."""
+    expanded_pattern = os.path.expanduser(pattern)
+    normalized = os.path.normpath(file_path)
+    expanded_normalized = os.path.expanduser(normalized)
+
+    if is_glob_pattern(pattern):
+        lower_path = expanded_normalized.lower()
+        lower_pattern = expanded_pattern.lower()
+        if fnmatch.fnmatch(lower_path, lower_pattern):
+            return True
+        basename = os.path.basename(expanded_normalized)
+        if fnmatch.fnmatch(basename.lower(), lower_pattern):
+            return True
+        return False
+    else:
+        if expanded_normalized.startswith(expanded_pattern) or expanded_normalized == expanded_pattern.rstrip('/'):
+            return True
+        return False
+
+
+def is_path_allowed(file_path: str, allowed_paths: List[Dict[str, Any]], operation: str) -> bool:
+    """Check if file_path has the given operation permitted by any allowed-path entry."""
+    for entry in allowed_paths:
+        if _match_allowed(file_path, entry["path"]):
+            if operation in entry["allow"]:
+                return True
+    return False
+
+
+def _extract_paths_from_command(command: str) -> List[str]:
+    """Extract file/directory paths from a command string.
+
+    Looks for tokens that look like file paths (starting with /, ~/, ./, or containing /).
+    Also handles quoted paths.
+    """
+    paths = []
+    # Match quoted strings and unquoted path-like tokens
+    # Quoted paths
+    for m in re.finditer(r'''["']([^"']+)["']''', command):
+        candidate = m.group(1)
+        if '/' in candidate or candidate.startswith('.'):
+            paths.append(os.path.expanduser(candidate))
+    # Unquoted path-like tokens
+    for token in re.split(r'\s+', command):
+        # Strip quotes
+        token = token.strip("\"'")
+        if token.startswith(('/','~/','./')):
+            paths.append(os.path.expanduser(token))
+        elif '/' in token and not token.startswith('-'):
+            paths.append(os.path.expanduser(token))
+    return paths
+
+
+def _infer_operation_from_reason(reason: str) -> str:
+    """Infer the required operation from a bash pattern's reason field."""
+    reason_lower = reason.lower()
+    if "rm" in reason_lower or "delet" in reason_lower or "trash" in reason_lower or "rmdir" in reason_lower:
+        return "delete"
+    if "chmod" in reason_lower or "permission" in reason_lower:
+        return "chmod"
+    if "chown" in reason_lower or "chgrp" in reason_lower:
+        return "chmod"
+    if "mv" in reason_lower or "move" in reason_lower:
+        return "move"
+    return "write"
+
+
+def _command_targets_allowed_path(command: str, allowed_paths: List[Dict[str, Any]], operation: str) -> bool:
+    """Check if ALL file paths in the command have the required operation permitted.
+
+    Security: ALL paths must match (not any). This prevents commands like
+    `rm /tmp/safe.txt /etc/passwd` from being allowed just because /tmp is allowlisted.
+    """
+    if not allowed_paths:
+        return False
+    cmd_paths = _extract_paths_from_command(command)
+    if not cmd_paths:
+        return False
+    for cmd_path in cmd_paths:
+        if not is_path_allowed(cmd_path, allowed_paths, operation):
+            return False
+    return True
+
+
+# ============================================================================
 # PATH CHECKING
 # ============================================================================
 
@@ -203,69 +366,102 @@ def check_command(command: str, config: Dict[str, Any]) -> Tuple[bool, bool, str
       - blocked=True, ask=False: Block the command
       - blocked=False, ask=True: Show confirmation dialog
       - blocked=False, ask=False: Allow the command
+
+    Evaluation order:
+      1. Hard-blocked bash patterns (bypassable=false or unset) → BLOCK always
+      2. Ask patterns → ASK always
+      3. Bypassable bash patterns → check if ALL target paths have the required permission
+      4. zeroAccessPaths → check allowlist with "read" permission
+      5. readOnlyPaths → check allowlist with operation-specific permission
+      6. noDeletePaths → check allowlist with "delete" permission
     """
     patterns = config.get("bashToolPatterns", [])
     zero_access_paths = config.get("zeroAccessPaths", [])
     read_only_paths = config.get("readOnlyPaths", [])
     no_delete_paths = config.get("noDeletePaths", [])
+    allowed_paths = load_allowed_paths(config)
 
-    # 1. Check against patterns from YAML (may block or ask)
+    # Phase 1: Hard-blocked and ask bash patterns (NEVER bypassed by allowlist)
+    # Phase 2: Bypassable bash patterns (can be overridden by allowlist)
+    bypassable_matches = []
+
     for item in patterns:
         pattern = item.get("pattern", "")
         reason = item.get("reason", "Blocked by pattern")
         should_ask = item.get("ask", False)
+        bypassable = item.get("bypassable", False)
 
         try:
             if re.search(pattern, command, re.IGNORECASE):
                 if should_ask:
-                    return False, True, reason  # Ask for confirmation
+                    return False, True, reason  # Ask always
+                elif bypassable:
+                    bypassable_matches.append((pattern, reason))
                 else:
-                    return True, False, f"Blocked: {reason}"  # Block
+                    return True, False, f"Blocked: {reason}"  # Hard block
         except re.error:
             continue
 
-    # 2. Check for ANY access to zero-access paths (including reads)
+    # Phase 2: Check bypassable matches against allowlist
+    for pattern, reason in bypassable_matches:
+        operation = _infer_operation_from_reason(reason)
+        if not _command_targets_allowed_path(command, allowed_paths, operation):
+            return True, False, f"Blocked: {reason}"
+
+    # 3. Check for ANY access to zero-access paths (including reads)
     for zero_path in zero_access_paths:
         if is_glob_pattern(zero_path):
-            # Convert glob to regex for command matching
             glob_regex = glob_to_regex(zero_path)
             try:
-                # Only match in file-path contexts, not method calls like module.method()
-                # File paths are typically preceded by: space, /, =, ", ', <, >, or start of string
-                # And followed by: space, ", ', ), <, >, or end of string
                 file_path_regex = r'(?:^|[\s/="\'<>])' + glob_regex + r'(?:[\s"\')<>]|$)'
                 if re.search(file_path_regex, command, re.IGNORECASE):
-                    # Extra check: reject if it looks like a method call (preceded by identifier and dot)
                     extension = zero_path.split('*')[-1] if '*' in zero_path else zero_path
                     if extension.startswith('.'):
                         extension = extension[1:]
                     if extension:
                         method_call_regex = r'\w\.' + re.escape(extension) + r'\s*\('
                         if re.search(method_call_regex, command):
-                            continue  # Skip - it is a method call, not a file path
+                            continue
+                    if _command_targets_allowed_path(command, allowed_paths, "read"):
+                        continue
                     return True, False, f"Blocked: zero-access pattern {zero_path} (no operations allowed)"
             except re.error:
                 continue
         else:
-            # Original literal path matching
             expanded = os.path.expanduser(zero_path)
             escaped_expanded = re.escape(expanded)
             escaped_original = re.escape(zero_path)
 
-            # Check both expanded path (/Users/x/.ssh/) and original tilde form (~/.ssh/)
             if re.search(escaped_expanded, command) or re.search(escaped_original, command):
+                if _command_targets_allowed_path(command, allowed_paths, "read"):
+                    continue
                 return True, False, f"Blocked: zero-access path {zero_path} (no operations allowed)"
 
-    # 3. Check for modifications to read-only paths (reads allowed)
+    # 4. Check for modifications to read-only paths (reads allowed)
     for readonly in read_only_paths:
         blocked, reason = check_path_patterns(command, readonly, READ_ONLY_BLOCKED, "read-only path")
         if blocked:
+            # Infer which operation from the reason
+            op = "write"
+            reason_lower = reason.lower()
+            if "delete" in reason_lower:
+                op = "delete"
+            elif "chmod" in reason_lower or "chown" in reason_lower or "chgrp" in reason_lower:
+                op = "chmod"
+            elif "move" in reason_lower:
+                op = "move"
+            elif "edit" in reason_lower:
+                op = "edit"
+            if _command_targets_allowed_path(command, allowed_paths, op):
+                continue
             return True, False, reason
 
-    # 4. Check for deletions on no-delete paths (read/write/edit allowed)
+    # 5. Check for deletions on no-delete paths (read/write/edit allowed)
     for no_delete in no_delete_paths:
         blocked, reason = check_path_patterns(command, no_delete, NO_DELETE_BLOCKED, "no-delete path")
         if blocked:
+            if _command_targets_allowed_path(command, allowed_paths, "delete"):
+                continue
             return True, False, reason
 
     return False, False, ""

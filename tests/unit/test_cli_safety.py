@@ -7,6 +7,11 @@ from agentwire.cli_safety import (
     glob_to_regex,
     matches_path_in_command,
     check_command_safety,
+    load_allowed_paths,
+    is_command_path_allowed,
+    _match_allowed_path,
+    _parse_allowed_entry,
+    is_path_allowed_for_op,
 )
 
 
@@ -62,12 +67,49 @@ class TestMatchesPathInCommand:
         assert matches_path_in_command("*.py", "python -c 'import module.py()'") is False
 
 
+# --- _parse_allowed_entry ---
+
+class TestParseAllowedEntry:
+    def test_dict_with_all(self):
+        entry = _parse_allowed_entry({"path": "*/dist/*", "allow": "all"})
+        assert entry["path"] == "*/dist/*"
+        assert entry["allow"] == {"read", "write", "edit", "delete", "move", "chmod"}
+
+    def test_dict_with_list(self):
+        entry = _parse_allowed_entry({"path": "~/.env", "allow": ["read", "write"]})
+        assert entry["path"] == "~/.env"
+        assert entry["allow"] == {"read", "write"}
+
+    def test_dict_with_single_string(self):
+        entry = _parse_allowed_entry({"path": "/tmp/x", "allow": "read"})
+        assert entry["allow"] == {"read"}
+
+    def test_dict_defaults_to_all(self):
+        entry = _parse_allowed_entry({"path": "/tmp/x"})
+        assert entry["allow"] == {"read", "write", "edit", "delete", "move", "chmod"}
+
+
+# --- is_path_allowed_for_op ---
+
+class TestIsPathAllowedForOp:
+    def test_all_permissions(self):
+        allowed = [{"path": "*/dist/*", "allow": {"read", "write", "edit", "delete", "move", "chmod"}}]
+        assert is_path_allowed_for_op("/home/user/project/dist/file.whl", allowed, "delete") is True
+
+    def test_limited_permissions_allow(self):
+        allowed = [{"path": "~/.env", "allow": {"read", "write"}}]
+        assert is_path_allowed_for_op("/Users/dotdev/.env", allowed, "write") is True
+
+    def test_limited_permissions_deny(self):
+        allowed = [{"path": "~/.env", "allow": {"read", "write"}}]
+        assert is_path_allowed_for_op("/Users/dotdev/.env", allowed, "delete") is False
+
+
 # --- check_command_safety ---
 
 class TestCheckCommandSafety:
     def test_allowed_with_empty_patterns(self, tmp_path, monkeypatch):
         """If patterns.yaml doesn't exist, everything is allowed."""
-        # Point PATTERNS_FILE to nonexistent path
         import agentwire.cli_safety as mod
         original = mod.PATTERNS_FILE
         monkeypatch.setattr(mod, "PATTERNS_FILE", tmp_path / "no-patterns.yaml")
@@ -87,3 +129,215 @@ class TestCheckCommandSafety:
         assert "pattern" in result
         assert "command" in result
         assert result["command"] == "ls -la"
+
+
+# --- _match_allowed_path ---
+
+class TestMatchAllowedPath:
+    def test_glob_full_path(self):
+        assert _match_allowed_path("/home/user/project/dist/file.whl", "*/dist/*") is True
+
+    def test_glob_no_match(self):
+        assert _match_allowed_path("/home/user/.ssh/id_rsa", "*/dist/*") is False
+
+    def test_literal_prefix(self):
+        assert _match_allowed_path("/tmp/test.txt", "/tmp/") is True
+
+    def test_literal_no_match(self):
+        assert _match_allowed_path("/home/user/file.txt", "/tmp/") is False
+
+    def test_pycache_glob(self):
+        assert _match_allowed_path("/home/user/project/__pycache__/mod.pyc", "*/__pycache__/*") is True
+
+    def test_egg_info_glob(self):
+        assert _match_allowed_path("/home/user/project/pkg.egg-info/top_level.txt", "*.egg-info/*") is True
+
+
+# --- is_command_path_allowed ---
+
+class TestIsCommandPathAllowed:
+    def test_dist_path_allowed(self):
+        allowed = [{"path": "*/dist/*", "allow": {"read", "write", "edit", "delete", "move", "chmod"}}]
+        assert is_command_path_allowed("rm /home/user/project/dist/old.whl", allowed, "delete") is True
+
+    def test_non_allowed_path(self):
+        allowed = [{"path": "*/dist/*", "allow": {"read", "write", "edit", "delete", "move", "chmod"}}]
+        assert is_command_path_allowed("rm /home/user/.ssh/id_rsa", allowed, "delete") is False
+
+    def test_empty_allowlist(self):
+        assert is_command_path_allowed("rm /tmp/test.txt", [], "delete") is False
+
+    def test_tmp_literal(self):
+        allowed = [{"path": "/tmp/", "allow": {"read", "write", "edit", "delete", "move", "chmod"}}]
+        assert is_command_path_allowed("rm /tmp/test.txt", allowed, "delete") is True
+
+    def test_all_paths_must_match(self):
+        """Security: ALL paths in command must be allowed, not just any."""
+        allowed = [{"path": "/tmp/", "allow": {"read", "write", "edit", "delete", "move", "chmod"}}]
+        # /tmp is allowed but /etc is not — should block
+        assert is_command_path_allowed("rm /tmp/safe.txt /etc/passwd", allowed, "delete") is False
+
+    def test_operation_specific(self):
+        """Path allowed for read but not delete."""
+        allowed = [{"path": "/tmp/", "allow": {"read", "write"}}]
+        assert is_command_path_allowed("rm /tmp/test.txt", allowed, "delete") is False
+        assert is_command_path_allowed("cat /tmp/test.txt", allowed, "read") is True
+
+
+# --- load_allowed_paths ---
+
+class TestLoadAllowedPaths:
+    def test_loads_structured_entries(self):
+        config = {"allowedPaths": [
+            {"path": "*/dist/*", "allow": "all"},
+            {"path": "/tmp/*", "allow": ["read", "write"]},
+        ]}
+        paths = load_allowed_paths(config)
+        assert len(paths) >= 2
+        dist_entry = next(e for e in paths if e["path"] == "*/dist/*")
+        assert "delete" in dist_entry["allow"]
+        tmp_entry = next(e for e in paths if e["path"] == "/tmp/*")
+        assert tmp_entry["allow"] == {"read", "write"}
+
+    def test_plain_strings_skipped(self):
+        """Plain strings are not valid entries and are skipped."""
+        config = {"allowedPaths": ["*/dist/*", {"path": "/tmp/*", "allow": "all"}]}
+        paths = load_allowed_paths(config)
+        # Only the dict entry survives
+        assert len(paths) >= 1
+        assert all(isinstance(e, dict) for e in paths)
+        assert any(e["path"] == "/tmp/*" for e in paths)
+
+    def test_empty_config(self):
+        result = load_allowed_paths({})
+        assert isinstance(result, list)
+
+
+# --- check_command_safety with allowlist ---
+
+class TestCheckCommandSafetyAllowlist:
+    def _make_patterns_file(self, tmp_path, patterns_dict):
+        """Create a patterns.yaml and return path."""
+        import yaml
+        pf = tmp_path / "patterns.yaml"
+        with open(pf, "w") as f:
+            yaml.safe_dump(patterns_dict, f)
+        return pf
+
+    def test_allowlist_bypasses_readonly(self, tmp_path, monkeypatch):
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "readOnlyPaths": ["dist/"],
+            "allowedPaths": [{"path": "*/dist/*", "allow": "all"}],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        result = check_command_safety("rm /home/user/project/dist/old.whl")
+        assert result["decision"] == "allow"
+
+    def test_allowlist_bypasses_nodelete(self, tmp_path, monkeypatch):
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "noDeletePaths": [".git/"],
+            "allowedPaths": [],  # .git/ not allowlisted
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        # .git/ not allowlisted, should still block
+        result = check_command_safety("rm .git/config")
+        assert result["decision"] == "block"
+
+    def test_hard_blocked_rm_rf_never_bypassed(self, tmp_path, monkeypatch):
+        """rm -rf is hard-blocked even with all perms on target path."""
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "bashToolPatterns": [
+                {"pattern": r"\brm\s+(-[^\s]*)*-[rRf]", "reason": "rm with flags"},
+            ],
+            "allowedPaths": [{"path": "/tmp/*", "allow": "all"}],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        result = check_command_safety("rm -rf /tmp/test")
+        assert result["decision"] == "block"
+
+    def test_bypassable_rm_with_delete_permission(self, tmp_path, monkeypatch):
+        """Plain rm (bypassable) should be allowed if target has delete permission."""
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "bashToolPatterns": [
+                {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
+            ],
+            "allowedPaths": [{"path": "*/dist/*", "allow": "all"}],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        result = check_command_safety("rm /home/user/project/dist/old.whl")
+        assert result["decision"] == "allow"
+
+    def test_bypassable_rm_without_delete_permission(self, tmp_path, monkeypatch):
+        """Plain rm (bypassable) should block if target only has read/write."""
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "bashToolPatterns": [
+                {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
+            ],
+            "allowedPaths": [{"path": "*/dist/*", "allow": ["read", "write"]}],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        result = check_command_safety("rm /home/user/project/dist/old.whl")
+        assert result["decision"] == "block"
+
+    def test_bypassable_rm_non_allowed_path(self, tmp_path, monkeypatch):
+        """Plain rm (bypassable) should block if target is not in allowlist at all."""
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "bashToolPatterns": [
+                {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
+            ],
+            "allowedPaths": [{"path": "*/dist/*", "allow": "all"}],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        result = check_command_safety("rm ~/.ssh/id_rsa")
+        assert result["decision"] == "block"
+
+    def test_read_only_permission_blocks_delete(self, tmp_path, monkeypatch):
+        """Path with only read permission should not bypass noDelete."""
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "noDeletePaths": ["README.md"],
+            "allowedPaths": [{"path": "README.md", "allow": ["read"]}],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        result = check_command_safety("rm README.md")
+        assert result["decision"] == "block"
+
+    def test_multiple_paths_all_must_match(self, tmp_path, monkeypatch):
+        """Security: ALL paths in command must be allowed for bypass."""
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "bashToolPatterns": [
+                {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
+            ],
+            "allowedPaths": [{"path": "/tmp/", "allow": "all"}],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        # One path is allowed, the other is not — should block
+        result = check_command_safety("rm /tmp/safe.txt /etc/passwd")
+        assert result["decision"] == "block"
+
+    def test_empty_allowedpaths_no_change(self, tmp_path, monkeypatch):
+        """With empty allowedPaths, behavior is unchanged."""
+        import agentwire.cli_safety as mod
+        pf = self._make_patterns_file(tmp_path, {
+            "readOnlyPaths": ["dist/"],
+            "allowedPaths": [],
+        })
+        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+
+        result = check_command_safety("mv something dist/file")
+        assert result["decision"] == "block"

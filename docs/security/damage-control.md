@@ -143,6 +143,50 @@ noDeletePaths:
 
 Blocks: `rm`, `unlink`, `rmdir`, `shred`
 
+#### 5. allowedPaths (Granular path-based allowlist)
+
+Paths where path-based protections (zeroAccess, readOnly, noDelete) are bypassed. Each entry specifies which operations are permitted. Hard-blocked bash patterns (like `rm -rf`) are **NEVER** bypassed. Bypassable bash patterns (like plain `rm`) can be overridden if the target path has the required operation permission.
+
+**Operations**: `all`, `read`, `write`, `edit`, `delete`, `move`, `chmod`
+
+**Global** (in `patterns.yaml`):
+```yaml
+allowedPaths:
+  - path: "*/dist/*"
+    allow: all                     # bypass everything including bypassable rm
+  - path: "~/.agentwire/.env"
+    allow: [read, write, edit]     # but NOT delete
+  - path: "*/__pycache__/*"
+    allow: all
+```
+
+**Per-project** (in `.agentwire.yml`):
+```yaml
+safety:
+  allowed_paths:
+    - path: ".env.development"
+      allow: [read, write, edit]
+    - path: "dist/*"
+      allow: all
+```
+
+Plain strings (legacy format) are auto-coerced to `{path: str, allow: all}` for backwards compatibility.
+
+Per-project paths are relative to the project root and resolved to absolute paths before matching.
+
+**Bypassable bash patterns**: Some bash patterns (plain `rm`, `rmdir`, `trash`) are marked `bypassable: true` in patterns.yaml. When a command matches a bypassable pattern, the system checks if ALL target paths have the required operation permission (e.g., `delete` for `rm`). If all paths match, the command is allowed. Hard-blocked patterns (like `rm -rf`) are never bypassed regardless of permissions.
+
+**Security**: When checking bypassable patterns, ALL paths in the command must have the required permission. A command like `rm /tmp/safe.txt /etc/passwd` is blocked because `/etc/passwd` is not in the allowlist, even though `/tmp/` has delete permission.
+
+**Precedence**:
+1. Hard-blocked `bashToolPatterns` (no `bypassable` flag) — always blocked, NEVER bypassed
+2. Ask patterns (`ask: true`) — always prompt for confirmation
+3. Bypassable `bashToolPatterns` (`bypassable: true`) — check allowlist for required operation
+4. `allowedPaths` (global + per-project merged) — if target matches with correct operation, skip path checks
+5. `zeroAccessPaths` — block (unless allowlisted with `read`)
+6. `readOnlyPaths` — block modifications (unless allowlisted with specific operation)
+7. `noDeletePaths` — block deletions (unless allowlisted with `delete`)
+
 ---
 
 ## AgentWire-Specific Protections
@@ -468,10 +512,11 @@ Damage Control is ONE layer:
 
 ### Q: What if I need to run a blocked command?
 
-**A**: Three options:
-1. Use "ask" patterns (prompts for confirmation)
-2. Temporarily comment out the pattern in patterns.yaml
-3. Run command outside AgentWire session
+**A**: Four options:
+1. Add the path to `allowedPaths` in `patterns.yaml` (global) or `safety.allowed_paths` in `.agentwire.yml` (per-project)
+2. Use "ask" patterns (prompts for confirmation)
+3. Temporarily comment out the pattern in patterns.yaml
+4. Run command outside AgentWire session
 
 ### Q: Do hooks work in remote sessions?
 
