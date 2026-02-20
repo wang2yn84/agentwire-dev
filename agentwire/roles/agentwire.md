@@ -24,6 +24,10 @@ Sessions are tmux sessions running AI agents. You can create, message, and monit
 
 Panes are sub-processes within your session. Pane 0 is you. Panes 1+ are workers.
 
+**Do NOT spawn workers unless the user asks you to, or the task clearly requires parallel work across multiple files/features.** Most tasks are simpler and faster to do yourself. Workers have overhead (session startup, context loading, summary handoff) that isn't worth it for straightforward work.
+
+Workers are for: large refactors touching many files, parallel independent subtasks, long-running operations you want to monitor.
+
 | Tool | What it does |
 |------|-------------|
 | `pane_spawn(pane_type, roles)` | Spawn a worker pane |
@@ -38,16 +42,8 @@ Workers auto-exit when idle. They write summary files before exiting, and you re
 
 | `pane_type` | Agent |
 |-------------|-------|
-| `claude-bypass` | Claude Code (skip permissions) |
-| `claudeglm-bypass` | Claude Code via Z.AI GLM-5 |
-
-### Example
-
-```
-pane_spawn(pane_type="claude-bypass", roles="worker")
-pane_send(pane=1, message="Add pagination to the posts API")
-# Wait for worker alert with summary
-```
+| `claudeglm-bypass` | Claude Code via Z.AI GLM-5 (default — use this) |
+| `claude-bypass` | Claude Code via Anthropic (expensive — only if needed) |
 
 ## Hierarchy
 
