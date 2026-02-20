@@ -41,6 +41,10 @@ let wsCleanups = [];
 /** Agent progress state per session */
 let agentProgress = {};
 
+/** Fallback polling timer */
+let pollTimer = null;
+const POLL_INTERVAL = 30_000; // 30s fallback refresh
+
 /** Output preview state */
 let outputExpanded = false;
 let expandedSession = null;
@@ -109,6 +113,15 @@ export function openSchedulerWindow() {
         }
     }));
 
+    // Refresh on window focus (catches stale WebSocket)
+    winbox.onfocus = () => {
+        desktop.setActiveWindow('scheduler');
+        refreshAll(container);
+    };
+
+    // Fallback polling in case WebSocket events are missed
+    pollTimer = setInterval(() => refreshAll(container), POLL_INTERVAL);
+
     // Initial fetch
     refreshAll(container);
 
@@ -138,6 +151,7 @@ function cleanup() {
     agentProgress = {};
     outputExpanded = false;
     expandedSession = null;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     stopElapsedTimer();
     stopOutputRefresh();
     stopIdleTimer();

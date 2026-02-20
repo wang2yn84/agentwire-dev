@@ -401,7 +401,7 @@ def _compute_recurrence(schedule: Schedule, last_run_ts: float) -> float:
         candidate = target_today + timedelta(days=day_offset)
         if _day_matches(candidate, every, schedule.except_days):
             candidate_ts = candidate.timestamp()
-            if candidate_ts > last_run_ts and (day_offset > 0 or candidate_ts > now_local.timestamp() - 60):
+            if candidate_ts > last_run_ts:
                 return candidate_ts
 
     # Fallback: 24h from last run
