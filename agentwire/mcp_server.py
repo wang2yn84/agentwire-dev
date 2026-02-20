@@ -1620,6 +1620,77 @@ def scheduler_run(task: str) -> str:
     return f"Task '{task}' completed: {status} ({duration}s)"
 
 
+@mcp.tool()
+def scheduler_enable(task: str) -> str:
+    """Enable a disabled task in the scheduler board.
+
+    Args:
+        task: Task name to enable.
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["scheduler", "enable", task], json_output=False)
+    if data.get("success"):
+        return f"Task '{task}' enabled."
+    return f"Failed to enable task: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def scheduler_disable(task: str) -> str:
+    """Disable a task in the scheduler board.
+
+    Disabled tasks are skipped during scheduling.
+
+    Args:
+        task: Task name to disable.
+
+    Returns:
+        Success message or error description.
+    """
+    data = run_agentwire_cmd(["scheduler", "disable", task], json_output=False)
+    if data.get("success"):
+        return f"Task '{task}' disabled."
+    return f"Failed to disable task: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def scheduler_history(limit: int = 20) -> str:
+    """Show recent run history from board state.
+
+    Args:
+        limit: Maximum number of results (default: 20)
+
+    Returns:
+        Formatted run history with task names, last run times, and statuses.
+    """
+    data = run_agentwire_cmd(["scheduler", "history", "--json"])
+    if not data.get("success"):
+        return f"Failed to get history: {data.get('error', 'Unknown error')}"
+
+    history = data.get("history", [])
+    if not history:
+        return "No run history."
+
+    # Sort by last_run descending, limit results
+    history.sort(key=lambda h: h.get("last_run") or "", reverse=True)
+    history = history[:limit]
+
+    lines = ["Recent scheduler history:"]
+    for entry in history:
+        task_name = entry.get("task", "?")
+        last_run = entry.get("last_run", "never")
+        if last_run and len(last_run) > 16:
+            last_run = last_run[:16].replace("T", " ")
+        status = entry.get("last_status", "?")
+        duration = entry.get("last_duration")
+        runs = entry.get("run_count", 0)
+        dur_str = f"{duration}s" if duration else "-"
+        lines.append(f"  {task_name}: {last_run} — {status} ({dur_str}, {runs} runs)")
+
+    return "\n".join(lines)
+
+
 # =============================================================================
 # Notification Tools
 # =============================================================================
@@ -1630,6 +1701,8 @@ def email_send(
     body: str,
     to: str | None = None,
     subject: str | None = None,
+    attachments: list[str] | None = None,
+    plain_text: bool = False,
 ) -> str:
     """Send a branded email notification via Resend.
 
@@ -1639,6 +1712,8 @@ def email_send(
         body: Email body (markdown supported)
         to: Recipient email address (default: from config)
         subject: Email subject line (optional)
+        attachments: List of file paths to attach (optional)
+        plain_text: Send plain text only, no HTML template (default: false)
 
     Returns:
         Success message or error description.
@@ -1648,6 +1723,11 @@ def email_send(
         args.extend(["--to", to])
     if subject:
         args.extend(["--subject", subject])
+    if attachments:
+        for path in attachments:
+            args.extend(["--attach", path])
+    if plain_text:
+        args.append("--plain")
 
     data = run_agentwire_cmd(args, json_output=False)
     if data.get("success"):

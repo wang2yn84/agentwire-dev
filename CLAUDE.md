@@ -240,7 +240,7 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire history list` | `history_list()` |
 | `agentwire history show id` | `history_show(session_id="...")` |
 | `agentwire history resume id -p path` | `history_resume(session_id="...", project="...")` |
-| `agentwire email --body "..." --to addr` | `email_send(body="...", to="...")` |
+| `agentwire email --body "..." --to addr` | `email_send(body="...", to="...", attachments=["..."], plain_text=False)` |
 
 ### Notifications & Network (5 tools)
 
@@ -260,7 +260,7 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire tts status` | `tts_status()` |
 | `agentwire stt status` | `stt_status()` |
 
-### Scheduler (5 tools)
+### Scheduler (8 tools)
 
 | CLI Command | MCP Tool |
 |-------------|----------|
@@ -269,6 +269,9 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire scheduler live --json` | `scheduler_live()` |
 | `agentwire scheduler events --json` | `scheduler_events(tail=20, task="")` |
 | `agentwire scheduler run task` | `scheduler_run(task="...")` |
+| `agentwire scheduler enable task` | `scheduler_enable(task="...")` |
+| `agentwire scheduler disable task` | `scheduler_disable(task="...")` |
+| `agentwire scheduler history` | `scheduler_history(limit=20)` |
 
 ### Desktop/Portal UI (10 tools)
 
@@ -285,7 +288,7 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | Minimize all | `desktop_minimize_all()` |
 | Multi-window layout | `desktop_layout(windows=[{id: "...", zone: "left"}])` |
 
-**70 tools total.** When to use CLI vs MCP:
+**73 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 

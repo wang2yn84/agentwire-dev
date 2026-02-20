@@ -274,3 +274,115 @@ class TestEmailTool:
         email_send(body="content only")
         args = mock_cmd.call_args[0][0]
         assert args == ["email", "--body", "content only"]
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_email_send_with_attachments(self, mock_cmd):
+        from agentwire.mcp_server import email_send
+        mock_cmd.return_value = _success()
+        email_send(body="see attached", attachments=["/tmp/a.pdf", "/tmp/b.csv"])
+        args = mock_cmd.call_args[0][0]
+        assert "--attach" in args
+        assert args.count("--attach") == 2
+        assert "/tmp/a.pdf" in args
+        assert "/tmp/b.csv" in args
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_email_send_plain_text(self, mock_cmd):
+        from agentwire.mcp_server import email_send
+        mock_cmd.return_value = _success()
+        email_send(body="plain msg", plain_text=True)
+        args = mock_cmd.call_args[0][0]
+        assert "--plain" in args
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_email_send_plain_text_false(self, mock_cmd):
+        from agentwire.mcp_server import email_send
+        mock_cmd.return_value = _success()
+        email_send(body="html msg", plain_text=False)
+        args = mock_cmd.call_args[0][0]
+        assert "--plain" not in args
+
+
+# ---------------------------------------------------------------------------
+# Scheduler enable/disable/history tools
+# ---------------------------------------------------------------------------
+
+
+class TestSchedulerEnableDisable:
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_enable(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_enable
+        mock_cmd.return_value = _success()
+        result = scheduler_enable(task="daily-check")
+        mock_cmd.assert_called_once_with(
+            ["scheduler", "enable", "daily-check"], json_output=False
+        )
+        assert "enabled" in result.lower()
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_enable_failure(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_enable
+        mock_cmd.return_value = _failure("Task 'nope' not found")
+        result = scheduler_enable(task="nope")
+        assert "Failed" in result
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_disable(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_disable
+        mock_cmd.return_value = _success()
+        result = scheduler_disable(task="daily-check")
+        mock_cmd.assert_called_once_with(
+            ["scheduler", "disable", "daily-check"], json_output=False
+        )
+        assert "disabled" in result.lower()
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_disable_failure(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_disable
+        mock_cmd.return_value = _failure("Task 'nope' not found")
+        result = scheduler_disable(task="nope")
+        assert "Failed" in result
+
+
+class TestSchedulerHistory:
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_history_success(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_history
+        mock_cmd.return_value = _success(history=[
+            {"task": "code-quality", "last_run": "2026-02-20T10:00:00",
+             "last_status": "complete", "last_duration": 120, "run_count": 5},
+            {"task": "doc-drift", "last_run": "2026-02-20T08:00:00",
+             "last_status": "complete", "last_duration": 60, "run_count": 3},
+        ])
+        result = scheduler_history()
+        assert "code-quality" in result
+        assert "doc-drift" in result
+        assert "complete" in result
+        mock_cmd.assert_called_once_with(["scheduler", "history", "--json"])
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_history_empty(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_history
+        mock_cmd.return_value = _success(history=[])
+        result = scheduler_history()
+        assert "No run history" in result
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_history_failure(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_history
+        mock_cmd.return_value = _failure("board not found")
+        result = scheduler_history()
+        assert "Failed" in result
+
+    @patch("agentwire.mcp_server.run_agentwire_cmd")
+    def test_scheduler_history_limit(self, mock_cmd):
+        from agentwire.mcp_server import scheduler_history
+        mock_cmd.return_value = _success(history=[
+            {"task": f"task-{i}", "last_run": f"2026-02-20T{10-i:02d}:00:00",
+             "last_status": "complete", "last_duration": 60, "run_count": 1}
+            for i in range(10)
+        ])
+        result = scheduler_history(limit=3)
+        # Should only show 3 most recent
+        lines = [l for l in result.split("\n") if l.startswith("  ")]
+        assert len(lines) == 3
