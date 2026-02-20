@@ -15,8 +15,7 @@ Created these roles:
 |------|-------|-------|
 | `claude-worker-sonnet` | Sonnet 4.5 | Claude Code |
 | `claude-worker-haiku` | Haiku 4.5 | Claude Code |
-| `openai-worker-mini` | GPT-5.1-codex-mini | OpenCode |
-| `glm-worker-flash` | GLM-4.7-flash | OpenCode |
+| `glm-worker-flash` | GLM-4.7-flash | claudeGLM |
 
 ### Leader Variants ✓
 
@@ -25,14 +24,12 @@ Created model-locked leader roles:
 | Role | Spawns Only |
 |------|-------------|
 | `leader-claude` | Claude Code workers |
-| `leader-glm` | GLM workers via OpenCode |
-| `leader-openai` | ChatGPT workers via OpenCode |
+| `leader-glm` | GLM workers via claudeGLM |
 
 ### Model Support in Code ✓
 
-Both Claude Code and OpenCode already support model from role frontmatter:
+Claude Code supports model from role frontmatter:
 - Claude: `--model sonnet` (line 167-168 in `__main__.py`)
-- OpenCode: `--model provider/model` (line 191-192 in `__main__.py`)
 
 ---
 
@@ -164,6 +161,6 @@ allowed_workers:
 - [x] `agentwire roles list` shows model-specific variants
 - [x] Spawning with `roles="claude-worker-sonnet"` uses Sonnet
 - [x] Spawning with `roles="claude-worker-haiku"` uses Haiku
-- [x] OpenCode workers can specify model via role
+- [x] claudeGLM workers can specify model via role
 - [x] `allowed_workers` in config constrains leader
 - [x] Leader receives constraint in system prompt

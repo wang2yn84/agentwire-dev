@@ -84,10 +84,6 @@ task_context = {
 }
 ```
 
-### 4. Update OpenCode Plugin
-
-Same logic in `~/.config/opencode/plugins/agentwire-notify.ts` for OpenCode sessions.
-
 ## CLI Override (Optional)
 
 Add `--keep-session` flag to override task config:
@@ -124,7 +120,6 @@ agentwire ensure -s brainstorm -p ~/projects/foo --task brainstorm --keep-sessio
 - [x] Task context file includes `exit_on_complete` value
 - [x] Stale completion signals cleared before starting new task
 - [x] ProjectConfig preserves `tasks` section when updating
-- [x] OpenCode plugin updated with same logic (event-bus-aware version)
 - [ ] `--keep-session` CLI flag overrides task config (deferred)
 - [ ] CLAUDE.md updated with new task option (deferred)
 - [x] Brainstorm task updated to use default (auto-exit)
