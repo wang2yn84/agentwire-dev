@@ -252,22 +252,52 @@ def wait_for_completion_signal(
     """
     complete_file = TASKS_DIR / f"{session}.complete"
 
+    # Build glob pattern for fuzzy summary detection (agents sometimes
+    # invent their own timestamp instead of using the provided filename).
+    summary_glob = None
+    if summary_path:
+        # e.g. task-summary-scheduler-daily-book-report-daily-report-*.md
+        stem = summary_path.stem  # without .md
+        # Strip the timestamp suffix (last 19 chars: YYYY-MM-DDTHH-MM-SS)
+        prefix = stem[:-19] if len(stem) > 19 else stem
+        summary_glob = f"{prefix}*.md"
+
     while True:
         # Primary: check if the agent has written the summary file AND
         # the hook has deleted the context file (signals cleanup complete).
         # This prevents ensure from proceeding before the hook finishes
         # its second-idle cleanup (send /exit, kill session).
         context_file = TASKS_DIR / f"{session}.json"
-        if (summary_path and summary_path.exists() and summary_path.stat().st_size > 0
-                and not context_file.exists()):
+
+        # Check exact path first, then glob for nearby matches
+        found_summary = None
+        if summary_path and summary_path.exists() and summary_path.stat().st_size > 0:
+            found_summary = summary_path
+        elif summary_path and summary_glob:
+            # Agent may have written a different timestamp — find newest match
+            parent = summary_path.parent
+            candidates = sorted(
+                parent.glob(summary_glob),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                newest = candidates[0]
+                # Only accept if created after ensure started (context file mtime)
+                if context_file.exists():
+                    ctx_mtime = context_file.stat().st_mtime
+                    if newest.stat().st_mtime > ctx_mtime and newest.stat().st_size > 0:
+                        found_summary = newest
+
+        if found_summary and not context_file.exists():
             # Give a moment for the file to be fully written
             time.sleep(0.5)
             try:
-                result = parse_summary_file(summary_path)
+                result = parse_summary_file(found_summary)
                 return {
                     "status": result.status,
                     "summary": result.summary,
-                    "summary_file": str(summary_path),
+                    "summary_file": str(found_summary),
                 }
             except CompletionError:
                 pass  # File may be partially written, retry
