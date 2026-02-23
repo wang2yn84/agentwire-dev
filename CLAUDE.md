@@ -99,6 +99,7 @@ agentwire machine remove <id>
 agentwire tunnels up            # create all required tunnels
 agentwire tunnels down          # tear down all tunnels
 agentwire tunnels status        # show tunnel health
+agentwire tunnels check         # verify tunnels are working
 
 # Lock management (for scheduled tasks)
 agentwire lock list             # list all locks
@@ -340,6 +341,10 @@ tts:
   runpod_endpoint_id: "your-endpoint-id"
   runpod_api_key: "your-api-key"
   default_voice: "dotdev"
+  voices_dir: "~/.agentwire/voices"  # Custom voice samples for cloning
+  exaggeration: 0.5  # Voice expressiveness (0-1, Chatterbox)
+  cfg_weight: 0.5  # CFG weight (0-1, Chatterbox)
+  runpod_timeout: 120  # API timeout for RunPod (seconds)
 
 stt:
   url: "http://localhost:8100"
@@ -394,6 +399,17 @@ notifications:
 
 scheduler:
   dispatch_cooldown: 60  # Seconds between task dispatches (default: 60)
+
+zai:  # Z.AI API configuration (for claudeGLM sessions)
+  api_key: ""  # Z.AI API key (or set ZAI_API_KEY env var)
+  base_url: "https://api.z.ai/api/anthropic"
+  opus_model: "glm-5"  # Model for opus tier
+  sonnet_model: "glm-5"  # Model for sonnet tier
+  haiku_model: "glm-4.7-flash"  # Model for haiku tier
+  timeout_ms: 3000000  # API timeout (milliseconds)
+
+session:
+  default_role: "agentwire"  # Default role for new sessions
 ```
 
 ### .agentwire.yml (Project Config)
