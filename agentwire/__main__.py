@@ -128,7 +128,12 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         if model:
             parts.append(f"--model {model}")
 
-        # Role-based flags (not for restricted mode)
+        # GLM-5 system prompt — replaces Claude's default identity with GLM-5 identity
+        # while preserving all tool usage, safety, and behavioral instructions
+        glm_prompt_path = Path(__file__).parent / "glm_system_prompt.md"
+        glm_prompt = glm_prompt_path.read_text()
+
+        # Append role instructions to the system prompt (not for restricted mode)
         temp_file = None
         if merged and session_type != "claudeglm-restricted":
             if merged.tools:
@@ -138,11 +143,14 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
                 parts.append(f"--disallowedTools {','.join(merged.disallowed_tools)}")
 
             if merged.instructions:
-                f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                f.write(merged.instructions)
-                f.close()
-                temp_file = f.name
-                parts.append(f'--append-system-prompt "$(<{temp_file})"')
+                glm_prompt += "\n\n" + merged.instructions
+
+        # Write combined system prompt to temp file
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        f.write(glm_prompt)
+        f.close()
+        temp_file = f.name
+        parts.append(f'--system-prompt "$(<{temp_file})"')
 
         return AgentCommand(
             command=" ".join(parts),

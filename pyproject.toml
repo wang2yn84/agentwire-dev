@@ -86,6 +86,7 @@ include = [
     # Role/prompt content bundled with the CLI
     "agentwire/roles/*.md",
     "agentwire/prompts/*.md",
+    "agentwire/glm_system_prompt.md",
     # Hooks and auxiliary scripts/configs
     "agentwire/hooks/**/*.py",
     "agentwire/hooks/**/*.yaml",
