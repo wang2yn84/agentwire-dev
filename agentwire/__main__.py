@@ -1532,6 +1532,86 @@ def cmd_stt_status(args) -> int:
     return 1
 
 
+# === Telegram Commands ===
+
+
+def get_telegram_session_name() -> str:
+    """Get Telegram bridge tmux session name from config."""
+    config = load_config()
+    return config.get("services", {}).get("telegram", {}).get("session_name", "agentwire-telegram")
+
+
+def cmd_telegram_start(args) -> int:
+    """Start the Telegram bridge in tmux."""
+    session_name = get_telegram_session_name()
+
+    if tmux_session_exists(session_name):
+        print(f"Telegram bridge already running in tmux session '{session_name}'")
+        print("Attaching... (Ctrl+B D to detach)")
+        subprocess.run(["tmux", "attach-session", "-t", session_name])
+        return 0
+
+    # Find agentwire source directory
+    source_dir = get_source_dir()
+    venv_python = source_dir / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        print(f"Error: Cannot find venv at {venv_python}", file=sys.stderr)
+        return 1
+
+    cmd = f"cd {source_dir} && {venv_python} -m agentwire.bridges.telegram"
+
+    subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(source_dir)])
+    subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
+
+    print(f"Telegram bridge starting in tmux session '{session_name}'")
+    print(f"  Attach: tmux attach -t {session_name}")
+    return 0
+
+
+def cmd_telegram_serve(args) -> int:
+    """Run the Telegram bridge directly (foreground)."""
+    from .bridges.telegram import run_bridge
+    run_bridge()
+    return 0
+
+
+def cmd_telegram_stop(args) -> int:
+    """Stop the Telegram bridge."""
+    session_name = get_telegram_session_name()
+
+    if not tmux_session_exists(session_name):
+        print("Telegram bridge is not running.")
+        return 1
+
+    subprocess.run(["tmux", "kill-session", "-t", session_name])
+    print("Telegram bridge stopped.")
+    return 0
+
+
+def cmd_telegram_status(args) -> int:
+    """Check Telegram bridge status."""
+    json_mode = getattr(args, 'json', False)
+    session_name = get_telegram_session_name()
+
+    running = tmux_session_exists(session_name)
+
+    if json_mode:
+        _output_json({
+            "success": True,
+            "running": running,
+            "session": session_name if running else None,
+        })
+    else:
+        if running:
+            print(f"Telegram bridge is running in tmux session '{session_name}'")
+            print(f"  Attach: tmux attach -t {session_name}")
+        else:
+            print("Telegram bridge is not running.")
+            print("  Start: agentwire telegram start")
+
+    return 0 if running else 1
+
+
 # === Say Command ===
 
 def _get_portal_url() -> str:
@@ -8207,6 +8287,27 @@ def main() -> int:
     stt_status = stt_subparsers.add_parser("status", help="Check STT status")
     stt_status.add_argument("--json", action="store_true", help="Output JSON")
     stt_status.set_defaults(func=cmd_stt_status)
+
+    # === telegram command group ===
+    telegram_parser = subparsers.add_parser("telegram", help="Manage Telegram bridge")
+    telegram_subparsers = telegram_parser.add_subparsers(dest="telegram_command")
+
+    # telegram start
+    telegram_start = telegram_subparsers.add_parser("start", help="Start Telegram bridge in tmux")
+    telegram_start.set_defaults(func=cmd_telegram_start)
+
+    # telegram serve (foreground)
+    telegram_serve = telegram_subparsers.add_parser("serve", help="Run Telegram bridge in foreground")
+    telegram_serve.set_defaults(func=cmd_telegram_serve)
+
+    # telegram stop
+    telegram_stop = telegram_subparsers.add_parser("stop", help="Stop Telegram bridge")
+    telegram_stop.set_defaults(func=cmd_telegram_stop)
+
+    # telegram status
+    telegram_status = telegram_subparsers.add_parser("status", help="Check Telegram bridge status")
+    telegram_status.add_argument("--json", action="store_true", help="Output JSON")
+    telegram_status.set_defaults(func=cmd_telegram_status)
 
     # === tunnels command group ===
     tunnels_parser = subparsers.add_parser("tunnels", help="Manage SSH tunnels for service routing")
