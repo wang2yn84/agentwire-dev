@@ -149,7 +149,9 @@ async function processSessions(sessions) {
         path: s.path || null,
         machine: s.machine || null,
         // Chat button shown for agent session types (not bare)
-        hasVoice: s.type && (s.type.startsWith('claude') || s.type.startsWith('claudeglm')),
+        hasVoice: s.type && (s.type.startsWith('claude') || s.type.startsWith('claudeglm') || s.type.startsWith('sdk')),
+        isSdk: s.type && s.type.startsWith('sdk'),
+        backend: s.backend || 'tmux',
         // Attached client count for presence indicator
         clientCount: s.client_count || 0,
         // Icon URL from IconManager (persistent, name-matched or random)
@@ -225,13 +227,17 @@ function renderSessionItem(session) {
     }
 
     // Build actions array
-    const actions = [
-        { label: 'Monitor', action: 'monitor' }
-    ];
-    if (session.hasVoice) {
-        actions.push({ label: 'Chat', action: 'chat' });
+    const actions = [];
+    if (session.isSdk) {
+        // SDK sessions: primary action is SDK chat, no terminal/monitor
+        actions.push({ label: 'Open', action: 'sdk', primary: true });
+    } else {
+        actions.push({ label: 'Monitor', action: 'monitor' });
+        if (session.hasVoice) {
+            actions.push({ label: 'Chat', action: 'chat' });
+        }
+        actions.push({ label: 'Connect', action: 'connect', primary: true });
     }
-    actions.push({ label: 'Connect', action: 'connect', primary: true });
     actions.push({ label: '✕', action: 'close', danger: true, title: 'Close session' });
 
     // Strip @machine suffix from name if present (it's shown as separate tag)
@@ -305,6 +311,8 @@ function handleSessionAction(action, item) {
         openSessionTerminal(item.name, 'terminal', item.machine);
     } else if (action === 'chat') {
         openSessionChat(item.name);
+    } else if (action === 'sdk') {
+        openSessionTerminal(item.name, 'sdk', item.machine);
     } else if (action === 'close') {
         closeSession(item.name);
     } else if (action === 'edit-icon') {

@@ -1285,6 +1285,22 @@ body {
     color: var(--error);
 }
 
+/* SDK session types */
+.type-tag.type-sdk-bypass {
+    background: rgba(168, 85, 247, 0.15);
+    color: #a855f7;
+}
+
+.type-tag.type-sdk-prompted {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+}
+
+.type-tag.type-sdk-restricted {
+    background: rgba(168, 85, 247, 0.15);
+    color: #7c3aed;
+}
+
 /* Bare / other */
 .type-tag.type-bare {
     background: rgba(148, 163, 184, 0.15);
@@ -1672,6 +1688,210 @@ body {
     font-size: 14px;
     line-height: 1.4;
     white-space: pre;
+}
+
+/* SDK session mode */
+.sdk-session {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    background: var(--background, #0d1117);
+}
+
+.sdk-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sdk-msg {
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 85%;
+    word-wrap: break-word;
+}
+
+.sdk-msg-user {
+    align-self: flex-end;
+    background: var(--accent, #238636);
+    color: #fff;
+    border-bottom-right-radius: 2px;
+}
+
+.sdk-msg-assistant {
+    align-self: flex-start;
+    background: var(--secondary, #161b22);
+    color: var(--foreground, #e6edf3);
+    border-bottom-left-radius: 2px;
+    max-width: 95%;
+}
+
+.sdk-msg-text {
+    white-space: pre-wrap;
+}
+
+.sdk-msg-tool {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted-foreground, #8b949e);
+}
+
+.sdk-msg-tool summary {
+    cursor: pointer;
+    padding: 4px 0;
+    font-family: "FiraMono Nerd Font Mono", monospace;
+}
+
+.sdk-msg-tool pre {
+    margin: 4px 0 0;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    font-size: 11px;
+    overflow-x: auto;
+    max-height: 200px;
+}
+
+.sdk-msg-tool-result {
+    margin-top: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    color: var(--muted-foreground, #8b949e);
+    white-space: pre-wrap;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.sdk-msg-thinking {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted-foreground, #8b949e);
+    font-style: italic;
+}
+
+.sdk-msg-thinking summary {
+    cursor: pointer;
+    padding: 4px 0;
+}
+
+.sdk-msg-thinking div {
+    padding: 4px 8px;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.sdk-msg-result {
+    align-self: center;
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    max-width: 100%;
+}
+
+.sdk-msg-success {
+    background: rgba(35, 134, 54, 0.2);
+    color: #3fb950;
+}
+
+.sdk-msg-error {
+    background: rgba(248, 81, 73, 0.2);
+    color: #f85149;
+}
+
+.sdk-msg-result-text {
+    margin-top: 4px;
+    white-space: pre-wrap;
+    font-size: 13px;
+}
+
+.sdk-msg-system {
+    align-self: center;
+    font-size: 11px;
+    color: var(--muted-foreground, #8b949e);
+    padding: 2px 8px;
+}
+
+.sdk-msg-unknown {
+    align-self: flex-start;
+    font-size: 11px;
+    color: var(--muted-foreground, #8b949e);
+    font-family: monospace;
+}
+
+.sdk-input-bar {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--secondary, #161b22);
+    border-top: 1px solid var(--border, #30363d);
+    align-items: flex-end;
+}
+
+.sdk-input {
+    flex: 1;
+    background: var(--background, #0d1117);
+    color: var(--foreground, #e6edf3);
+    border: 1px solid var(--border, #30363d);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: none;
+    min-height: 36px;
+    max-height: 120px;
+    outline: none;
+}
+
+.sdk-input:focus {
+    border-color: var(--accent, #238636);
+}
+
+.sdk-input:disabled {
+    opacity: 0.5;
+}
+
+.sdk-send-btn,
+.sdk-interrupt-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    height: 36px;
+    white-space: nowrap;
+}
+
+.sdk-send-btn {
+    background: var(--accent, #238636);
+    color: #fff;
+}
+
+.sdk-send-btn:hover {
+    background: #2ea043;
+}
+
+.sdk-send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sdk-interrupt-btn {
+    background: var(--destructive, #da3633);
+    color: #fff;
+}
+
+.sdk-interrupt-btn:hover {
+    background: #f85149;
 }
 
 /* PTT (Push-to-talk) button */

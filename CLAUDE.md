@@ -437,7 +437,7 @@ session:
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type` | `claude-bypass`, `claude-prompted`, etc. | Session permission level |
+| `type` | `claude-bypass`, `claude-prompted`, `sdk-bypass`, etc. | Session permission level |
 | `roles` | List of role names | Roles to load (from bundled or `~/.agentwire/roles/`) |
 | `voice` | Voice name | TTS voice for this project |
 | `parent` | Session name | Parent session for hierarchical notifications |
@@ -635,8 +635,23 @@ The scheduler uses **claudeGLM** (Claude Code + GLM-5) for scheduled tasks. clau
 | Human-directed work | `claude` (Anthropic) | `.agentwire.yml` → `type: claude-bypass` |
 | Human-directed, cost-sensitive | `claudeGLM` (Z.AI) | Manual session creation |
 | Scheduled tasks (scheduler) | `claudeGLM` (Z.AI) | `scheduler.yaml` → `type: claude-bypass` |
+| SDK sessions (structured events) | Agent SDK | `type: sdk-bypass` / `sdk-prompted` / `sdk-restricted` |
 
 By default, `agentwire new --type X` is a session-level override only and never saves to `.agentwire.yml`. Use `--persist` to opt in to saving.
+
+### SDK Sessions (Agent SDK)
+
+SDK sessions use the Claude Agent SDK instead of tmux. They run as pure Python async processes in the portal, providing structured JSON message events instead of terminal scraping. No tmux needed.
+
+**Session types:**
+- `sdk-bypass` → `bypassPermissions` (full automation)
+- `sdk-prompted` → `default` (permission prompts)
+- `sdk-restricted` → `plan` (read-only)
+
+**Constraints:** SDK sessions live in portal memory. Portal crash = lost sessions. They require the portal to be running.
+
+**Create via CLI:** `agentwire new -s name --type sdk-bypass -p /path/to/project`
+**Create via Portal UI:** Select an `sdk-*` type in the session creation dialog
 
 ### Scheduler Task Gates
 

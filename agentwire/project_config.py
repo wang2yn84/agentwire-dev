@@ -21,6 +21,10 @@ class SessionType(str, Enum):
     CLAUDEGLM_BYPASS = "claudeglm-bypass"  # Claude via Z.AI GLM-5 with skip permissions
     CLAUDEGLM_PROMPTED = "claudeglm-prompted"  # Claude via Z.AI GLM-5 with permission hooks
     CLAUDEGLM_RESTRICTED = "claudeglm-restricted"  # Claude via Z.AI GLM-5 restricted
+    # SDK session types (pure Python async, no tmux)
+    SDK_BYPASS = "sdk-bypass"        # Agent SDK with bypassPermissions
+    SDK_PROMPTED = "sdk-prompted"    # Agent SDK with default permissions
+    SDK_RESTRICTED = "sdk-restricted"  # Agent SDK with plan mode (read-only)
     # Universal types (agent-agnostic, map to agent-specific types)
     STANDARD = "standard"  # Full automation -> claude-bypass
     WORKER = "worker"      # Worker pane -> claude-restricted
@@ -57,12 +61,24 @@ def detect_default_agent_type() -> str:
     return "claude"
 
 
+def is_sdk_session_type(session_type: str) -> bool:
+    """Check if a session type uses the Agent SDK backend (no tmux).
+
+    Args:
+        session_type: Session type string
+
+    Returns:
+        True if this is an SDK session type
+    """
+    return session_type in ("sdk-bypass", "sdk-prompted", "sdk-restricted")
+
+
 def normalize_session_type(session_type: str, agent_type: str) -> str:
     """Map universal session types to agent-specific types.
 
     Args:
         session_type: "standard", "worker", "voice", or agent-specific type
-        agent_type: "claude" or "claudeglm"
+        agent_type: "claude", "claudeglm", or "sdk"
 
     Returns:
         Agent-specific session type
@@ -70,11 +86,14 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
     Examples:
         >>> normalize_session_type("standard", "claude")
         "claude-bypass"
+        >>> normalize_session_type("standard", "sdk")
+        "sdk-bypass"
     """
     # If already agent-specific, return as-is
     agent_specific_types = [
         "claude-bypass", "claude-prompted", "claude-restricted",
         "claudeglm-bypass", "claudeglm-prompted", "claudeglm-restricted",
+        "sdk-bypass", "sdk-prompted", "sdk-restricted",
         "bare"
     ]
     if session_type in agent_specific_types:

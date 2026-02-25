@@ -141,6 +141,7 @@ class AgentWireServer:
         self.projects_checker = CachedStatusChecker(ttl_seconds=30)  # Progressive loading for projects
         self.stt = None
         self.agent = None
+        self.sdk_agent = None  # SDK backend for sdk-* session types
         self._http_session: aiohttp.ClientSession | None = None  # For TTS HTTP calls
         self.app = web.Application()
         self._setup_jinja2()
@@ -231,6 +232,10 @@ class AgentWireServer:
         artifacts_dir = self.config.artifacts.dir
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.app.router.add_static("/artifacts", artifacts_dir)
+        # SDK session endpoints
+        self.app.router.add_post("/api/session/{name:.+}/prompt", self.api_sdk_prompt)
+        self.app.router.add_post("/api/session/{name:.+}/interrupt", self.api_sdk_interrupt)
+        self.app.router.add_get("/api/session/{name:.+}/messages", self.api_sdk_messages)
         self.app.router.add_static("/static", Path(__file__).parent / "static")
 
     async def init_backends(self):
@@ -262,7 +267,7 @@ class AgentWireServer:
         }
 
         # Import and initialize backends
-        from .agents import get_agent_backend
+        from .agents import get_agent_backend, get_sdk_backend
         from .stt import get_stt_backend
 
         try:
@@ -273,6 +278,7 @@ class AgentWireServer:
 
             self.stt = NoSTT()
         self.agent = get_agent_backend(config_dict)
+        self.sdk_agent = get_sdk_backend(config_dict)
 
         # Create HTTP session for TTS server calls
         self._http_session = aiohttp.ClientSession()
@@ -280,10 +286,27 @@ class AgentWireServer:
         logger.info(f"TTS URL: {self.config.tts.url}")
         logger.info(f"STT backend: {type(self.stt).__name__}")
 
+    def _get_backend_for_session(self, name: str):
+        """Route to the correct backend for a session.
+
+        SDK sessions live in self.sdk_agent, everything else in self.agent (tmux).
+        """
+        if self.sdk_agent and self.sdk_agent.session_exists(name):
+            return self.sdk_agent
+        return self.agent
+
+    def _is_sdk_session(self, name: str) -> bool:
+        """Check if a session is managed by the SDK backend."""
+        return self.sdk_agent is not None and self.sdk_agent.session_exists(name)
+
     async def close_backends(self):
         """Clean up backend resources."""
         if self._http_session:
             await self._http_session.close()
+        # Kill all SDK sessions on shutdown
+        if self.sdk_agent:
+            for name in list(self.sdk_agent.list_sessions()):
+                self.sdk_agent.kill_session(name)
 
     async def _tts_generate(
         self,
@@ -759,7 +782,7 @@ class AgentWireServer:
                     future.set_result(windows)
 
     async def _get_sessions_data(self) -> list:
-        """Get all sessions list for dashboard (local + remote)."""
+        """Get all sessions list for dashboard (local + remote + SDK)."""
         try:
             # Get local sessions
             success, result = await self.run_agentwire_cmd(["list", "--local", "--sessions"])
@@ -773,6 +796,19 @@ class AgentWireServer:
             if remote_success:
                 remote_sessions = remote_result.get("sessions", [])
                 sessions.extend(remote_sessions)
+
+            # Add SDK sessions
+            if self.sdk_agent:
+                for sdk_name in self.sdk_agent.list_sessions():
+                    sdk_session = self.sdk_agent.sessions.get(sdk_name)
+                    sessions.append({
+                        "name": sdk_name,
+                        "type": sdk_session.session_type if sdk_session else "sdk-bypass",
+                        "path": str(sdk_session.path) if sdk_session else "",
+                        "machine": "local",
+                        "backend": "sdk",
+                        "busy": sdk_session.busy if sdk_session else False,
+                    })
 
             session_names = set()
             for s in sessions:
@@ -1230,6 +1266,11 @@ class AgentWireServer:
         session.clients.add(ws)
         logger.info(f"[{name}] Client connected (total: {len(session.clients)})")
 
+        # Branch: SDK sessions use structured message events, tmux uses polling
+        if self._is_sdk_session(name):
+            await self._handle_sdk_websocket(session, ws, client_id)
+            return ws
+
         # Skip tmux polling for special sessions that aren't real tmux sessions
         is_real_session = name != "dashboard"
 
@@ -1266,6 +1307,72 @@ class AgentWireServer:
                 await self._broadcast(session, {"type": "session_unlocked"})
 
         return ws
+
+    async def _handle_sdk_websocket(self, session: Session, ws, client_id: str):
+        """Handle WebSocket for SDK sessions with structured message events."""
+        name = session.name
+
+        # Send full message history on connect
+        messages = await self.sdk_agent.get_messages(name)
+        busy = self.sdk_agent.sessions.get(name, None)
+        is_busy = busy.busy if busy else False
+        await ws.send_json({
+            "type": "sdk_init",
+            "messages": messages,
+            "busy": is_busy,
+        })
+
+        # Register callback for real-time message pushes
+        async def on_message(msg_dict):
+            if not ws.closed:
+                try:
+                    await ws.send_json({"type": "sdk_message", "message": msg_dict})
+                    # Broadcast activity to dashboard
+                    msg_type = msg_dict.get("type", "")
+                    if msg_type == "result":
+                        await self.broadcast_dashboard("session_activity", {
+                            "session": name, "active": False
+                        })
+                    elif msg_type in ("assistant", "user"):
+                        await self.broadcast_dashboard("session_activity", {
+                            "session": name, "active": True
+                        })
+                except Exception:
+                    pass
+
+        self.sdk_agent.register_message_callback(name, on_message)
+
+        try:
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                        await self._handle_sdk_ws_message(session, ws, data)
+                    except json.JSONDecodeError:
+                        pass
+                elif msg.type == web.WSMsgType.ERROR:
+                    logger.error(f"SDK WebSocket error: {ws.exception()}")
+        finally:
+            self.sdk_agent.unregister_message_callback(name, on_message)
+            session.clients.discard(ws)
+            if session.locked_by == client_id:
+                session.locked_by = None
+                await self._broadcast(session, {"type": "session_unlocked"})
+
+    async def _handle_sdk_ws_message(self, session: Session, ws, data: dict):
+        """Handle incoming WebSocket messages for SDK sessions."""
+        msg_type = data.get("type", "")
+
+        if msg_type == "send_prompt":
+            prompt = data.get("prompt", "").strip()
+            if prompt:
+                success = await self.sdk_agent.send_prompt(session.name, prompt)
+                if not success:
+                    await ws.send_json({"type": "sdk_error", "error": "Failed to send prompt"})
+
+        elif msg_type == "interrupt":
+            await self.sdk_agent.interrupt_session(session.name)
+            await ws.send_json({"type": "sdk_interrupted"})
 
     async def handle_terminal_ws(self, request: web.Request) -> web.WebSocketResponse:
         """WebSocket endpoint for interactive terminal via tmux attach.
@@ -2290,13 +2397,13 @@ class AgentWireServer:
         return web.json_response({"existing": branches})
 
     async def api_create_session(self, request: web.Request) -> web.Response:
-        """Create a new agent session via CLI.
+        """Create a new agent session via CLI or SDK.
 
         Request body:
             name: Base session/project name (required)
             path: Custom project path (optional, ignored if worktree=true)
             voice: TTS voice for this session
-            type: Session type (claude-bypass | claude-prompted | claude-restricted | claudeglm-bypass | claudeglm-prompted | claudeglm-restricted | bare)
+            type: Session type (claude-bypass | sdk-bypass | sdk-prompted | sdk-restricted | ...)
             roles: Comma-separated list of roles (e.g., "agentwire,worker")
             machine: Machine ID ('local' or remote machine ID)
             worktree: Whether to create a worktree session
@@ -2321,6 +2428,25 @@ class AgentWireServer:
             if not name:
                 return web.json_response({"error": "Session name is required"})
 
+            # SDK sessions: create directly via SDK backend (no tmux, no CLI)
+            from .project_config import is_sdk_session_type
+            if is_sdk_session_type(session_type):
+                session_path = custom_path or str(Path(str(self.config.projects.dir)) / name)
+                success = self.sdk_agent.create_session(
+                    name=name,
+                    path=Path(session_path),
+                    options={"session_type": session_type},
+                )
+                if not success:
+                    return web.json_response({"error": "Failed to create SDK session"})
+
+                # Broadcast session created to dashboard clients
+                await self.broadcast_dashboard("session_created", {"session": name})
+                sessions_data = await self._get_sessions_data()
+                await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
+                return web.json_response({"success": True, "name": name})
+
+            # tmux sessions: create via CLI as before
             # Build session name for CLI based on parameters
             if machine and machine != "local":
                 # Remote session
@@ -2410,11 +2536,15 @@ class AgentWireServer:
         """Close/kill a session."""
         name = request.match_info["name"]
         try:
-            # Kill the tmux session via CLI (handles local and remote)
-            success, result = await self.run_agentwire_cmd(["kill", "-s", name])
-            if not success:
-                error_msg = result.get("error", "Failed to close session")
-                return web.json_response({"error": error_msg})
+            # SDK sessions: kill directly via SDK backend
+            if self._is_sdk_session(name):
+                self.sdk_agent.kill_session(name)
+            else:
+                # Kill the tmux session via CLI (handles local and remote)
+                success, result = await self.run_agentwire_cmd(["kill", "-s", name])
+                if not success:
+                    error_msg = result.get("error", "Failed to close session")
+                    return web.json_response({"error": error_msg})
 
             # Clean up session if exists
             if name in self.active_sessions:
@@ -2433,6 +2563,43 @@ class AgentWireServer:
         except Exception as e:
             logger.error(f"Failed to close session: {e}")
             return web.json_response({"error": str(e)})
+
+    async def api_sdk_prompt(self, request: web.Request) -> web.Response:
+        """Send a prompt to an SDK session."""
+        name = request.match_info["name"]
+        if not self._is_sdk_session(name):
+            return web.json_response({"error": "Not an SDK session"}, status=400)
+
+        try:
+            data = await request.json()
+            prompt = data.get("prompt", "").strip()
+            if not prompt:
+                return web.json_response({"error": "Prompt is required"}, status=400)
+
+            success = await self.sdk_agent.send_prompt(name, prompt)
+            if not success:
+                return web.json_response({"error": "Session busy or not found"}, status=409)
+            return web.json_response({"success": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_sdk_interrupt(self, request: web.Request) -> web.Response:
+        """Interrupt an SDK session."""
+        name = request.match_info["name"]
+        if not self._is_sdk_session(name):
+            return web.json_response({"error": "Not an SDK session"}, status=400)
+
+        success = await self.sdk_agent.interrupt_session(name)
+        return web.json_response({"success": success})
+
+    async def api_sdk_messages(self, request: web.Request) -> web.Response:
+        """Get structured messages from an SDK session."""
+        name = request.match_info["name"]
+        if not self._is_sdk_session(name):
+            return web.json_response({"error": "Not an SDK session"}, status=400)
+
+        messages = await self.sdk_agent.get_messages(name)
+        return web.json_response({"messages": messages})
 
     async def api_session_config(self, request: web.Request) -> web.Response:
         """Update session configuration (voice only).

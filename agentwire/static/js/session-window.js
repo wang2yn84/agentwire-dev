@@ -14,7 +14,7 @@ export class SessionWindow {
     /**
      * @param {Object} options
      * @param {string} options.session - Session name
-     * @param {'monitor'|'terminal'} options.mode - Window mode
+     * @param {'monitor'|'terminal'|'sdk'} options.mode - Window mode
      * @param {string|null} options.machine - Remote machine ID (optional)
      * @param {HTMLElement} options.root - Parent element for WinBox
      * @param {Function} options.onClose - Callback when window closes
@@ -31,6 +31,9 @@ export class SessionWindow {
         this.winbox = null;
         this.terminal = null;
         this.outputEl = null;  // For monitor mode
+        this.sdkMessagesEl = null;  // For SDK mode
+        this.sdkInputEl = null;  // For SDK mode
+        this.sdkBusy = false;  // SDK session busy state
         this.fitAddon = null;
         this.ws = null;
         this.resizeObserver = null;
@@ -73,6 +76,10 @@ export class SessionWindow {
         // Set up PTT button for terminal mode
         if (this.mode === 'terminal') {
             this._setupPTT(container);
+        }
+        // Set up SDK input handling
+        if (this.mode === 'sdk') {
+            this._setupSdkInput(container);
         }
         // Set up reconnect button handler
         this._setupReconnectButton(container);
@@ -212,7 +219,29 @@ export class SessionWindow {
         const container = document.createElement('div');
         container.className = 'session-window-content';
 
-        if (this.mode === 'monitor') {
+        if (this.mode === 'sdk') {
+            // SDK mode: chat-like layout with message list + input bar
+            container.innerHTML = `
+                <div class="sdk-session">
+                    <div class="sdk-messages"></div>
+                    <div class="sdk-input-bar">
+                        <textarea class="sdk-input" placeholder="Send a prompt..." rows="1"></textarea>
+                        <button class="sdk-send-btn" title="Send prompt">Send</button>
+                        <button class="sdk-interrupt-btn" title="Interrupt" style="display:none">Stop</button>
+                    </div>
+                </div>
+                <div class="session-disconnect-overlay hidden">
+                    <div class="disconnect-content">
+                        <div class="disconnect-message">Session Disconnected</div>
+                        <button class="btn btn-primary reconnect-btn">Reconnect</button>
+                    </div>
+                </div>
+                <div class="session-status-bar">
+                    <span class="status-indicator connecting"></span>
+                    <span class="status-text">Connecting...</span>
+                </div>
+            `;
+        } else if (this.mode === 'monitor') {
             // Monitor mode: simple pre element for text output
             container.innerHTML = `
                 <pre class="session-output"></pre>
@@ -250,6 +279,13 @@ export class SessionWindow {
     }
 
     _createTerminal(container) {
+        if (this.mode === 'sdk') {
+            // SDK mode: store references to message list and input
+            this.sdkMessagesEl = container.querySelector('.sdk-messages');
+            this.sdkInputEl = container.querySelector('.sdk-input');
+            return;
+        }
+
         if (this.mode === 'monitor') {
             // Monitor mode: just store reference to pre element
             this.outputEl = container.querySelector('.session-output');
@@ -388,7 +424,7 @@ export class SessionWindow {
 
         // Choose endpoint based on mode
         // Terminal mode: /ws/terminal/{session} - bidirectional
-        // Monitor mode: /ws/{session} - output only (JSON messages)
+        // Monitor/SDK mode: /ws/{session} - JSON messages
         const endpoint = this.mode === 'terminal'
             ? `/ws/terminal/${sessionPath}`
             : `/ws/${sessionPath}`;
@@ -456,6 +492,42 @@ export class SessionWindow {
                 }
                 // Mark activity when terminal data received
                 this._markActivity();
+            } else if (this.mode === 'sdk') {
+                // SDK mode: structured message events
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'audio' && msg.data) {
+                        desktop._playAudio(msg.data, this.sessionId);
+                    } else if (msg.type === 'sdk_init') {
+                        // Full history on connect
+                        this.sdkBusy = msg.busy || false;
+                        this._sdkUpdateButtons();
+                        if (msg.messages) {
+                            for (const m of msg.messages) {
+                                this._sdkRenderMessage(m);
+                            }
+                        }
+                    } else if (msg.type === 'sdk_message') {
+                        this._sdkRenderMessage(msg.message);
+                        this._markActivity();
+                        // Update busy state
+                        const mtype = msg.message?.type;
+                        if (mtype === 'user') {
+                            this.sdkBusy = true;
+                            this._sdkUpdateButtons();
+                        } else if (mtype === 'result' || mtype === 'error') {
+                            this.sdkBusy = false;
+                            this._sdkUpdateButtons();
+                        }
+                    } else if (msg.type === 'sdk_error') {
+                        this._sdkRenderMessage({ type: 'error', error: msg.error });
+                    } else if (msg.type === 'sdk_interrupted') {
+                        this.sdkBusy = false;
+                        this._sdkUpdateButtons();
+                    }
+                } catch (e) {
+                    console.error('[SessionWindow] SDK message parse error:', e);
+                }
             } else {
                 // Monitor mode: JSON messages to pre element
                 if (!this.outputEl) return;
@@ -674,6 +746,138 @@ export class SessionWindow {
 
         // Reconnect
         this._connectWebSocket();
+    }
+
+    // --- SDK mode helpers ---
+
+    _setupSdkInput(container) {
+        const sendBtn = container.querySelector('.sdk-send-btn');
+        const interruptBtn = container.querySelector('.sdk-interrupt-btn');
+        const input = container.querySelector('.sdk-input');
+        if (!input || !sendBtn) return;
+
+        const doSend = () => {
+            const prompt = input.value.trim();
+            if (!prompt || this.sdkBusy) return;
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'send_prompt', prompt }));
+                input.value = '';
+                input.style.height = 'auto';
+            }
+        };
+
+        sendBtn.addEventListener('click', doSend);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                doSend();
+            }
+        });
+        // Auto-resize textarea
+        input.addEventListener('input', () => {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+        });
+
+        if (interruptBtn) {
+            interruptBtn.addEventListener('click', () => {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({ type: 'interrupt' }));
+                }
+            });
+        }
+    }
+
+    _sdkUpdateButtons() {
+        if (!this.winbox) return;
+        const container = this.winbox.body;
+        if (!container) return;
+        const sendBtn = container.querySelector('.sdk-send-btn');
+        const interruptBtn = container.querySelector('.sdk-interrupt-btn');
+        const input = container.querySelector('.sdk-input');
+        if (sendBtn) {
+            sendBtn.style.display = this.sdkBusy ? 'none' : '';
+            sendBtn.disabled = this.sdkBusy;
+        }
+        if (interruptBtn) {
+            interruptBtn.style.display = this.sdkBusy ? '' : 'none';
+        }
+        if (input) {
+            input.disabled = this.sdkBusy;
+        }
+    }
+
+    _sdkRenderMessage(msg) {
+        if (!this.sdkMessagesEl) return;
+        const el = document.createElement('div');
+        const type = msg.type || 'unknown';
+
+        if (type === 'user') {
+            el.className = 'sdk-msg sdk-msg-user';
+            el.textContent = msg.text || '';
+        } else if (type === 'assistant') {
+            el.className = 'sdk-msg sdk-msg-assistant';
+            const blocks = msg.content || [];
+            for (const block of blocks) {
+                if (block.type === 'text') {
+                    const p = document.createElement('div');
+                    p.className = 'sdk-msg-text';
+                    p.textContent = block.text || '';
+                    el.appendChild(p);
+                } else if (block.type === 'tool_use') {
+                    const tool = document.createElement('details');
+                    tool.className = 'sdk-msg-tool';
+                    tool.innerHTML = `<summary>Tool: ${this._escapeHtml(block.name || '')}</summary><pre>${this._escapeHtml(JSON.stringify(block.input || {}, null, 2))}</pre>`;
+                    el.appendChild(tool);
+                } else if (block.type === 'tool_result') {
+                    const result = document.createElement('div');
+                    result.className = 'sdk-msg-tool-result';
+                    const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
+                    const truncated = content.length > 500 ? content.substring(0, 500) + '...' : content;
+                    result.textContent = block.is_error ? `Error: ${truncated}` : truncated;
+                    if (block.is_error) result.classList.add('sdk-msg-error');
+                    el.appendChild(result);
+                } else if (block.type === 'thinking') {
+                    const thinking = document.createElement('details');
+                    thinking.className = 'sdk-msg-thinking';
+                    thinking.innerHTML = `<summary>Thinking</summary><div>${this._escapeHtml(block.thinking || '')}</div>`;
+                    el.appendChild(thinking);
+                }
+            }
+        } else if (type === 'result') {
+            el.className = `sdk-msg sdk-msg-result ${msg.is_error ? 'sdk-msg-error' : 'sdk-msg-success'}`;
+            const status = msg.is_error ? 'Error' : 'Complete';
+            const duration = msg.duration_ms ? ` (${(msg.duration_ms / 1000).toFixed(1)}s)` : '';
+            const cost = msg.total_cost_usd ? ` $${msg.total_cost_usd.toFixed(4)}` : '';
+            el.textContent = `${status}${duration}${cost}`;
+            if (msg.result) {
+                const resultText = document.createElement('div');
+                resultText.className = 'sdk-msg-result-text';
+                resultText.textContent = msg.result;
+                el.appendChild(resultText);
+            }
+        } else if (type === 'system') {
+            el.className = 'sdk-msg sdk-msg-system';
+            el.textContent = `[${msg.subtype || 'system'}]`;
+        } else if (type === 'error') {
+            el.className = 'sdk-msg sdk-msg-error';
+            el.textContent = msg.error || 'Unknown error';
+        } else if (type === 'stream_event') {
+            // Skip stream events in UI (too noisy)
+            return;
+        } else {
+            el.className = 'sdk-msg sdk-msg-unknown';
+            el.textContent = JSON.stringify(msg);
+        }
+
+        this.sdkMessagesEl.appendChild(el);
+        this.sdkMessagesEl.scrollTop = this.sdkMessagesEl.scrollHeight;
+    }
+
+    _escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     /**

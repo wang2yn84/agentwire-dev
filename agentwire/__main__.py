@@ -31,6 +31,7 @@ from .project_config import (
     detect_default_agent_type,
     get_parent_from_config,
     get_voice_from_config,
+    is_sdk_session_type,
     load_project_config,
     normalize_session_type,
     save_project_config,
@@ -2697,6 +2698,36 @@ def cmd_send(args) -> int:
             print("Usage: agentwire send -s <session> <prompt>", file=sys.stderr)
         return 1
 
+    # SDK sessions: send via portal API
+    config = load_config()
+    portal_url = config.get("portal", {}).get("url", "https://localhost:8765")
+    try:
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(
+            f"{portal_url}/api/session/{session_full}/prompt",
+            data=json.dumps({"prompt": prompt}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            result = json.loads(resp.read())
+            if result.get("success"):
+                if json_mode:
+                    print(json.dumps({"success": True, "session": session_full, "message": "Prompt sent via SDK"}))
+                else:
+                    print(f"Sent to {session_full} (SDK)")
+                return 0
+            # Not an SDK session (400) - fall through to tmux path
+    except urllib.error.HTTPError as e:
+        if e.code != 400:
+            # Real error (not "not an SDK session")
+            pass
+    except Exception:
+        pass  # Portal not running or other error - fall through to tmux
+
     # Parse session@machine format
     session, machine_id = _parse_session_target(session_full)
     if machine_id:
@@ -2957,18 +2988,68 @@ def cmd_list(args) -> int:
 
 
 def cmd_new(args) -> int:
-    """Create a new Claude Code session in tmux.
+    """Create a new agent session (tmux or SDK).
 
     Supports:
     - "project" -> simple session in ~/projects/project/
     - "project/branch" -> worktree session in ~/projects/project-worktrees/branch/
     - "project@machine" -> remote session
     - "project/branch@machine" -> remote worktree session
+    - SDK sessions (sdk-bypass, sdk-prompted, sdk-restricted) -> portal API, no tmux
     """
     json_mode = getattr(args, 'json', False)
 
     if not _check_config_exists():
         return 1 if not json_mode else _output_result(False, json_mode, "AgentWire not configured. Run 'agentwire init'")
+
+    # SDK sessions: create via portal API (no tmux needed)
+    from .project_config import is_sdk_session_type
+    session_type = getattr(args, 'type', None)
+    if session_type and is_sdk_session_type(session_type):
+        name = args.session
+        path = args.path
+        if not name:
+            return _output_result(False, json_mode, "Usage: agentwire new -s <name> --type sdk-bypass [-p path]")
+
+        config = load_config()
+        projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
+        session_path = str(Path(path).expanduser().resolve()) if path else str(projects_dir / name)
+
+        # Call portal API to create SDK session
+        portal_url = config.get("portal", {}).get("url", "https://localhost:8765")
+        import urllib.request
+        import urllib.error
+        try:
+            req = urllib.request.Request(
+                f"{portal_url}/api/create",
+                data=json.dumps({
+                    "name": name,
+                    "path": session_path,
+                    "type": session_type,
+                }).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            # Disable SSL verification for self-signed certs
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                result = json.loads(resp.read())
+                if result.get("success"):
+                    if json_mode:
+                        print(json.dumps({"session": name, "path": session_path, "type": session_type}))
+                    else:
+                        print(f"Created SDK session '{name}' (type={session_type})")
+                    return 0
+                else:
+                    return _output_result(False, json_mode, result.get("error", "Failed to create SDK session"))
+        except urllib.error.URLError as e:
+            return _output_result(False, json_mode, f"Portal not running. SDK sessions require the portal. Error: {e}")
+        except Exception as e:
+            return _output_result(False, json_mode, f"Failed to create SDK session: {e}")
+
     if not _check_tmux_installed():
         return 1 if not json_mode else _output_result(False, json_mode, "tmux is required but not installed")
 
@@ -3354,6 +3435,34 @@ def cmd_output(args) -> int:
             print("Usage: agentwire output -s <session> [-n lines]", file=sys.stderr)
             print("   or: agentwire output --pane N [-n lines]", file=sys.stderr)
         return 1
+
+    # Try SDK session via portal API first
+    config = load_config()
+    portal_url = config.get("portal", {}).get("url", "https://localhost:8765")
+    try:
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(
+            f"{portal_url}/api/session/{session_full}/messages",
+            method="GET",
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            result_data = json.loads(resp.read())
+            messages = result_data.get("messages", [])
+            if json_mode:
+                print(json.dumps({"success": True, "session": session_full, "messages": messages}))
+            else:
+                # Render as text
+                from .agents.sdk import _render_messages_as_text
+                print(_render_messages_as_text(messages, lines))
+            return 0
+    except urllib.error.HTTPError as e:
+        if e.code != 400:
+            pass  # Real error - fall through to tmux
+    except Exception:
+        pass  # Portal not running - fall through to tmux
 
     # Parse session@machine format
     session, machine_id = _parse_session_target(session_full)
