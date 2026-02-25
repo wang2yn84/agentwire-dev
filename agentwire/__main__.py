@@ -442,6 +442,39 @@ def _get_machine_config(machine_id: str) -> dict | None:
     return None
 
 
+def _portal_api(method: str, path: str, data: dict | None = None, timeout: int = 10) -> dict | None:
+    """Make an API request to the portal using curl (reliable with self-signed certs).
+
+    Returns parsed JSON dict on success, None on failure.
+    """
+    config = load_config()
+    portal_url = config.get("portal", {}).get("url", "https://localhost:8765")
+    url = f"{portal_url}{path}"
+
+    cmd = ["curl", "-sk", "--max-time", str(timeout), "-o", "-", "-w", "\n%{http_code}"]
+    if method == "POST":
+        cmd.extend(["-X", "POST", "-H", "Content-Type: application/json"])
+        if data is not None:
+            cmd.extend(["-d", json.dumps(data)])
+    elif method == "DELETE":
+        cmd.extend(["-X", "DELETE"])
+    cmd.append(url)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 2)
+        if result.returncode != 0:
+            return None
+        lines = result.stdout.rsplit("\n", 1)
+        if len(lines) < 2:
+            return None
+        body, status_code = lines[0], lines[1].strip()
+        if not status_code.startswith("2"):
+            return None
+        return json.loads(body) if body.strip() else {}
+    except Exception:
+        return None
+
+
 def _parse_session_target(name: str) -> tuple[str, str | None]:
     """Parse 'session@machine' into (session, machine_id).
 
@@ -2699,34 +2732,14 @@ def cmd_send(args) -> int:
         return 1
 
     # SDK sessions: send via portal API
-    config = load_config()
-    portal_url = config.get("portal", {}).get("url", "https://localhost:8765")
-    try:
-        import ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(
-            f"{portal_url}/api/session/{session_full}/prompt",
-            data=json.dumps({"prompt": prompt}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-            result = json.loads(resp.read())
-            if result.get("success"):
-                if json_mode:
-                    print(json.dumps({"success": True, "session": session_full, "message": "Prompt sent via SDK"}))
-                else:
-                    print(f"Sent to {session_full} (SDK)")
-                return 0
-            # Not an SDK session (400) - fall through to tmux path
-    except urllib.error.HTTPError as e:
-        if e.code != 400:
-            # Real error (not "not an SDK session")
-            pass
-    except Exception:
-        pass  # Portal not running or other error - fall through to tmux
+    result = _portal_api("POST", f"/api/session/{session_full}/prompt", {"prompt": prompt})
+    if result is not None and result.get("success"):
+        if json_mode:
+            print(json.dumps({"success": True, "session": session_full, "message": "Prompt sent via SDK"}))
+        else:
+            print(f"Sent to {session_full} (SDK)")
+        return 0
+    # Not an SDK session or portal not running - fall through to tmux
 
     # Parse session@machine format
     session, machine_id = _parse_session_target(session_full)
@@ -2907,6 +2920,24 @@ def cmd_list(args) -> int:
                         all_sessions.append(session_info)
 
     # Get remote sessions from all registered machines (skip if local_only)
+    # Get SDK sessions from portal (if running) — uses fast /api/sessions/sdk endpoint
+    sdk_sessions = []
+    if not remote_only:
+        portal_data = _portal_api("GET", "/api/sessions/sdk", timeout=5)
+        if portal_data:
+            for s in portal_data.get("sessions", []):
+                session_info = {
+                    "name": s["name"],
+                    "windows": 0,
+                    "path": s.get("path", ""),
+                    "machine": None,
+                    "type": s.get("type", "sdk-bypass"),
+                    "backend": "sdk",
+                }
+                sdk_sessions.append(session_info)
+                all_sessions.append(session_info)
+                local_sessions.append(session_info)
+
     remote_by_machine = {}
     if not local_only:
         machines = _get_all_machines()
@@ -2979,7 +3010,10 @@ def cmd_list(args) -> int:
             for s in sessions:
                 # Remove @machine suffix for display within machine group
                 display_name = s['name'].rsplit('@', 1)[0] if '@' in s['name'] else s['name']
-                print(f"  {display_name}: {s['windows']} window(s) ({s['path']})")
+                if s.get('backend') == 'sdk':
+                    print(f"  {display_name}: [sdk] ({s['path']})")
+                else:
+                    print(f"  {display_name}: {s['windows']} window(s) ({s['path']})")
         else:
             print("  (no sessions)")
         print()
@@ -3015,40 +3049,20 @@ def cmd_new(args) -> int:
         projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
         session_path = str(Path(path).expanduser().resolve()) if path else str(projects_dir / name)
 
-        # Call portal API to create SDK session
-        portal_url = config.get("portal", {}).get("url", "https://localhost:8765")
-        import urllib.request
-        import urllib.error
-        try:
-            req = urllib.request.Request(
-                f"{portal_url}/api/create",
-                data=json.dumps({
-                    "name": name,
-                    "path": session_path,
-                    "type": session_type,
-                }).encode(),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            # Disable SSL verification for self-signed certs
-            import ssl
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-                result = json.loads(resp.read())
-                if result.get("success"):
-                    if json_mode:
-                        print(json.dumps({"session": name, "path": session_path, "type": session_type}))
-                    else:
-                        print(f"Created SDK session '{name}' (type={session_type})")
-                    return 0
-                else:
-                    return _output_result(False, json_mode, result.get("error", "Failed to create SDK session"))
-        except urllib.error.URLError as e:
-            return _output_result(False, json_mode, f"Portal not running. SDK sessions require the portal. Error: {e}")
-        except Exception as e:
-            return _output_result(False, json_mode, f"Failed to create SDK session: {e}")
+        result = _portal_api("POST", "/api/create", {
+            "name": name,
+            "path": session_path,
+            "type": session_type,
+        })
+        if result is None:
+            return _output_result(False, json_mode, "Portal not running. SDK sessions require the portal.")
+        if result.get("success"):
+            if json_mode:
+                print(json.dumps({"session": name, "path": session_path, "type": session_type}))
+            else:
+                print(f"Created SDK session '{name}' (type={session_type})")
+            return 0
+        return _output_result(False, json_mode, result.get("error", "Failed to create SDK session"))
 
     if not _check_tmux_installed():
         return 1 if not json_mode else _output_result(False, json_mode, "tmux is required but not installed")
@@ -3436,33 +3450,21 @@ def cmd_output(args) -> int:
             print("   or: agentwire output --pane N [-n lines]", file=sys.stderr)
         return 1
 
-    # Try SDK session via portal API first
-    config = load_config()
-    portal_url = config.get("portal", {}).get("url", "https://localhost:8765")
-    try:
-        import ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(
-            f"{portal_url}/api/session/{session_full}/messages",
-            method="GET",
-        )
-        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-            result_data = json.loads(resp.read())
-            messages = result_data.get("messages", [])
-            if json_mode:
-                print(json.dumps({"success": True, "session": session_full, "messages": messages}))
+    # Check if this is an SDK session via portal
+    result_data = _portal_api("GET", f"/api/session/{session_full}/messages")
+    if result_data is not None:
+        messages = result_data.get("messages", [])
+        if json_mode:
+            print(json.dumps({"success": True, "session": session_full, "messages": messages}))
+        else:
+            from .agents.sdk import _render_messages_as_text
+            text = _render_messages_as_text(messages, lines)
+            if text:
+                print(text)
             else:
-                # Render as text
-                from .agents.sdk import _render_messages_as_text
-                print(_render_messages_as_text(messages, lines))
-            return 0
-    except urllib.error.HTTPError as e:
-        if e.code != 400:
-            pass  # Real error - fall through to tmux
-    except Exception:
-        pass  # Portal not running - fall through to tmux
+                print(f"(SDK session '{session_full}' — no messages yet)")
+        return 0
+    # Not an SDK session or portal not running - fall through to tmux
 
     # Parse session@machine format
     session, machine_id = _parse_session_target(session_full)

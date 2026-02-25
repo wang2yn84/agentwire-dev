@@ -165,6 +165,7 @@ class AgentWireServer:
         self.app.router.add_get("/ws/terminal/{name:.+}", self.handle_terminal_ws)
         self.app.router.add_get("/api/sessions", self.api_sessions)
         self.app.router.add_get("/api/sessions/local", self.api_sessions_local)
+        self.app.router.add_get("/api/sessions/sdk", self.api_sessions_sdk)
         self.app.router.add_get("/api/sessions/remote", self.api_sessions_remote)
         self.app.router.add_get("/api/projects", self.api_projects)
         self.app.router.add_post("/api/projects/delete", self.api_projects_delete)
@@ -1954,10 +1955,39 @@ class AgentWireServer:
             for s in sessions:
                 s["activity"] = self._get_global_session_activity(s.get("name", ""))
 
+            # Include SDK sessions
+            if self.sdk_agent:
+                for sdk_name in self.sdk_agent.list_sessions():
+                    sdk_session = self.sdk_agent.sessions.get(sdk_name)
+                    sessions.append({
+                        "name": sdk_name,
+                        "type": sdk_session.session_type if sdk_session else "sdk-bypass",
+                        "path": str(sdk_session.path) if sdk_session else "",
+                        "machine": None,
+                        "backend": "sdk",
+                        "activity": "active" if (sdk_session and sdk_session.busy) else "idle",
+                        "client_count": self.session_client_counts.get(sdk_name, 0),
+                    })
+
             return web.json_response({"sessions": sessions})
         except Exception as e:
             logger.error(f"Failed to list local sessions: {e}")
             return web.json_response({"sessions": []})
+
+    async def api_sessions_sdk(self, request: web.Request) -> web.Response:
+        """Lightweight endpoint returning only SDK sessions (no subprocess, instant)."""
+        sessions = []
+        if self.sdk_agent:
+            for sdk_name in self.sdk_agent.list_sessions():
+                sdk_session = self.sdk_agent.sessions.get(sdk_name)
+                sessions.append({
+                    "name": sdk_name,
+                    "type": sdk_session.session_type if sdk_session else "sdk-bypass",
+                    "path": str(sdk_session.path) if sdk_session else "",
+                    "backend": "sdk",
+                    "busy": sdk_session.busy if sdk_session else False,
+                })
+        return web.json_response({"sessions": sessions})
 
     async def api_sessions_remote(self, request: web.Request) -> web.Response:
         """Endpoint for remote sessions grouped by machine (progressive loading)."""

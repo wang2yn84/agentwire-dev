@@ -822,7 +822,7 @@ export class SessionWindow {
                 if (block.type === 'text') {
                     const p = document.createElement('div');
                     p.className = 'sdk-msg-text';
-                    p.textContent = block.text || '';
+                    p.innerHTML = this._renderMarkdown(block.text || '');
                     el.appendChild(p);
                 } else if (block.type === 'tool_use') {
                     const tool = document.createElement('details');
@@ -872,6 +872,17 @@ export class SessionWindow {
 
         this.sdkMessagesEl.appendChild(el);
         this.sdkMessagesEl.scrollTop = this.sdkMessagesEl.scrollHeight;
+    }
+
+    _renderMarkdown(text) {
+        if (typeof marked !== 'undefined' && marked.parse) {
+            try {
+                return marked.parse(text, { breaks: true });
+            } catch {
+                // Fall through to plain text
+            }
+        }
+        return this._escapeHtml(text).replace(/\n/g, '<br>');
     }
 
     _escapeHtml(text) {
