@@ -798,15 +798,18 @@ class AgentWireServer:
                 remote_sessions = remote_result.get("sessions", [])
                 sessions.extend(remote_sessions)
 
-            # Add SDK sessions
+            # Add SDK sessions (dedup by name against tmux sessions)
             if self.sdk_agent:
+                existing_names = {s.get("name") for s in sessions}
                 for sdk_name in self.sdk_agent.list_sessions():
+                    if sdk_name in existing_names:
+                        continue
                     sdk_session = self.sdk_agent.sessions.get(sdk_name)
                     sessions.append({
                         "name": sdk_name,
                         "type": sdk_session.session_type if sdk_session else "sdk-bypass",
                         "path": str(sdk_session.path) if sdk_session else "",
-                        "machine": "local",
+                        "machine": None,
                         "backend": "sdk",
                         "busy": sdk_session.busy if sdk_session else False,
                     })
@@ -1955,9 +1958,12 @@ class AgentWireServer:
             for s in sessions:
                 s["activity"] = self._get_global_session_activity(s.get("name", ""))
 
-            # Include SDK sessions
+            # Include SDK sessions (dedup by name)
             if self.sdk_agent:
+                existing_names = {s.get("name") for s in sessions}
                 for sdk_name in self.sdk_agent.list_sessions():
+                    if sdk_name in existing_names:
+                        continue
                     sdk_session = self.sdk_agent.sessions.get(sdk_name)
                     sessions.append({
                         "name": sdk_name,

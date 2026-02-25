@@ -1,6 +1,7 @@
 """Agent SDK backend - pure Python async sessions, no tmux."""
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -189,6 +190,9 @@ class SdkAgent(AgentBackend):
         self.sessions: dict[str, SdkSession] = {}
         max_sessions = config.get("sdk", {}).get("max_sessions", 10)
         self.max_sessions = max_sessions
+        self._persist_dir = Path("~/.agentwire/sdk-sessions").expanduser()
+        self._persist_dir.mkdir(parents=True, exist_ok=True)
+        self._restore_sessions()
 
     def supports_structured_events(self) -> bool:
         return True
@@ -215,6 +219,7 @@ class SdkAgent(AgentBackend):
             session_type=session_type,
         )
         self.sessions[name] = session
+        self._persist_session(session)
         logger.info(f"Created SDK session '{name}' at {path} (type={session_type})")
         return True
 
@@ -264,6 +269,7 @@ class SdkAgent(AgentBackend):
             except RuntimeError:
                 pass  # No event loop, client will be GC'd
 
+        self._remove_persisted(name)
         logger.info(f"Killed SDK session '{name}'")
         return True
 
@@ -291,6 +297,7 @@ class SdkAgent(AgentBackend):
             "text": prompt,
         }
         session.messages.append(user_msg)
+        self._persist_session(session)
         await self._fire_callbacks(session, user_msg)
 
         # Ensure client is connected
@@ -368,10 +375,11 @@ class SdkAgent(AgentBackend):
                 session.messages.append(msg_dict)
                 await self._fire_callbacks(session, msg_dict)
 
-                # Capture session_id from ResultMessage
+                # Capture session_id from ResultMessage and persist
                 from claude_agent_sdk import ResultMessage
                 if isinstance(message, ResultMessage):
                     session.session_id = message.session_id
+                    self._persist_session(session)
 
         except asyncio.CancelledError:
             logger.info(f"Response processing cancelled for '{session.name}'")
@@ -402,3 +410,49 @@ class SdkAgent(AgentBackend):
                 await session.client.disconnect()
         except Exception as e:
             logger.debug(f"Error disconnecting SDK client: {e}")
+
+    # --- Persistence ---
+
+    def _persist_session(self, session: SdkSession) -> None:
+        """Save session metadata and message history to disk."""
+        try:
+            data = {
+                "name": session.name,
+                "path": str(session.path),
+                "session_type": session.session_type,
+                "session_id": session.session_id,
+                "created_at": session.created_at,
+                "messages": session.messages,
+            }
+            path = self._persist_dir / f"{session.name}.json"
+            path.write_text(json.dumps(data, default=str))
+        except Exception as e:
+            logger.error(f"Failed to persist SDK session '{session.name}': {e}")
+
+    def _remove_persisted(self, name: str) -> None:
+        """Remove persisted session data."""
+        try:
+            path = self._persist_dir / f"{name}.json"
+            if path.exists():
+                path.unlink()
+        except Exception as e:
+            logger.error(f"Failed to remove persisted SDK session '{name}': {e}")
+
+    def _restore_sessions(self) -> None:
+        """Restore SDK sessions from disk on startup."""
+        try:
+            for path in self._persist_dir.glob("*.json"):
+                data = json.loads(path.read_text())
+                name = data.get("name", path.stem)
+                session = SdkSession(
+                    name=name,
+                    path=Path(data.get("path", ".")),
+                    session_type=data.get("session_type", "sdk-bypass"),
+                    session_id=data.get("session_id"),
+                    created_at=data.get("created_at", time.time()),
+                    messages=data.get("messages", []),
+                )
+                self.sessions[name] = session
+                logger.info(f"Restored SDK session '{name}' ({len(session.messages)} messages)")
+        except Exception as e:
+            logger.error(f"Failed to restore SDK sessions: {e}")
