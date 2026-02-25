@@ -327,17 +327,17 @@ async def handle_start(message: Message):
     bridge.user_chats[user_id] = message.chat.id
 
     # Get sessions list
-    result = await run_cmd(["list"])
-    sessions = result.get("sessions", [])
-    session_names = [s.get("name", s) if isinstance(s, dict) else s for s in sessions]
+    sessions = await _list_sessions()
 
     current = bridge.get_session(user_id)
     text = f"AgentWire connected\\.\n\nActive session: *{_escape_md(current)}*\n\n"
 
-    if session_names:
+    if sessions:
         text += "Sessions:\n"
-        for name in session_names:
-            text += f"• `{_escape_md(name)}`\n"
+        for s in sessions:
+            name = s.get("name", "?")
+            marker = " ◀" if name == current else ""
+            text += f"• `{_escape_md(name)}`{_escape_md(marker)}\n"
     else:
         text += "_No sessions running\\._"
 
@@ -349,23 +349,31 @@ async def handle_start(message: Message):
     await bridge.subscribe_session(current, message.chat.id)
 
 
+SERVICE_SESSIONS = {"agentwire-portal", "agentwire-tts", "agentwire-stt", "agentwire-telegram", "agentwire-scheduler"}
+
+
+async def _list_sessions() -> list[dict]:
+    """List sessions via CLI, excluding service sessions."""
+    result = await run_cmd(["list", "--sessions"])
+    sessions = result.get("sessions", [])
+    return [s for s in sessions if s.get("name") not in SERVICE_SESSIONS]
+
+
 async def handle_list(message: Message):
     """Handle /list command."""
-    result = await run_cmd(["list"])
-    sessions = result.get("sessions", [])
+    bridge: TelegramBridge = router.bridge
+    sessions = await _list_sessions()
 
     if not sessions:
         await message.answer("No sessions running.")
         return
 
+    current = bridge.get_session(message.from_user.id)
     lines = ["*Sessions*\n"]
     for s in sessions:
-        if isinstance(s, dict):
-            name = s.get("name", "?")
-            panes = s.get("panes", 1)
-            lines.append(f"• `{_escape_md(name)}` \\({panes} pane{'s' if panes != 1 else ''}\\)")
-        else:
-            lines.append(f"• `{_escape_md(str(s))}`")
+        name = s.get("name", "?")
+        marker = " ◀" if name == current else ""
+        lines.append(f"• `{_escape_md(name)}`{_escape_md(marker)}")
 
     await message.answer("\n".join(lines), parse_mode=ParseMode.MARKDOWN_V2)
 
