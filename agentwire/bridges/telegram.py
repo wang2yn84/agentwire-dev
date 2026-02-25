@@ -44,13 +44,17 @@ def _run_cmd(args: list[str]) -> dict:
     cmd = ["agentwire", *args, "--json"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
-            return json.loads(result.stdout)
-        return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
+        # Try parsing JSON from stdout first (even on failure — CLI returns JSON errors)
+        if result.stdout.strip():
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError:
+                pass
+        if result.returncode != 0:
+            return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
+        return {}
     except subprocess.TimeoutExpired:
         return {"error": "Command timed out"}
-    except json.JSONDecodeError:
-        return {"error": f"Invalid JSON: {result.stdout[:200]}"}
     except Exception as e:
         return {"error": str(e)}
 
