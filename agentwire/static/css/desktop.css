@@ -1943,7 +1943,7 @@ body {
 
 .sdk-send-btn {
     background: var(--accent, #238636);
-    color: #fff;
+    color: #000;
 }
 
 .sdk-send-btn:hover {
