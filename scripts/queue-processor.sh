@@ -8,6 +8,13 @@ log() { echo "[$(date -Iseconds)] $*" >> "$DEBUG_LOG"; }
 # Clear tmux context so alert command doesn't think we're in a pane
 unset TMUX TMUX_PANE
 
+# Load env vars for Telegram notifications
+for envfile in "$HOME/.agentwire/.env" ".env"; do
+    [[ -f "$envfile" ]] && while IFS='=' read -r key value; do
+        [[ -n "$key" && "$key" != \#* ]] && export "$key=$value"
+    done < "$envfile"
+done
+
 # Find agentwire binary (env var > which > default)
 AGENTWIRE="${AGENTWIRE_BIN:-$(which agentwire 2>/dev/null || echo "$HOME/.local/bin/agentwire")}"
 
@@ -51,6 +58,14 @@ while true; do
             log "Alert sent successfully"
         else
             log "Alert failed with exit code $?"
+        fi
+        # Also send to Telegram if configured
+        if [[ -n "${TELEGRAM_AGENTWIRE_BOT_TOKEN:-}" && -n "${TELEGRAM_USER_ID:-}" ]]; then
+            TELEGRAM_MSG="[${SESSION}] ${MESSAGE}"
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_AGENTWIRE_BOT_TOKEN}/sendMessage" \
+                -H "Content-Type: application/json" \
+                -d "{\"chat_id\":${TELEGRAM_USER_ID},\"text\":$(printf '%s' "$TELEGRAM_MSG" | jq -Rs .)}" \
+                >>"$DEBUG_LOG" 2>&1 && log "Telegram alert sent" || log "Telegram alert failed"
         fi
     else
         log "Empty message, skipping"

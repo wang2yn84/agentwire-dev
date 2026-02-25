@@ -90,10 +90,11 @@ class TelegramBridge:
         self.forward_questions = config.get("forward_questions", True)
         self.forward_alerts = config.get("forward_alerts", True)
 
-        # Per-user active session
+        # Per-user active session (persisted)
+        self._state_file = Path.home() / ".agentwire" / "telegram-state.json"
         self.user_sessions: dict[int, str] = {}
-        # Per-user chat ID for outbound messages
         self.user_chats: dict[int, int] = {}
+        self._load_state()
         # Track portal WS tasks
         self._ws_tasks: dict[str, asyncio.Task] = {}
         self._running = False
@@ -119,6 +120,25 @@ class TelegramBridge:
         self.dp.message.register(handle_text, F.text)
         self.dp.callback_query.register(handle_callback)
 
+    def _load_state(self):
+        """Load persisted user sessions from disk."""
+        try:
+            if self._state_file.exists():
+                data = json.loads(self._state_file.read_text())
+                # Keys are strings in JSON, convert to int
+                self.user_sessions = {int(k): v for k, v in data.get("sessions", {}).items()}
+                self.user_chats = {int(k): v for k, v in data.get("chats", {}).items()}
+        except Exception:
+            pass
+
+    def _save_state(self):
+        """Persist user sessions to disk."""
+        try:
+            data = {"sessions": self.user_sessions, "chats": self.user_chats}
+            self._state_file.write_text(json.dumps(data))
+        except Exception:
+            pass
+
     def get_session(self, user_id: int) -> str:
         """Get active session for user."""
         return self.user_sessions.get(user_id, self.default_session)
@@ -126,6 +146,12 @@ class TelegramBridge:
     def set_session(self, user_id: int, session: str):
         """Set active session for user."""
         self.user_sessions[user_id] = session
+        self._save_state()
+
+    def set_chat(self, user_id: int, chat_id: int):
+        """Set chat ID for user and persist."""
+        self.user_chats[user_id] = chat_id
+        self._save_state()
 
     async def start(self):
         """Start the bot polling loop."""
@@ -326,7 +352,7 @@ async def handle_start(message: Message):
     """Handle /start command."""
     bridge: TelegramBridge = router.bridge
     user_id = message.from_user.id
-    bridge.user_chats[user_id] = message.chat.id
+    bridge.set_chat(user_id, message.chat.id)
 
     # Get sessions list
     sessions = await _list_sessions()
@@ -399,7 +425,7 @@ async def handle_session(message: Message):
     await bridge.unsubscribe_session(old_session, chat_id)
 
     bridge.set_session(user_id, new_session)
-    bridge.user_chats[user_id] = chat_id
+    bridge.set_chat(user_id, chat_id)
 
     await bridge.subscribe_session(new_session, chat_id)
     await message.answer(f"Switched to *{_escape_md(new_session)}*", parse_mode=ParseMode.MARKDOWN_V2)
@@ -440,7 +466,7 @@ async def handle_new(message: Message):
     else:
         bridge: TelegramBridge = router.bridge
         bridge.set_session(message.from_user.id, name)
-        bridge.user_chats[message.from_user.id] = message.chat.id
+        bridge.set_chat(message.from_user.id, message.chat.id)
         await bridge.subscribe_session(name, message.chat.id)
         await message.answer(f"Created and switched to *{_escape_md(name)}*", parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -516,7 +542,7 @@ async def handle_text(message: Message):
     bridge: TelegramBridge = router.bridge
     user_id = message.from_user.id
     session = bridge.get_session(user_id)
-    bridge.user_chats[user_id] = message.chat.id
+    bridge.set_chat(user_id, message.chat.id)
 
     # Ensure WS subscription
     await bridge.subscribe_session(session, message.chat.id)

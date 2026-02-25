@@ -5701,6 +5701,24 @@ def cmd_doctor(args) -> int:
             else:
                 print(f"     -> Service is remote, start it on {service_config.machine}")
 
+    # 8b. Check Telegram bridge
+    print("\nChecking Telegram bridge...")
+    telegram_session = get_telegram_session_name()
+    if tmux_session_exists(telegram_session):
+        print(f"  [ok] Telegram bridge: running in tmux session '{telegram_session}'")
+    else:
+        print(f"  [--] Telegram bridge: not running")
+    try:
+        from .notifications import check_telegram_bot
+        healthy, info = check_telegram_bot()
+        if healthy:
+            print(f"  [ok] Telegram bot: {info}")
+        else:
+            print(f"  [!!] Telegram bot: {info}")
+            issues_found += 1
+    except Exception as e:
+        print(f"  [--] Telegram bot: not configured ({e})")
+
     # 9. Validate remote machines
     print("\nChecking remote machines...")
     remote_machines = {mid: m for mid, m in ctx.machines.items() if mid != ctx.local_machine_id}

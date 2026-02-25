@@ -1,12 +1,16 @@
 """Notification channels for AgentWire.
 
-Supports sending branded notifications via email (Resend) and other channels.
+Supports sending branded notifications via email (Resend) and Telegram.
 """
 
 import base64
+import json
+import os
 import random
 import re
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -25,6 +29,12 @@ class NotificationError(Exception):
 
 class EmailConfigError(NotificationError):
     """Raised when email configuration is missing or invalid."""
+
+    pass
+
+
+class TelegramConfigError(NotificationError):
+    """Raised when Telegram configuration is missing."""
 
     pass
 
@@ -312,4 +322,171 @@ def cmd_email(args) -> int:
         return 1
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+# === Telegram Notifications ===
+
+
+@dataclass
+class TelegramResult:
+    """Result of sending a Telegram message."""
+
+    success: bool
+    message_id: Optional[int] = None
+    error: Optional[str] = None
+
+
+def _get_telegram_config() -> tuple[str, list[int]]:
+    """Get Telegram bot token and user IDs from env/config.
+
+    Returns:
+        (bot_token, user_ids) tuple.
+
+    Raises:
+        TelegramConfigError if not configured.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    load_dotenv(Path.home() / ".agentwire" / ".env")
+
+    bot_token = os.environ.get("TELEGRAM_AGENTWIRE_BOT_TOKEN", "")
+    if not bot_token:
+        try:
+            import yaml
+
+            config_path = Path.home() / ".agentwire" / "config.yaml"
+            if config_path.exists():
+                with open(config_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                    bot_token = cfg.get("telegram", {}).get("bot_token", "")
+        except Exception:
+            pass
+
+    if not bot_token:
+        raise TelegramConfigError(
+            "No Telegram bot token. Set TELEGRAM_AGENTWIRE_BOT_TOKEN or "
+            "telegram.bot_token in ~/.agentwire/config.yaml"
+        )
+
+    user_ids_env = os.environ.get("TELEGRAM_USER_ID", "")
+    if user_ids_env:
+        user_ids = [int(uid.strip()) for uid in user_ids_env.split(",") if uid.strip()]
+    else:
+        try:
+            import yaml
+
+            config_path = Path.home() / ".agentwire" / "config.yaml"
+            if config_path.exists():
+                with open(config_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                    user_ids = cfg.get("telegram", {}).get("allowed_users", [])
+        except Exception:
+            user_ids = []
+
+    if not user_ids:
+        raise TelegramConfigError(
+            "No Telegram user IDs. Set TELEGRAM_USER_ID or "
+            "telegram.allowed_users in ~/.agentwire/config.yaml"
+        )
+
+    return bot_token, user_ids
+
+
+def send_telegram(
+    text: str,
+    chat_id: Optional[int] = None,
+    parse_mode: Optional[str] = None,
+) -> TelegramResult:
+    """Send a text message via Telegram Bot API.
+
+    Uses urllib (no aiogram dependency) so it can be called from anywhere
+    including shell scripts via CLI.
+
+    Args:
+        text: Message text (max 4096 chars).
+        chat_id: Target chat ID. Uses first allowed_user if not specified.
+        parse_mode: Optional "Markdown" or "HTML".
+
+    Returns:
+        TelegramResult with success status.
+    """
+    bot_token, user_ids = _get_telegram_config()
+    target = chat_id or user_ids[0]
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": target,
+        "text": text[:4096],
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                msg_id = result.get("result", {}).get("message_id")
+                return TelegramResult(success=True, message_id=msg_id)
+            return TelegramResult(success=False, error=result.get("description", "Unknown error"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        return TelegramResult(success=False, error=f"HTTP {e.code}: {body[:200]}")
+    except Exception as e:
+        return TelegramResult(success=False, error=str(e))
+
+
+def check_telegram_bot() -> tuple[bool, str]:
+    """Check if Telegram bot is configured and reachable.
+
+    Returns:
+        (healthy, info_string) tuple.
+    """
+    try:
+        bot_token, _ = _get_telegram_config()
+    except TelegramConfigError as e:
+        return False, str(e)
+
+    url = f"https://api.telegram.org/bot{bot_token}/getMe"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                username = result["result"].get("username", "?")
+                return True, f"@{username}"
+            return False, result.get("description", "Unknown error")
+    except Exception as e:
+        return False, str(e)
+
+
+def cmd_telegram_notify(args) -> int:
+    """CLI handler for sending Telegram notifications."""
+    body = getattr(args, "body", None) or ""
+    if not body and not sys.stdin.isatty():
+        body = sys.stdin.read()
+
+    if not body:
+        print("Error: No message body. Use --body or pipe content.", file=sys.stderr)
+        return 1
+
+    chat_id = getattr(args, "chat_id", None)
+
+    try:
+        result = send_telegram(text=body, chat_id=chat_id)
+        if result.success:
+            if not getattr(args, "quiet", False):
+                print(f"Telegram message sent (id: {result.message_id})")
+            return 0
+        else:
+            print(f"Error: {result.error}", file=sys.stderr)
+            return 1
+    except TelegramConfigError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
         return 1
