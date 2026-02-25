@@ -261,8 +261,6 @@ class TelegramBridge:
 
     async def _transcribe_voice(self, voice_bytes: bytes) -> str | None:
         """Transcribe voice note via STT server."""
-        from . import _get_stt_url
-
         stt_url = _get_stt_url(self.config)
         if not stt_url:
             return None
