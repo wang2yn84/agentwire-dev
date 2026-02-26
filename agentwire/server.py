@@ -1974,7 +1974,7 @@ class AgentWireServer:
                     if sdk_name in existing_names:
                         continue
                     sdk_session = self.sdk_agent.sessions.get(sdk_name)
-                    sessions.append({
+                    entry = {
                         "name": sdk_name,
                         "type": sdk_session.session_type if sdk_session else "sdk-bypass",
                         "path": str(sdk_session.path) if sdk_session else "",
@@ -1982,7 +1982,13 @@ class AgentWireServer:
                         "backend": "sdk",
                         "activity": "active" if (sdk_session and sdk_session.busy) else "idle",
                         "client_count": self.session_client_counts.get(sdk_name, 0),
-                    })
+                    }
+                    if sdk_session:
+                        if sdk_session.parent_session:
+                            entry["parent_session"] = sdk_session.parent_session
+                        if sdk_session.children:
+                            entry["children"] = sdk_session.children
+                    sessions.append(entry)
 
             return web.json_response({"sessions": sessions})
         except Exception as e:
@@ -1995,13 +2001,19 @@ class AgentWireServer:
         if self.sdk_agent:
             for sdk_name in self.sdk_agent.list_sessions():
                 sdk_session = self.sdk_agent.sessions.get(sdk_name)
-                sessions.append({
+                entry = {
                     "name": sdk_name,
                     "type": sdk_session.session_type if sdk_session else "sdk-bypass",
                     "path": str(sdk_session.path) if sdk_session else "",
                     "backend": "sdk",
                     "busy": sdk_session.busy if sdk_session else False,
-                })
+                }
+                if sdk_session:
+                    if sdk_session.parent_session:
+                        entry["parent_session"] = sdk_session.parent_session
+                    if sdk_session.children:
+                        entry["children"] = sdk_session.children
+                sessions.append(entry)
         return web.json_response({"sessions": sessions})
 
     async def api_sessions_remote(self, request: web.Request) -> web.Response:

@@ -3067,6 +3067,10 @@ def cmd_list(args) -> int:
                     "type": s.get("type", "sdk-bypass"),
                     "backend": "sdk",
                 }
+                if s.get("parent_session"):
+                    session_info["parent_session"] = s["parent_session"]
+                if s.get("children"):
+                    session_info["children"] = s["children"]
                 sdk_sessions.append(session_info)
                 all_sessions.append(session_info)
                 local_sessions.append(session_info)
