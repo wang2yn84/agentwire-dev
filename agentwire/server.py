@@ -238,6 +238,8 @@ class AgentWireServer:
         self.app.router.add_post("/api/session/{name:.+}/interrupt", self.api_sdk_interrupt)
         self.app.router.add_get("/api/session/{name:.+}/messages", self.api_sdk_messages)
         self.app.router.add_get("/api/session/{name:.+}/status", self.api_sdk_status)
+        self.app.router.add_post("/api/session/{name:.+}/spawn", self.api_sdk_spawn_child)
+        self.app.router.add_get("/api/session/{name:.+}/children", self.api_sdk_list_children)
         self.app.router.add_static("/static", Path(__file__).parent / "static")
 
     async def init_backends(self):
@@ -806,14 +808,20 @@ class AgentWireServer:
                     if sdk_name in existing_names:
                         continue
                     sdk_session = self.sdk_agent.sessions.get(sdk_name)
-                    sessions.append({
+                    entry = {
                         "name": sdk_name,
                         "type": sdk_session.session_type if sdk_session else "sdk-bypass",
                         "path": str(sdk_session.path) if sdk_session else "",
                         "machine": None,
                         "backend": "sdk",
                         "busy": sdk_session.busy if sdk_session else False,
-                    })
+                    }
+                    if sdk_session:
+                        if sdk_session.parent_session:
+                            entry["parent_session"] = sdk_session.parent_session
+                        if sdk_session.children:
+                            entry["children"] = sdk_session.children
+                    sessions.append(entry)
 
             session_names = set()
             for s in sessions:
@@ -2654,6 +2662,72 @@ class AgentWireServer:
             "busy": session.busy if session else False,
             "message_count": len(session.messages) if session else 0,
         })
+
+    async def api_sdk_spawn_child(self, request: web.Request) -> web.Response:
+        """Spawn a child SDK session linked to a parent.
+
+        Request body:
+            name: Child session name (required)
+            path: Working directory (optional, defaults to parent's path)
+            type: SDK session type (optional, defaults to parent's type)
+            role: Role name to load as system_prompt_append (optional)
+            auto_kill_on_complete: Kill child on completion (optional, default true)
+        """
+        parent_name = request.match_info["name"]
+        if not self._is_sdk_session(parent_name):
+            return web.json_response({"error": "Not an SDK session"}, status=400)
+
+        try:
+            data = await request.json()
+            child_name = data.get("name", "").strip()
+            if not child_name:
+                return web.json_response({"error": "Child name is required"}, status=400)
+
+            # Load role instructions if a role is specified
+            system_prompt_append = None
+            role_name = data.get("role")
+            if role_name:
+                from .roles import load_roles, merge_roles
+                roles, missing = load_roles([role_name])
+                if roles:
+                    merged = merge_roles(roles)
+                    system_prompt_append = merged.instructions
+                elif missing:
+                    return web.json_response(
+                        {"error": f"Role '{role_name}' not found"}, status=400
+                    )
+
+            success = await self.sdk_agent.spawn_child(
+                parent_name=parent_name,
+                child_name=child_name,
+                path=data.get("path"),
+                session_type=data.get("type"),
+                system_prompt_append=system_prompt_append,
+                auto_kill_on_complete=data.get("auto_kill_on_complete", True),
+            )
+            if not success:
+                return web.json_response(
+                    {"error": "Failed to spawn child (name exists or max sessions reached)"},
+                    status=409,
+                )
+
+            # Broadcast to dashboard
+            await self.broadcast_dashboard("session_created", {"session": child_name})
+            sessions_data = await self._get_sessions_data()
+            await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
+
+            return web.json_response({"success": True, "child": child_name})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_sdk_list_children(self, request: web.Request) -> web.Response:
+        """List children of an SDK session."""
+        name = request.match_info["name"]
+        if not self._is_sdk_session(name):
+            return web.json_response({"error": "Not an SDK session"}, status=400)
+
+        children = self.sdk_agent.list_children(name)
+        return web.json_response({"children": children})
 
     async def api_session_config(self, request: web.Request) -> web.Response:
         """Update session configuration (voice only).

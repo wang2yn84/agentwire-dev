@@ -158,3 +158,37 @@ class AgentBackend(ABC):
             callback: The callback to remove
         """
         raise NotImplementedError("unregister_message_callback requires an SDK backend")
+
+    # --- Hierarchy methods (SDK backends) ---
+
+    async def spawn_child(
+        self,
+        parent_name: str,
+        child_name: str,
+        path: str | None = None,
+        session_type: str | None = None,
+        system_prompt_append: str | None = None,
+        auto_kill_on_complete: bool = True,
+    ) -> bool:
+        """Spawn a child session linked to a parent.
+
+        Args:
+            parent_name: Parent session name
+            child_name: Name for the new child session
+            path: Working directory (defaults to parent's path)
+            session_type: Session type (defaults to parent's type)
+            system_prompt_append: Extra instructions for the child
+            auto_kill_on_complete: Kill child on completion (default True)
+        """
+        raise NotImplementedError("spawn_child requires an SDK backend")
+
+    def list_children(self, parent_name: str) -> list[dict]:
+        """List children of a parent session.
+
+        Args:
+            parent_name: Parent session name
+
+        Returns:
+            List of child info dicts with name, busy, message_count, path
+        """
+        raise NotImplementedError("list_children requires an SDK backend")

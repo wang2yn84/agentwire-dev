@@ -34,6 +34,10 @@ class SdkSession:
     callbacks: set = field(default_factory=set)
     created_at: float = field(default_factory=time.time)
     _response_task: asyncio.Task | None = None
+    parent_session: str | None = None
+    children: list[str] = field(default_factory=list)
+    auto_kill_on_complete: bool = True
+    system_prompt_append: str | None = None
 
 
 def _message_to_dict(message) -> dict:
@@ -169,6 +173,10 @@ def _render_messages_as_text(messages: list[dict], lines: int = 50) -> str:
         elif msg_type == "result":
             status = "error" if msg.get("is_error") else "complete"
             output_lines.append(f"[{status}] {msg.get('result', '')}")
+        elif msg_type == "child_completed":
+            status = "error" if msg.get("is_error") else "complete"
+            child = msg.get("child_name", "?")
+            output_lines.append(f"[child:{child} {status}] {msg.get('result', '')}")
         elif msg_type == "system":
             output_lines.append(f"[system:{msg.get('subtype', '')}]")
 
@@ -201,6 +209,12 @@ class SdkAgent(AgentBackend):
         """Create an SDK session (synchronous entry point).
 
         The actual ClaudeSDKClient is connected lazily on first send_prompt.
+
+        Options:
+            session_type: SDK permission type (sdk-bypass, sdk-prompted, sdk-restricted)
+            parent_session: Parent session name for hierarchy
+            auto_kill_on_complete: Kill child on ResultMessage (default True)
+            system_prompt_append: Extra instructions appended to system prompt
         """
         options = options or {}
         session_type = options.get("session_type", "sdk-bypass")
@@ -217,6 +231,9 @@ class SdkAgent(AgentBackend):
             name=name,
             path=Path(path),
             session_type=session_type,
+            parent_session=options.get("parent_session"),
+            auto_kill_on_complete=options.get("auto_kill_on_complete", True),
+            system_prompt_append=options.get("system_prompt_append"),
         )
         self.sessions[name] = session
         self._persist_session(session)
@@ -252,10 +269,21 @@ class SdkAgent(AgentBackend):
             return False
 
     def kill_session(self, name: str) -> bool:
-        """Kill an SDK session (synchronous)."""
+        """Kill an SDK session (synchronous). Recursively kills children."""
         session = self.sessions.pop(name, None)
         if not session:
             return False
+
+        # Recursively kill all children first
+        for child_name in list(session.children):
+            self.kill_session(child_name)
+
+        # Remove self from parent's children list
+        if session.parent_session and session.parent_session in self.sessions:
+            parent = self.sessions[session.parent_session]
+            if name in parent.children:
+                parent.children.remove(name)
+                self._persist_session(parent)
 
         # Cancel response task if running
         if session._response_task and not session._response_task.done():
@@ -356,6 +384,14 @@ class SdkAgent(AgentBackend):
                 include_partial_messages=True,
             )
 
+            # Append role instructions to system prompt if provided
+            if session.system_prompt_append:
+                options.system_prompt = {
+                    "type": "preset",
+                    "preset": "claude_code",
+                    "append": session.system_prompt_append,
+                }
+
             client = ClaudeSDKClient(options=options)
             await client.connect()
             session.client = client
@@ -381,6 +417,12 @@ class SdkAgent(AgentBackend):
                     session.session_id = message.session_id
                     self._persist_session(session)
 
+                    # Notify parent if this is a child session
+                    if session.parent_session:
+                        await self._handle_child_completion(
+                            session.parent_session, session.name, msg_dict
+                        )
+
         except asyncio.CancelledError:
             logger.info(f"Response processing cancelled for '{session.name}'")
         except Exception as e:
@@ -403,6 +445,105 @@ class SdkAgent(AgentBackend):
             except Exception as e:
                 logger.error(f"Callback error for '{session.name}': {e}")
 
+    # --- Hierarchy methods ---
+
+    async def spawn_child(
+        self,
+        parent_name: str,
+        child_name: str,
+        path: str | None = None,
+        session_type: str | None = None,
+        system_prompt_append: str | None = None,
+        auto_kill_on_complete: bool = True,
+    ) -> bool:
+        """Spawn a child SDK session linked to a parent.
+
+        Args:
+            parent_name: Name of the parent session
+            child_name: Name for the new child session
+            path: Working directory (defaults to parent's path)
+            session_type: SDK session type (defaults to parent's type)
+            system_prompt_append: Extra instructions for the child
+            auto_kill_on_complete: Kill child when it completes (default True)
+        """
+        parent = self.sessions.get(parent_name)
+        if not parent:
+            logger.error(f"Parent session '{parent_name}' not found")
+            return False
+
+        child_path = Path(path) if path else parent.path
+        child_type = session_type or parent.session_type
+
+        success = self.create_session(
+            name=child_name,
+            path=child_path,
+            options={
+                "session_type": child_type,
+                "parent_session": parent_name,
+                "auto_kill_on_complete": auto_kill_on_complete,
+                "system_prompt_append": system_prompt_append,
+            },
+        )
+        if not success:
+            return False
+
+        # Register parent-child link
+        parent.children.append(child_name)
+        self._persist_session(parent)
+
+        logger.info(f"Spawned child '{child_name}' for parent '{parent_name}'")
+        return True
+
+    async def _handle_child_completion(
+        self, parent_name: str, child_name: str, result_msg: dict
+    ) -> None:
+        """Handle a child session completing (ResultMessage received).
+
+        Sends a child_completed notification to the parent and optionally kills the child.
+        """
+        parent = self.sessions.get(parent_name)
+        if not parent:
+            return
+
+        notification = {
+            "type": "child_completed",
+            "timestamp": time.time(),
+            "child_name": child_name,
+            "status": "error" if result_msg.get("is_error") else "complete",
+            "result": result_msg.get("result", ""),
+            "cost_usd": result_msg.get("total_cost_usd"),
+            "duration_ms": result_msg.get("duration_ms"),
+            "is_error": result_msg.get("is_error", False),
+        }
+        parent.messages.append(notification)
+        self._persist_session(parent)
+        await self._fire_callbacks(parent, notification)
+
+        # Auto-kill child if configured
+        child = self.sessions.get(child_name)
+        if child and child.auto_kill_on_complete:
+            logger.info(f"Auto-killing completed child '{child_name}'")
+            self.kill_session(child_name)
+
+    def list_children(self, parent_name: str) -> list[dict]:
+        """List children of a parent session with their status."""
+        parent = self.sessions.get(parent_name)
+        if not parent:
+            return []
+
+        children = []
+        for child_name in parent.children:
+            child = self.sessions.get(child_name)
+            if child:
+                children.append({
+                    "name": child_name,
+                    "busy": child.busy,
+                    "message_count": len(child.messages),
+                    "path": str(child.path),
+                    "session_type": child.session_type,
+                })
+        return children
+
     async def _disconnect_client(self, session: SdkSession) -> None:
         """Disconnect a client safely."""
         try:
@@ -423,6 +564,10 @@ class SdkAgent(AgentBackend):
                 "session_id": session.session_id,
                 "created_at": session.created_at,
                 "messages": session.messages,
+                "parent_session": session.parent_session,
+                "children": session.children,
+                "auto_kill_on_complete": session.auto_kill_on_complete,
+                "system_prompt_append": session.system_prompt_append,
             }
             path = self._persist_dir / f"{session.name}.json"
             path.write_text(json.dumps(data, default=str))
@@ -451,6 +596,10 @@ class SdkAgent(AgentBackend):
                     session_id=data.get("session_id"),
                     created_at=data.get("created_at", time.time()),
                     messages=data.get("messages", []),
+                    parent_session=data.get("parent_session"),
+                    children=data.get("children", []),
+                    auto_kill_on_complete=data.get("auto_kill_on_complete", True),
+                    system_prompt_append=data.get("system_prompt_append"),
                 )
                 self.sessions[name] = session
                 logger.info(f"Restored SDK session '{name}' ({len(session.messages)} messages)")

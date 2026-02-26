@@ -557,6 +557,31 @@ def _render_messages_as_text(messages: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def _sdk_spawn_child(parent: str, child_name: str, **kwargs) -> bool:
+    """Spawn a child SDK session via portal API.
+
+    kwargs: path, type, role, auto_kill_on_complete
+    """
+    body = {"name": child_name}
+    if kwargs.get("path"):
+        body["path"] = kwargs["path"]
+    if kwargs.get("type"):
+        body["type"] = kwargs["type"]
+    if kwargs.get("role"):
+        body["role"] = kwargs["role"]
+    if "auto_kill_on_complete" in kwargs:
+        body["auto_kill_on_complete"] = kwargs["auto_kill_on_complete"]
+
+    result = _portal_api("POST", f"/api/session/{parent}/spawn", body, timeout=30)
+    return result is not None and result.get("success", False)
+
+
+def _sdk_list_children(parent: str) -> list[dict]:
+    """List children of an SDK session via portal API."""
+    result = _portal_api("GET", f"/api/session/{parent}/children", timeout=10)
+    return result.get("children", []) if result else []
+
+
 SDK_STATUS_PROMPT = """Based on your work above, classify the outcome.
 Reply with EXACTLY one line: STATUS: complete|incomplete|failed — <one sentence summary>"""
 

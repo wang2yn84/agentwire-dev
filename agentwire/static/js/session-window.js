@@ -856,6 +856,22 @@ export class SessionWindow {
                 resultText.textContent = msg.result;
                 el.appendChild(resultText);
             }
+        } else if (type === 'child_completed') {
+            const isError = msg.is_error;
+            el.className = `sdk-msg sdk-child-completion ${isError ? 'sdk-child-error' : 'sdk-child-success'}`;
+            const status = isError ? 'Error' : 'Complete';
+            const duration = msg.duration_ms ? ` (${(msg.duration_ms / 1000).toFixed(1)}s)` : '';
+            const cost = msg.cost_usd ? ` $${msg.cost_usd.toFixed(4)}` : '';
+            const header = document.createElement('div');
+            header.className = 'sdk-child-completion-header';
+            header.textContent = `Child "${this._escapeHtml(msg.child_name || '')}" — ${status}${duration}${cost}`;
+            el.appendChild(header);
+            if (msg.result) {
+                const body = document.createElement('div');
+                body.className = 'sdk-child-completion-body';
+                body.textContent = msg.result;
+                el.appendChild(body);
+            }
         } else if (type === 'system') {
             el.className = 'sdk-msg sdk-msg-system';
             el.textContent = `[${msg.subtype || 'system'}]`;

@@ -1898,6 +1898,8 @@ def _portal_request(method: str, path: str, body: dict | None = None) -> dict:
     try:
         if method == "GET":
             resp = requests.get(url, verify=False, timeout=10)
+        elif method == "DELETE":
+            resp = requests.delete(url, verify=False, timeout=10)
         else:
             resp = requests.post(url, json=body or {}, verify=False, timeout=10)
 
@@ -2144,6 +2146,153 @@ def desktop_layout(windows: list[dict]) -> str:
     if data.get("success"):
         return f"Layout applied to {len(windows)} window(s)."
     return f"Failed to apply layout: {data.get('error', 'Unknown error')}"
+
+
+# =============================================================================
+# SDK Hierarchy Tools
+# =============================================================================
+
+
+@mcp.tool()
+def sdk_child_spawn(
+    child_name: str,
+    parent: str | None = None,
+    path: str | None = None,
+    role: str | None = None,
+    auto_kill: bool = True,
+) -> str:
+    """Spawn a child SDK session linked to a parent.
+
+    Creates a new SDK session that notifies the parent when it completes.
+    The child inherits the parent's session type and working directory
+    unless overridden.
+
+    Args:
+        child_name: Name for the child session (required)
+        parent: Parent session name (defaults to caller's session)
+        path: Working directory for the child (defaults to parent's path)
+        role: Role name to load as instructions for the child (optional)
+        auto_kill: Kill child automatically on completion (default True)
+
+    Returns:
+        Success message or error description.
+    """
+    parent_name = parent or get_caller_session()
+    if not parent_name:
+        return "Could not detect parent session. Provide 'parent' explicitly."
+
+    data = _portal_request("POST", f"/api/session/{parent_name}/spawn", {
+        "name": child_name,
+        "path": path,
+        "role": role,
+        "auto_kill_on_complete": auto_kill,
+    })
+    if data.get("success"):
+        return f"Child '{child_name}' spawned for parent '{parent_name}'."
+    return f"Failed to spawn child: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def sdk_child_send(child: str, prompt: str) -> str:
+    """Send a prompt to a child SDK session.
+
+    Args:
+        child: Child session name
+        prompt: The prompt to send
+
+    Returns:
+        Success message or error description.
+    """
+    data = _portal_request("POST", f"/api/session/{child}/prompt", {
+        "prompt": prompt,
+    })
+    if data.get("success"):
+        return f"Prompt sent to child '{child}'."
+    return f"Failed to send prompt: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def sdk_child_status(child: str) -> str:
+    """Check if a child SDK session is busy or idle.
+
+    Args:
+        child: Child session name
+
+    Returns:
+        Status information (exists, busy, message_count).
+    """
+    data = _portal_request("GET", f"/api/session/{child}/status")
+    if not data.get("exists"):
+        return f"Child '{child}' does not exist."
+    busy = "busy" if data.get("busy") else "idle"
+    count = data.get("message_count", 0)
+    return f"Child '{child}': {busy}, {count} messages."
+
+
+@mcp.tool()
+def sdk_child_result(child: str) -> str:
+    """Get the last result from a child SDK session.
+
+    Scans messages for the most recent ResultMessage.
+
+    Args:
+        child: Child session name
+
+    Returns:
+        Last result text or status message.
+    """
+    data = _portal_request("GET", f"/api/session/{child}/messages")
+    messages = data.get("messages", [])
+    # Find last result message
+    for msg in reversed(messages):
+        if msg.get("type") == "result":
+            status = "error" if msg.get("is_error") else "complete"
+            cost = f" (${msg['total_cost_usd']:.4f})" if msg.get("total_cost_usd") else ""
+            result_text = msg.get("result", "")
+            return f"[{status}]{cost} {result_text}"
+    return f"No result found for child '{child}'."
+
+
+@mcp.tool()
+def sdk_children_list(parent: str | None = None) -> str:
+    """List children of an SDK parent session.
+
+    Args:
+        parent: Parent session name (defaults to caller's session)
+
+    Returns:
+        List of children with their status.
+    """
+    parent_name = parent or get_caller_session()
+    if not parent_name:
+        return "Could not detect parent session. Provide 'parent' explicitly."
+
+    data = _portal_request("GET", f"/api/session/{parent_name}/children")
+    children = data.get("children", [])
+    if not children:
+        return f"No children for session '{parent_name}'."
+
+    lines = [f"Children of '{parent_name}':"]
+    for c in children:
+        busy = "busy" if c.get("busy") else "idle"
+        lines.append(f"  - {c['name']}: {busy}, {c.get('message_count', 0)} messages, path={c.get('path', '')}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def sdk_child_kill(child: str) -> str:
+    """Kill a child SDK session.
+
+    Args:
+        child: Child session name to kill
+
+    Returns:
+        Success message or error description.
+    """
+    data = _portal_request("DELETE", f"/api/sessions/{child}")
+    if data.get("success"):
+        return f"Child '{child}' killed."
+    return f"Failed to kill child: {data.get('error', 'Unknown error')}"
 
 
 # =============================================================================

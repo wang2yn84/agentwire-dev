@@ -289,7 +289,24 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | Minimize all | `desktop_minimize_all()` |
 | Multi-window layout | `desktop_layout(windows=[{id: "...", zone: "left"}])` |
 
-**73 tools total.** When to use CLI vs MCP:
+### SDK Hierarchy (6 tools)
+
+| Action | MCP Tool |
+|--------|----------|
+| Spawn child session | `sdk_child_spawn(child_name="...", parent="...", role="...")` |
+| Send prompt to child | `sdk_child_send(child="...", prompt="...")` |
+| Check child status | `sdk_child_status(child="...")` |
+| Get child's last result | `sdk_child_result(child="...")` |
+| List children | `sdk_children_list(parent="...")` |
+| Kill child | `sdk_child_kill(child="...")` |
+
+SDK hierarchy enables parent-child relationships between SDK sessions. Children notify parents on completion via `child_completed` messages. Parents auto-detect from `$TMUX_PANE` when `parent` is omitted.
+
+Portal API endpoints:
+- `POST /api/session/{name}/spawn` — Spawn child (`{name, path?, type?, role?, auto_kill_on_complete?}`)
+- `GET /api/session/{name}/children` — List children (`{children: [{name, busy, message_count, path}]}`)
+
+**79 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
