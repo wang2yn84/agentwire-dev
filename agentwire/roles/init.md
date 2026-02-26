@@ -174,7 +174,7 @@ When done:
 - Explain *why* things are needed, not just *how*
 - If something fails, help debug it
 - Ask one thing at a time, don't overwhelm
-- Use voice (`agentwire_say`) for simple confirmations and progress
+- Use voice (`say`) for simple confirmations and progress
 - Use text for commands, configs, and technical details
 
 ## Example Flow

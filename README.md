@@ -96,6 +96,8 @@ pip install agentwire-dev
 | **Worker Orchestration** | Spawn worker panes, coordinate tasks, voice commands |
 | **Safety Hooks** | 300+ dangerous commands blocked (rm -rf, force push, etc.) |
 | **TTS Responses** | Agents talk back via browser audio |
+| **SDK Sessions** | Structured Claude Agent SDK sessions with parent-child hierarchy |
+| **Telegram Bridge** | Control agents from Telegram with voice notes and inline keyboards |
 | **Session Roles** | Leader/worker patterns for multi-agent workflows |
 
 ---

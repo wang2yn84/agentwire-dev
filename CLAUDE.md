@@ -90,6 +90,12 @@ agentwire email --to addr --subject "Subject" --body "Body"
 agentwire email --body "msg" # uses default_to from config
 agentwire email --attach file.pdf --body "See attached"
 
+# Telegram bridge
+agentwire telegram start       # start bot in tmux
+agentwire telegram stop        # stop bot
+agentwire telegram serve       # run bot in foreground
+agentwire telegram status      # check bot status
+
 # Machine management
 agentwire machine list
 agentwire machine add <id> --host <host> --user <user>
@@ -293,14 +299,14 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 
 | Action | MCP Tool |
 |--------|----------|
-| Spawn child session | `sdk_child_spawn(child_name="...", parent="...", role="...")` |
+| Spawn child session | `sdk_child_spawn(child_name="...", parent="...", role="...", path="...", auto_kill=True)` |
 | Send prompt to child | `sdk_child_send(child="...", prompt="...")` |
 | Check child status | `sdk_child_status(child="...")` |
 | Get child's last result | `sdk_child_result(child="...")` |
 | List children | `sdk_children_list(parent="...")` |
 | Kill child | `sdk_child_kill(child="...")` |
 
-SDK hierarchy enables parent-child relationships between SDK sessions. Children notify parents on completion via `child_completed` messages. Parents auto-detect from `$TMUX_PANE` when `parent` is omitted.
+SDK hierarchy enables parent-child relationships between SDK sessions. Children notify parents on completion via `child_completed` messages. Parents auto-detect from `$TMUX_PANE` when `parent` is omitted. Killing a parent cascades to all children. Dashboard shows hierarchy tags and groups children under parents.
 
 Portal API endpoints:
 - `POST /api/session/{name}/spawn` — Spawn child (`{name, path?, type?, role?, auto_kill_on_complete?}`)
@@ -384,6 +390,9 @@ services:  # Where services run (for multi-machine setups)
     session_name: "agentwire-tts"
   stt:
     session_name: "agentwire-stt"
+  telegram:
+    machine: null
+    session_name: "agentwire-telegram"
 
 executables:  # Override executable paths (optional, auto-detected by default)
   ffmpeg: "/opt/homebrew/bin/ffmpeg"
@@ -413,6 +422,18 @@ notifications:
     echo_image_url: "https://yourdomain.com/images/echo.png"
     echo_small_url: "https://yourdomain.com/images/echo-small.png"
     logo_image_url: "https://yourdomain.com/images/logo.png"
+
+telegram:
+  bot_token: ""              # from @BotFather (or TELEGRAM_BOT_TOKEN env var)
+  allowed_users: []          # Telegram user IDs (integers)
+  default_session: "main"   # fallback session for messages
+  voice_replies: true        # convert TTS to voice notes
+  forward_output: false      # continuous output forwarding
+  forward_questions: true    # AskUserQuestion as inline keyboards
+  forward_alerts: true       # alerts to Telegram
+  notify_on:                 # extra notification triggers
+    - idle
+    - task_complete
 
 scheduler:
   dispatch_cooldown: 60  # Seconds between task dispatches (default: 60)
