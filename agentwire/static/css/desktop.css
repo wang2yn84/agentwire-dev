@@ -1256,6 +1256,20 @@ body {
 }
 
 /* ============================================
+   Hierarchy Tags - Parent/child indicators
+   ============================================ */
+
+.hierarchy-tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: rgba(168, 85, 247, 0.1);
+    color: #a855f7;
+    white-space: nowrap;
+}
+
+/* ============================================
    Type Tags - Reusable styled tags
    ============================================ */
 

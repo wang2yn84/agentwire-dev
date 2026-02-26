@@ -135,19 +135,40 @@ export function openSessionsWindow() {
  * @returns {Promise<Array>} Processed session objects
  */
 async function processSessions(sessions) {
-    // Sort alphabetically
+    // Sort alphabetically first
     const sortedSessions = sessions.sort((a, b) => a.name.localeCompare(b.name));
 
+    // Re-sort so children appear directly after their parent
+    const sessionNameSet = new Set(sortedSessions.map(s => s.name));
+    const childrenByParent = new Map();
+    for (const s of sortedSessions) {
+        if (s.parent_session && sessionNameSet.has(s.parent_session)) {
+            if (!childrenByParent.has(s.parent_session)) {
+                childrenByParent.set(s.parent_session, []);
+            }
+            childrenByParent.get(s.parent_session).push(s);
+        }
+    }
+    const orderedSessions = [];
+    for (const s of sortedSessions) {
+        if (s.parent_session && sessionNameSet.has(s.parent_session)) continue;
+        orderedSessions.push(s);
+        const children = childrenByParent.get(s.name);
+        if (children) orderedSessions.push(...children);
+    }
+
     // Get session names and assign icons (uses IconManager with persistence)
-    const sessionNames = sortedSessions.map(s => s.name);
+    const sessionNames = orderedSessions.map(s => s.name);
     const iconUrls = await sessionIcons.getIconsForItems(sessionNames);
 
-    return sortedSessions.map((s) => ({
+    return orderedSessions.map((s) => ({
         name: s.name,
         active: s.activity === 'active',
         type: s.type || 'bare',
         path: s.path || null,
         machine: s.machine || null,
+        parentSession: s.parent_session || null,
+        children: s.children || [],
         // Chat button shown for agent session types (not bare)
         hasVoice: s.type && (s.type.startsWith('claude') || s.type.startsWith('claudeglm') || s.type.startsWith('sdk')),
         isSdk: s.type && s.type.startsWith('sdk'),
@@ -221,6 +242,12 @@ function renderSessionItem(session) {
     const metaParts = [];
     if (pathDisplay) {
         metaParts.push(`<span class="session-path">${pathDisplay}</span>`);
+    }
+    if (session.parentSession) {
+        metaParts.push(`<span class="hierarchy-tag">child of ${session.parentSession}</span>`);
+    }
+    if (session.children && session.children.length > 0) {
+        metaParts.push(`<span class="hierarchy-tag">${session.children.length} child${session.children.length > 1 ? 'ren' : ''}</span>`);
     }
     if (session.type) {
         metaParts.push(`<span class="type-tag type-${session.type}">${session.type}</span>`);
