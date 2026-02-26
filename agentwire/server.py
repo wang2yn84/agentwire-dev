@@ -237,6 +237,7 @@ class AgentWireServer:
         self.app.router.add_post("/api/session/{name:.+}/prompt", self.api_sdk_prompt)
         self.app.router.add_post("/api/session/{name:.+}/interrupt", self.api_sdk_interrupt)
         self.app.router.add_get("/api/session/{name:.+}/messages", self.api_sdk_messages)
+        self.app.router.add_get("/api/session/{name:.+}/status", self.api_sdk_status)
         self.app.router.add_static("/static", Path(__file__).parent / "static")
 
     async def init_backends(self):
@@ -2636,6 +2637,23 @@ class AgentWireServer:
 
         messages = await self.sdk_agent.get_messages(name)
         return web.json_response({"messages": messages})
+
+    async def api_sdk_status(self, request: web.Request) -> web.Response:
+        """Lightweight status check for an SDK session.
+
+        Returns 200 with exists=false for non-SDK sessions (not 400),
+        so the CLI can distinguish SDK vs tmux without error handling.
+        """
+        name = request.match_info["name"]
+        if not self._is_sdk_session(name):
+            return web.json_response({"exists": False, "busy": False, "message_count": 0})
+
+        session = self.sdk_agent.sessions.get(name)
+        return web.json_response({
+            "exists": True,
+            "busy": session.busy if session else False,
+            "message_count": len(session.messages) if session else 0,
+        })
 
     async def api_session_config(self, request: web.Request) -> web.Response:
         """Update session configuration (voice only).
