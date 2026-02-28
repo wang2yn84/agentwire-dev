@@ -207,7 +207,7 @@ function setupEventBridge() {
         });
     });
 
-    // Session processing state
+    // Session processing state — mark active and show tool activity
     on('session_processing', ({ session, processing }) => {
         if (!iframeReady) return;
         const id = hashSessionName(session);
@@ -216,6 +216,16 @@ function setupEventBridge() {
             id,
             status: processing ? 'active' : 'waiting',
         });
+        if (processing) {
+            postToOffice({
+                type: 'agentToolStart',
+                id,
+                toolId: `processing-${Date.now()}`,
+                status: 'Processing prompt...',
+            });
+        } else {
+            postToOffice({ type: 'agentToolsClear', id });
+        }
     });
 
     // TTS start — show tool activity
