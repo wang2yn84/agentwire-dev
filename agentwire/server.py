@@ -931,6 +931,11 @@ class AgentWireServer:
                 "title": title,
                 "artifact_id": window_id,
             })
+        elif window_type == "office":
+            window_id = "office"
+            await self.broadcast_dashboard("desktop_open_window", {
+                "window_type": "office",
+            })
         else:
             return web.json_response({"success": False, "error": f"unknown type: {window_type}"}, status=400)
 

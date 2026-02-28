@@ -17,6 +17,7 @@ import { openConfigWindow } from './windows/config-window.js';
 import { openProjectsWindow } from './windows/projects-window.js';
 import { openArtifactsWindow } from './windows/artifacts-window.js';
 import { openSchedulerWindow } from './windows/scheduler-window.js';
+import { openOfficeWindow } from './windows/office-window.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
@@ -124,6 +125,8 @@ async function init() {
             if (openFn) openListWindowWithTaskbar(msg.panel, openFn);
         } else if (msg.window_type === 'artifact') {
             openArtifactWindow(msg.url, msg.title || 'Artifact', msg.artifact_id);
+        } else if (msg.window_type === 'office') {
+            openOfficeWindowWithTaskbar();
         }
     });
 
@@ -150,6 +153,11 @@ async function init() {
                 tileManager._tileWindow(w.id, w.zone);
             }
         }
+    });
+
+    // Office: clicking a character opens that session's terminal
+    desktop.on('office_focus_session', ({ session }) => {
+        openSessionTerminal(session, 'monitor');
     });
 
     // Set initial voice indicator state
@@ -261,6 +269,9 @@ function setupMenuListeners() {
     });
     document.getElementById('schedulerMenu')?.addEventListener('click', () => {
         openListWindowWithTaskbar('scheduler', openSchedulerWindow);
+    });
+    document.getElementById('officeMenu')?.addEventListener('click', () => {
+        openOfficeWindowWithTaskbar();
     });
 
     // Right side settings dropdown items
@@ -490,6 +501,40 @@ function openListWindowWithTaskbar(id, openFn) {
     };
 
     addTaskbarButton(id, lw);
+}
+
+/**
+ * Open the office window with taskbar integration.
+ */
+function openOfficeWindowWithTaskbar() {
+    const id = 'office';
+
+    // Already open — restore or focus
+    const existing = desktop.getWindow(id);
+    if (existing) {
+        if (existing.min) {
+            desktop.minimizeAllExcept(id);
+            existing.restore();
+        } else {
+            existing.focus();
+        }
+        return;
+    }
+
+    desktop.minimizeAllExcept(null);
+
+    const wb = openOfficeWindow(() => {
+        removeTaskbarButton(id);
+    });
+    if (!wb) return;
+
+    addTaskbarButton(id, {
+        title: 'Office',
+        get isMinimized() { return wb.min; },
+        restore() { wb.restore(); },
+        minimize() { wb.minimize(); },
+        focus() { wb.focus(); },
+    });
 }
 
 // Taskbar management
