@@ -175,6 +175,7 @@ class AgentWireServer:
         self.app.router.add_get("/api/check-branches", self.api_check_branches)
         self.app.router.add_post("/api/create", self.api_create_session)
         self.app.router.add_post("/api/session/{name:.+}/config", self.api_session_config)
+        self.app.router.add_get("/api/session/{name:.+}/info", self.api_session_info)
         self.app.router.add_post("/transcribe", self.handle_transcribe)
         self.app.router.add_post("/upload", self.handle_upload)
         self.app.router.add_post("/send/{name:.+}", self.handle_send)
@@ -2789,6 +2790,14 @@ class AgentWireServer:
             return web.json_response({"success": True})
         except Exception as e:
             return web.json_response({"error": str(e)})
+
+    async def api_session_info(self, request: web.Request) -> web.Response:
+        """GET /api/session/{name}/info - Get session info including pane details."""
+        name = request.match_info["name"]
+        success, result = await self.run_agentwire_cmd(["info", "-s", name])
+        if not success:
+            return web.json_response({"error": result.get("message", "Failed to get session info")}, status=404)
+        return web.json_response(result)
 
     async def api_voices(self, request: web.Request) -> web.Response:
         """Get available TTS voices."""

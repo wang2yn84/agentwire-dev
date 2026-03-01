@@ -3730,7 +3730,7 @@ def cmd_info(args) -> int:
 
         # Get pane details
         panes_result = subprocess.run(
-            ["tmux", "list-panes", "-t", session, "-F", "#{pane_index}:#{pane_current_command}:#{pane_active}"],
+            ["tmux", "list-panes", "-t", session, "-F", "#{pane_index}:#{pane_current_command}:#{pane_active}:#{pane_id}"],
             capture_output=True,
             text=True,
         )
@@ -3744,6 +3744,7 @@ def cmd_info(args) -> int:
                             "index": int(pane_parts[0]),
                             "command": pane_parts[1],
                             "active": pane_parts[2] == "1",
+                            "pane_id": pane_parts[3] if len(pane_parts) >= 4 else None,
                         })
 
         info = {

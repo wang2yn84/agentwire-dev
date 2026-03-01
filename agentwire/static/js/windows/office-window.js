@@ -16,6 +16,12 @@ let officeIframe = null;
 let iframeReady = false;
 let eventCleanups = [];
 
+// Track pane IDs per session for sub-agent visualization.
+// session name → Set<pane_id>  (excludes pane 0 / orchestrator)
+const sessionPanes = new Map();
+// Map pane_id → toolId used when spawning the sub-agent (needed for subagentClear)
+const paneToolIds = new Map();
+
 /**
  * Hash a session name to a stable integer ID for character assignment.
  * Same session always gets the same character skin.
@@ -189,13 +195,6 @@ function setupEventBridge() {
         postToOffice({ type: 'agentCreated', id, folderName: session });
     });
 
-    // Session closed
-    on('session_closed', ({ session }) => {
-        if (!iframeReady) return;
-        const id = hashSessionName(session);
-        postToOffice({ type: 'agentClosed', id });
-    });
-
     // Session activity (active/idle)
     on('session_activity', ({ session, active }) => {
         if (!iframeReady) return;
@@ -260,11 +259,98 @@ function setupEventBridge() {
         const id = hashSessionName(session);
         postToOffice({ type: 'agentToolPermissionClear', id });
     });
+
+    // Worker pane created — spawn sub-agent character
+    on('pane_created', ({ session, pane_id }) => {
+        if (!iframeReady || !pane_id) return;
+        // Track this pane
+        if (!sessionPanes.has(session)) {
+            sessionPanes.set(session, new Set());
+        }
+        sessionPanes.get(session).add(pane_id);
+
+        // Send agentToolStart with "Subtask:" prefix to trigger sub-agent spawn
+        const parentId = hashSessionName(session);
+        const toolId = `pane-${pane_id}`;
+        paneToolIds.set(pane_id, toolId);
+        postToOffice({
+            type: 'agentToolStart',
+            id: parentId,
+            toolId,
+            status: `Subtask: Worker ${pane_id}`,
+        });
+    });
+
+    // Worker pane died — diff tracked panes against live state to find which died
+    on('pane_died', ({ session }) => {
+        if (!iframeReady) return;
+        const tracked = sessionPanes.get(session);
+        if (!tracked || tracked.size === 0) return;
+
+        // Fetch current pane list to find which pane was removed
+        fetch(`/api/session/${encodeURIComponent(session)}/info`)
+            .then(r => r.json())
+            .then(info => {
+                const livePaneIds = new Set(
+                    (info.panes || []).map(p => p.pane_id).filter(Boolean)
+                );
+                const parentId = hashSessionName(session);
+
+                for (const paneId of tracked) {
+                    if (!livePaneIds.has(paneId)) {
+                        // This pane was removed — clear its sub-agent
+                        const toolId = paneToolIds.get(paneId) || `pane-${paneId}`;
+                        postToOffice({
+                            type: 'subagentClear',
+                            id: parentId,
+                            parentToolId: toolId,
+                        });
+                        tracked.delete(paneId);
+                        paneToolIds.delete(paneId);
+                    }
+                }
+                if (tracked.size === 0) {
+                    sessionPanes.delete(session);
+                }
+            })
+            .catch(() => {
+                // Session might be gone — clear all sub-agents for it
+                const parentId = hashSessionName(session);
+                for (const paneId of tracked) {
+                    const toolId = paneToolIds.get(paneId) || `pane-${paneId}`;
+                    postToOffice({
+                        type: 'subagentClear',
+                        id: parentId,
+                        parentToolId: toolId,
+                    });
+                    paneToolIds.delete(paneId);
+                }
+                sessionPanes.delete(session);
+            });
+    });
+
+    // Session closed — clean up all sub-agent tracking
+    on('session_closed', ({ session }) => {
+        if (!iframeReady) return;
+        const id = hashSessionName(session);
+        postToOffice({ type: 'agentClosed', id });
+
+        // Clean up pane tracking
+        const tracked = sessionPanes.get(session);
+        if (tracked) {
+            for (const paneId of tracked) {
+                paneToolIds.delete(paneId);
+            }
+            sessionPanes.delete(session);
+        }
+    });
 }
 
 function cleanupEventBridge() {
     for (const cleanup of eventCleanups) cleanup();
     eventCleanups = [];
+    sessionPanes.clear();
+    paneToolIds.clear();
 }
 
 /**
