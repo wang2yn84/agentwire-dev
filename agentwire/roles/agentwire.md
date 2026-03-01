@@ -38,6 +38,19 @@ Workers are for: large refactors touching many files, parallel independent subta
 
 Workers auto-exit when idle. They write summary files before exiting, and you receive the summary via an alert notification.
 
+### Pane Hygiene (IMPORTANT)
+
+**Always check before spawning.** Call `panes_list()` before `pane_spawn()` to verify no stale workers exist. If there are leftover panes from previous tasks, kill them first.
+
+**Don't rely on auto-kill.** Workers should auto-exit when idle, but this doesn't always happen quickly. After you receive a worker's summary alert (or confirm it's done via `pane_output`), explicitly `pane_kill` it.
+
+**One worker per task.** Don't spawn a new worker while an old one is still alive on the same session. The pattern is:
+1. `panes_list()` — check for strays
+2. `pane_spawn()` — create worker
+3. `pane_send()` — assign task
+4. Wait for summary alert or check `pane_output()`
+5. `pane_kill()` — clean up explicitly
+
 ### Spawn types
 
 | `pane_type` | Agent |

@@ -156,7 +156,8 @@ export function ToolOverlay({
                 padding: isSelected ? '3px 6px 3px 8px' : '3px 8px',
                 boxShadow: 'var(--pixel-shadow)',
                 whiteSpace: subLabel ? 'normal' : 'nowrap',
-                maxWidth: subLabel ? 300 : 220,
+                maxWidth: subLabel ? 400 : 220,
+                width: subLabel ? 400 : undefined,
               }}
             >
               {dotColor && (
@@ -171,14 +172,14 @@ export function ToolOverlay({
                   }}
                 />
               )}
-              <div style={{ overflow: 'hidden' }}>
+              <div style={{ overflow: subLabel ? 'visible' : 'hidden' }}>
                 <span
                   style={{
                     fontSize: isSub ? '20px' : '22px',
                     fontStyle: isSub ? 'italic' : undefined,
                     color: 'var(--pixel-text)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
+                    overflow: subLabel ? 'visible' : 'hidden',
+                    textOverflow: subLabel ? undefined : 'ellipsis',
                     display: 'block',
                   }}
                 >
