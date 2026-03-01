@@ -281,6 +281,20 @@ function setupEventBridge() {
         });
     });
 
+    // Worker pane received a prompt — update sub-agent label
+    on('pane_prompt', ({ session, pane_id, prompt }) => {
+        if (!iframeReady || !pane_id || !prompt) return;
+        const toolId = paneToolIds.get(pane_id);
+        if (!toolId) return;
+        const parentId = hashSessionName(session);
+        postToOffice({
+            type: 'subagentLabel',
+            id: parentId,
+            parentToolId: toolId,
+            label: prompt,
+        });
+    });
+
     // Worker pane died — diff tracked panes against live state to find which died
     on('pane_died', ({ session }) => {
         if (!iframeReady) return;

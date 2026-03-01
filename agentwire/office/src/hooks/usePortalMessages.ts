@@ -328,6 +328,15 @@ export function usePortalMessages(
             [id]: { ...agentSubs, [parentToolId]: list.map((t) => (t.toolId === toolId ? { ...t, done: true } : t)) },
           }
         })
+      } else if (msg.type === 'subagentLabel') {
+        const id = msg.id as number
+        const parentToolId = msg.parentToolId as string
+        const label = msg.label as string
+        setSubagentCharacters((prev) =>
+          prev.map((s) =>
+            s.parentAgentId === id && s.parentToolId === parentToolId ? { ...s, label } : s,
+          ),
+        )
       } else if (msg.type === 'subagentClear') {
         const id = msg.id as number
         const parentToolId = msg.parentToolId as string

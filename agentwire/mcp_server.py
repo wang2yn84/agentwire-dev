@@ -468,6 +468,18 @@ def pane_send(pane: int, message: str, session: str | None = None) -> str:
 
     data = run_agentwire_cmd(args)
     if data.get("success"):
+        # Notify portal of the prompt sent to this pane (for office visualization)
+        sess = session or get_caller_session()
+        if sess and pane > 0:
+            # Resolve tmux pane_id from pane index
+            info = run_agentwire_cmd(["info", "-s", sess])
+            tmux_pane_id = None
+            for p in info.get("panes", []):
+                if p.get("index") == pane and p.get("pane_id"):
+                    tmux_pane_id = p["pane_id"]
+                    break
+            if tmux_pane_id:
+                run_agentwire_cmd(["notify", "pane_prompt", "-s", sess, "--pane-id", tmux_pane_id, "--prompt", message])
         return f"Message sent to pane {pane}."
     return f"Failed to send to pane: {data.get('error', 'Unknown error')}"
 

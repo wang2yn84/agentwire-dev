@@ -4415,6 +4415,11 @@ projects:
                 sessions_data = await self._get_sessions_data()
                 await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
 
+            elif event == "pane_prompt":
+                pane_id = data.get("pane_id")
+                prompt = data.get("prompt")
+                await self.broadcast_dashboard("pane_prompt", {"session": session, "pane_id": pane_id, "prompt": prompt})
+
             elif event == "client_attached":
                 # Increment attached client count for this session
                 self.session_client_counts[session] = self.session_client_counts.get(session, 0) + 1

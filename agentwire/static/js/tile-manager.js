@@ -297,16 +297,20 @@ class TileManager {
     }
 
     /**
-     * Show the tile overlay.
+     * Show the tile overlay and disable iframe pointer events
+     * so they don't swallow mouseup during drag.
      */
     _showOverlay() {
         if (this.overlay) {
             this.overlay.classList.remove('hidden');
         }
+        for (const iframe of document.querySelectorAll('iframe')) {
+            iframe.style.pointerEvents = 'none';
+        }
     }
 
     /**
-     * Hide the tile overlay and reset preview.
+     * Hide the tile overlay, reset preview, and restore iframe pointer events.
      */
     _hideOverlay() {
         if (this.overlay) {
@@ -314,6 +318,9 @@ class TileManager {
         }
         if (this.preview) {
             this.preview.style.display = 'none';
+        }
+        for (const iframe of document.querySelectorAll('iframe')) {
+            iframe.style.pointerEvents = '';
         }
     }
 

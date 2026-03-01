@@ -97,15 +97,19 @@ export function ToolOverlay({
         const screenX = (deviceOffsetX + ch.x * zoom) / dpr
         const screenY = (deviceOffsetY + (ch.y + sittingOffset - TOOL_OVERLAY_VERTICAL_OFFSET) * zoom) / dpr
 
-        // Get activity text
+        // Get activity text and sub-agent prompt label
         const subHasPermission = isSub && ch.bubbleType === 'permission'
         let activityText: string
+        let subLabel: string | null = null
         if (isSub) {
           if (subHasPermission) {
             activityText = 'Needs approval'
           } else {
-            const sub = subagentCharacters.find((s) => s.id === id)
-            activityText = sub ? sub.label : 'Subtask'
+            activityText = ch.isActive ? 'Working...' : 'Idle'
+          }
+          const sub = subagentCharacters.find((s) => s.id === id)
+          if (sub?.label && !sub.label.startsWith('Worker')) {
+            subLabel = sub.label
           }
         } else {
           activityText = getActivityText(id, agentTools, ch.isActive)
@@ -151,8 +155,8 @@ export function ToolOverlay({
                 borderRadius: 0,
                 padding: isSelected ? '3px 6px 3px 8px' : '3px 8px',
                 boxShadow: 'var(--pixel-shadow)',
-                whiteSpace: 'nowrap',
-                maxWidth: 220,
+                whiteSpace: subLabel ? 'normal' : 'nowrap',
+                maxWidth: subLabel ? 300 : 220,
               }}
             >
               {dotColor && (
@@ -180,17 +184,16 @@ export function ToolOverlay({
                 >
                   {activityText}
                 </span>
-                {ch.folderName && (
+                {subLabel && (
                   <span
                     style={{
                       fontSize: '16px',
                       color: 'var(--pixel-text-dim)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
                       display: 'block',
+                      lineHeight: 1.2,
                     }}
                   >
-                    {ch.folderName}
+                    {subLabel}
                   </span>
                 )}
               </div>

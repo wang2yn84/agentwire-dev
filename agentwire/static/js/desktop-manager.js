@@ -217,7 +217,11 @@ class DesktopManager {
                 break;
 
             case 'pane_created':
-                this.emit('pane_created', { session: msg.session, pane_id: msg.pane_id });
+                this.emit('pane_created', { session: msg.session, pane_id: msg.pane_id, pane: msg.pane });
+                break;
+
+            case 'pane_prompt':
+                this.emit('pane_prompt', { session: msg.session, pane_id: msg.pane_id, prompt: msg.prompt });
                 break;
 
             case 'client_attached':

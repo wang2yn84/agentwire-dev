@@ -2756,6 +2756,7 @@ def cmd_notify(args) -> int:
     session = getattr(args, 'session', None)
     pane = getattr(args, 'pane', None)
     pane_id = getattr(args, 'pane_id', None)
+    prompt = getattr(args, 'prompt', None)
     old_name = getattr(args, 'old_name', None)
     new_name = getattr(args, 'new_name', None)
     json_mode = getattr(args, 'json', False)
@@ -2775,6 +2776,8 @@ def cmd_notify(args) -> int:
         payload["pane"] = pane
     if pane_id is not None:
         payload["pane_id"] = pane_id
+    if prompt is not None:
+        payload["prompt"] = prompt
     if old_name is not None:
         payload["old_name"] = old_name
     if new_name is not None:
@@ -8889,6 +8892,7 @@ def main() -> int:
     notify_parser.add_argument("-s", "--session", help="Session name")
     notify_parser.add_argument("--pane", type=int, help="Pane index (for pane events)")
     notify_parser.add_argument("--pane-id", help="Pane ID from tmux (for pane events via hooks)")
+    notify_parser.add_argument("--prompt", help="Prompt text sent to pane (for pane_prompt events)")
     notify_parser.add_argument("--old-name", help="Old session name (for session_renamed)")
     notify_parser.add_argument("--new-name", help="New session name (for session_renamed)")
     notify_parser.add_argument("--json", action="store_true", help="Output as JSON")
