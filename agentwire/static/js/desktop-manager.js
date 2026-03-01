@@ -256,6 +256,14 @@ class DesktopManager {
                 this.emit('session_processing', { session: msg.session, processing: msg.processing });
                 break;
 
+            case 'session_permission':
+                this.emit('session_permission', { session: msg.session });
+                break;
+
+            case 'session_permission_clear':
+                this.emit('session_permission_clear', { session: msg.session });
+                break;
+
             case 'tts_start':
                 this.emit('tts_start', { session: msg.session, text: msg.text });
                 break;

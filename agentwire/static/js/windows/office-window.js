@@ -246,6 +246,20 @@ function setupEventBridge() {
         const id = hashSessionName(session);
         postToOffice({ type: 'agentToolsClear', id });
     });
+
+    // Permission request — show permission bubble
+    on('session_permission', ({ session }) => {
+        if (!iframeReady) return;
+        const id = hashSessionName(session);
+        postToOffice({ type: 'agentToolPermission', id });
+    });
+
+    // Permission resolved — clear permission bubble
+    on('session_permission_clear', ({ session }) => {
+        if (!iframeReady) return;
+        const id = hashSessionName(session);
+        postToOffice({ type: 'agentToolPermissionClear', id });
+    });
 }
 
 function cleanupEventBridge() {

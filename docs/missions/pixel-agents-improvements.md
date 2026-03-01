@@ -6,7 +6,7 @@ Proposals for enhancing the pixel agents office visualization in the portal.
 
 ## Proposal #1: Always-Visible Session Name Labels
 
-**Status:** In Progress
+**Status:** Done
 
 Show session names below each character at all times (not just on hover). The `AgentLabels` component already exists but isn't rendered in `App.tsx`.
 
@@ -18,7 +18,7 @@ Show session names below each character at all times (not just on hover). The `A
 
 ## Proposal #2: Processing Prompt Tool Activity
 
-**Status:** In Progress
+**Status:** Done
 
 Show "Processing prompt..." as tool activity when a message is sent to a session. The portal emits `session_processing` events which we now translate to both `agentStatus` (typing animation) and `agentToolStart` (hover shows "Processing prompt..."). TTS events already show "Speaking...".
 
@@ -30,12 +30,15 @@ Show "Processing prompt..." as tool activity when a message is sent to a session
 
 ## Proposal #3: Permission Bubbles
 
-Show a permission bubble (speech bubble with "?" icon) above characters when their session needs tool approval. The engine already has `showPermissionBubble()` and `clearPermissionBubble()`.
+**Status:** Done
+
+Show a permission bubble above characters when their session needs tool approval. The engine already has `showPermissionBubble()` and `clearPermissionBubble()`.
 
 **Changes:**
-- Listen for `session_permission` events in office-window.js
-- Send `agentToolPermission` and `agentToolPermissionClear` messages
-- Characters will show the built-in permission bubble animation
+- Server broadcasts `session_permission` and `session_permission_clear` to dashboard
+- Desktop manager forwards these events
+- Office bridge translates to `agentToolPermission` / `agentToolPermissionClear` messages
+- Characters show built-in permission bubble animation, ToolOverlay shows "Needs approval"
 
 ## Proposal #4: Sub-Agent Visualization
 

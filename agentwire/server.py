@@ -3676,6 +3676,11 @@ projects:
                 "message": message,
             })
 
+            # Notify dashboard (for office permission bubbles)
+            await self.broadcast_dashboard("session_permission", {
+                "session": name,
+            })
+
             # Generate TTS announcement (Task 3.6)
             await self._announce_permission_request(name, tool_name, tool_input)
 
@@ -3686,6 +3691,7 @@ projects:
                 logger.warning(f"[{name}] Permission request timed out")
                 session.pending_permission = None
                 await self._broadcast(session, {"type": "permission_timeout"})
+                await self.broadcast_dashboard("session_permission_clear", {"session": name})
                 return web.json_response({
                     "decision": "deny",
                     "message": "Permission request timed out (5 minutes)"
@@ -3766,6 +3772,11 @@ projects:
             await self._broadcast(session, {
                 "type": "permission_resolved",
                 "decision": decision,
+            })
+
+            # Notify dashboard (clear office permission bubble)
+            await self.broadcast_dashboard("session_permission_clear", {
+                "session": name,
             })
 
             return web.json_response({"success": True})
