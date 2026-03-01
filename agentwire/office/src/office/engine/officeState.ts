@@ -544,6 +544,10 @@ export class OfficeState {
         ch.seatTimer = -1
         ch.path = []
         ch.moveProgress = 0
+      } else {
+        // Reset sleep state when agent becomes active
+        ch.sleepTimer = 0
+        ch.sleepPending = false
       }
       this.rebuildFurnitureInstances()
     }
@@ -705,7 +709,7 @@ export class OfficeState {
       if (ch.matrixEffect === 'despawn') continue
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
-      const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0
+      const sittingOffset = (ch.state === CharacterState.TYPE || ch.state === CharacterState.SLEEP) ? CHARACTER_SITTING_OFFSET_PX : 0
       const anchorY = ch.y + sittingOffset
       const left = ch.x - CHARACTER_HIT_HALF_WIDTH
       const right = ch.x + CHARACTER_HIT_HALF_WIDTH

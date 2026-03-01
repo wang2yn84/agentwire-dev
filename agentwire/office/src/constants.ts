@@ -96,6 +96,10 @@ export const NOTIFICATION_NOTE_2_START_SEC = 0.1
 export const NOTIFICATION_NOTE_DURATION_SEC = 0.18
 export const NOTIFICATION_VOLUME = 0.14
 
+// ── Sleep ────────────────────────────────────────────────────
+/** Total inactive wall-clock seconds before a character falls asleep */
+export const SLEEP_THRESHOLD_SEC = 30 * 60
+
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1
 export const WAITING_BUBBLE_DURATION_SEC = 2.0

@@ -142,7 +142,7 @@ export function renderScene(
     const spriteData = getCharacterSprite(ch, sprites)
     const cached = getCachedSprite(spriteData, zoom)
     // Sitting offset: shift character down when seated so they visually sit in the chair
-    const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0
+    const sittingOffset = (ch.state === CharacterState.TYPE || ch.state === CharacterState.SLEEP) ? CHARACTER_SITTING_OFFSET_PX : 0
     // Anchor at bottom-center of character — round to integer device pixels
     const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2)
     const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height)
@@ -488,7 +488,7 @@ export function renderBubbles(
     // Position: centered above the character's head
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24
     // Place bubble above head with a small gap; follow sitting offset
-    const sittingOff = ch.state === CharacterState.TYPE ? BUBBLE_SITTING_OFFSET_PX : 0
+    const sittingOff = (ch.state === CharacterState.TYPE || ch.state === CharacterState.SLEEP) ? BUBBLE_SITTING_OFFSET_PX : 0
     const bubbleX = Math.round(offsetX + ch.x * zoom - cached.width / 2)
     const bubbleY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom - cached.height - 1 * zoom)
 
@@ -497,6 +497,51 @@ export function renderBubbles(
     ctx.drawImage(cached, bubbleX, bubbleY)
     ctx.restore()
   }
+}
+
+/** Render floating Zzz above sleeping characters */
+export function renderSleepZzz(
+  ctx: CanvasRenderingContext2D,
+  characters: Character[],
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+): void {
+  const t = performance.now() / 1000
+  const sleeping = characters.filter((ch) => ch.state === CharacterState.SLEEP)
+  if (sleeping.length === 0) return
+
+  ctx.save()
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+
+  for (const ch of sleeping) {
+    const sittingOff = BUBBLE_SITTING_OFFSET_PX
+    const baseX = Math.round(offsetX + ch.x * zoom)
+    const baseY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom)
+
+    // Three z's at staggered sizes and phases, drifting upward and to the right
+    for (let i = 0; i < 3; i++) {
+      const phase = ((t * 0.35 + i / 3) % 1)
+      const alpha = Math.sin(phase * Math.PI) * 0.85
+      if (alpha <= 0) continue
+      const rise = phase * 12 * zoom
+      const drift = i * 3.5 * zoom
+      const size = Math.round((4 + i * 2) * zoom)
+
+      ctx.save()
+      ctx.font = `${size}px "FSPixelSansUnicode", monospace`
+      ctx.globalAlpha = alpha
+      ctx.fillStyle = '#99bbcc'
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)'
+      ctx.lineWidth = Math.max(1, zoom * 0.75)
+      ctx.strokeText('z', baseX + drift, baseY - rise)
+      ctx.fillText('z', baseX + drift, baseY - rise)
+      ctx.restore()
+    }
+  }
+
+  ctx.restore()
 }
 
 export interface ButtonBounds {
@@ -595,6 +640,9 @@ export function renderFrame(
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom)
+
+  // Sleep Zzz overlays
+  renderSleepZzz(ctx, characters, offsetX, offsetY, zoom)
 
   // Editor overlays
   if (editor) {

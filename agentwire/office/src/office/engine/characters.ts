@@ -12,6 +12,7 @@ import {
   WANDER_MOVES_BEFORE_REST_MAX,
   SEAT_REST_MIN_SEC,
   SEAT_REST_MAX_SEC,
+  SLEEP_THRESHOLD_SEC,
 } from '../../constants.js'
 
 /** Tools that show reading animation instead of typing */
@@ -73,6 +74,8 @@ export function createCharacter(
     bubbleType: null,
     bubbleTimer: 0,
     seatTimer: 0,
+    sleepTimer: 0,
+    sleepPending: false,
     isSubagent: false,
     parentAgentId: null,
     matrixEffect: null,
@@ -90,6 +93,14 @@ export function updateCharacter(
   blockedTiles: Set<string>,
 ): void {
   ch.frameTimer += dt
+
+  // Accumulate inactive time across all states (not while already sleeping)
+  if (!ch.isActive && ch.state !== CharacterState.SLEEP && !ch.sleepPending) {
+    ch.sleepTimer += dt
+    if (ch.sleepTimer >= SLEEP_THRESHOLD_SEC) {
+      ch.sleepPending = true
+    }
+  }
 
   switch (ch.state) {
     case CharacterState.TYPE: {
@@ -120,6 +131,8 @@ export function updateCharacter(
       if (ch.seatTimer < 0) ch.seatTimer = 0 // clear turn-end sentinel
       // If became active, pathfind to seat
       if (ch.isActive) {
+        ch.sleepTimer = 0
+        ch.sleepPending = false
         if (!ch.seatId) {
           // No seat assigned — type in place
           ch.state = CharacterState.TYPE
@@ -146,6 +159,39 @@ export function updateCharacter(
         }
         break
       }
+      // If sleep threshold reached, walk to seat and sleep
+      if (ch.sleepPending) {
+        if (ch.seatId) {
+          const seat = seats.get(ch.seatId)
+          if (seat) {
+            if (ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
+              // Already at seat — sleep here
+              ch.state = CharacterState.SLEEP
+              ch.dir = seat.facingDir
+              ch.sleepPending = false
+              ch.frame = 0
+              ch.frameTimer = 0
+              break
+            }
+            const path = findPath(ch.tileCol, ch.tileRow, seat.seatCol, seat.seatRow, tileMap, blockedTiles)
+            if (path.length > 0) {
+              ch.path = path
+              ch.moveProgress = 0
+              ch.state = CharacterState.WALK
+              ch.frame = 0
+              ch.frameTimer = 0
+              break
+            }
+          }
+        }
+        // No seat or no path — sleep in place
+        ch.state = CharacterState.SLEEP
+        ch.sleepPending = false
+        ch.frame = 0
+        ch.frameTimer = 0
+        break
+      }
+
       // Countdown wander timer
       ch.wanderTimer -= dt
       if (ch.wanderTimer <= 0) {
@@ -208,10 +254,19 @@ export function updateCharacter(
             }
           }
         } else {
-          // Check if arrived at assigned seat — sit down for a rest before wandering again
+          // Check if arrived at assigned seat — sleep, or sit down for a rest
           if (ch.seatId) {
             const seat = seats.get(ch.seatId)
             if (seat && ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
+              if (ch.sleepPending) {
+                // Arrived at seat to sleep
+                ch.state = CharacterState.SLEEP
+                ch.dir = seat.facingDir
+                ch.sleepPending = false
+                ch.frame = 0
+                ch.frameTimer = 0
+                break
+              }
               ch.state = CharacterState.TYPE
               ch.dir = seat.facingDir
               // seatTimer < 0 is a sentinel from setAgentActive(false) meaning
@@ -274,6 +329,42 @@ export function updateCharacter(
       }
       break
     }
+
+    case CharacterState.SLEEP: {
+      ch.frame = 0
+      if (ch.isActive) {
+        // Wake up
+        ch.sleepTimer = 0
+        ch.sleepPending = false
+        if (ch.seatId) {
+          const seat = seats.get(ch.seatId)
+          if (seat) {
+            if (ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
+              ch.state = CharacterState.TYPE
+              ch.dir = seat.facingDir
+            } else {
+              const path = findPath(ch.tileCol, ch.tileRow, seat.seatCol, seat.seatRow, tileMap, blockedTiles)
+              if (path.length > 0) {
+                ch.path = path
+                ch.moveProgress = 0
+                ch.state = CharacterState.WALK
+              } else {
+                ch.state = CharacterState.TYPE
+              }
+            }
+          } else {
+            ch.state = CharacterState.TYPE
+          }
+        } else {
+          ch.state = CharacterState.TYPE
+        }
+        ch.frame = 0
+        ch.frameTimer = 0
+        ch.wanderTimer = 0
+        ch.wanderCount = 0
+      }
+      break
+    }
   }
 }
 
@@ -289,6 +380,8 @@ export function getCharacterSprite(ch: Character, sprites: CharacterSprites): Sp
       return sprites.walk[ch.dir][ch.frame % 4]
     case CharacterState.IDLE:
       return sprites.walk[ch.dir][1]
+    case CharacterState.SLEEP:
+      return sprites.typing[ch.dir][0]
     default:
       return sprites.walk[ch.dir][1]
   }

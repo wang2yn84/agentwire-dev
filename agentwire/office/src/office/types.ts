@@ -38,6 +38,7 @@ export const CharacterState = {
   IDLE: 'idle',
   WALK: 'walk',
   TYPE: 'type',
+  SLEEP: 'sleep',
 } as const
 export type CharacterState = (typeof CharacterState)[keyof typeof CharacterState]
 
@@ -200,6 +201,10 @@ export interface Character {
   bubbleTimer: number
   /** Timer to stay seated while inactive after seat reassignment (counts down to 0) */
   seatTimer: number
+  /** Accumulated inactive time in seconds; resets when agent becomes active */
+  sleepTimer: number
+  /** True once sleepTimer exceeds threshold — character will walk to seat and sleep */
+  sleepPending: boolean
   /** Whether this character represents a sub-agent (spawned by Task tool) */
   isSubagent: boolean
   /** Parent agent ID if this is a sub-agent, null otherwise */
