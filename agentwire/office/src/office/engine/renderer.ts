@@ -50,6 +50,8 @@ export function renderTileGrid(
   zoom: number,
   tileColors?: Array<FloorColor | null>,
   cols?: number,
+  canvasWidth?: number,
+  canvasHeight?: number,
 ): void {
   const s = TILE_SIZE * zoom
   const useSpriteFloors = hasFloorSprites()
@@ -57,9 +59,18 @@ export function renderTileGrid(
   const tmCols = tmRows > 0 ? tileMap[0].length : 0
   const layoutCols = cols ?? tmCols
 
+  // Viewport culling: only render visible tiles
+  let startCol = 0, endCol = tmCols, startRow = 0, endRow = tmRows
+  if (canvasWidth !== undefined && canvasHeight !== undefined) {
+    startCol = Math.max(0, Math.floor(-offsetX / s))
+    endCol = Math.min(tmCols, Math.ceil((canvasWidth - offsetX) / s))
+    startRow = Math.max(0, Math.floor(-offsetY / s))
+    endRow = Math.min(tmRows, Math.ceil((canvasHeight - offsetY) / s))
+  }
+
   // Floor tiles + wall base color
-  for (let r = 0; r < tmRows; r++) {
-    for (let c = 0; c < tmCols; c++) {
+  for (let r = startRow; r < endRow; r++) {
+    for (let c = startCol; c < endCol; c++) {
       const tile = tileMap[r][c]
 
       // Skip VOID tiles entirely (transparent)
@@ -103,14 +114,20 @@ export function renderScene(
   zoom: number,
   selectedAgentId: number | null,
   hoveredAgentId: number | null,
+  canvasWidth?: number,
+  canvasHeight?: number,
 ): void {
   const drawables: ZDrawable[] = []
 
-  // Furniture
+  // Furniture (with viewport culling)
   for (const f of furniture) {
     const cached = getCachedSprite(f.sprite, zoom)
     const fx = offsetX + f.x * zoom
     const fy = offsetY + f.y * zoom
+    // Skip off-screen furniture
+    if (canvasWidth !== undefined && canvasHeight !== undefined) {
+      if (fx + cached.width < 0 || fx > canvasWidth || fy + cached.height < 0 || fy > canvasHeight) continue
+    }
     drawables.push({
       zY: f.zY,
       draw: (c) => {
@@ -555,8 +572,8 @@ export function renderFrame(
   const offsetX = Math.floor((canvasWidth - mapW) / 2) + Math.round(panX)
   const offsetY = Math.floor((canvasHeight - mapH) / 2) + Math.round(panY)
 
-  // Draw tiles (floor + wall base color)
-  renderTileGrid(ctx, tileMap, offsetX, offsetY, zoom, tileColors, layoutCols)
+  // Draw tiles (floor + wall base color) with viewport culling
+  renderTileGrid(ctx, tileMap, offsetX, offsetY, zoom, tileColors, layoutCols, canvasWidth, canvasHeight)
 
   // Seat indicators (below furniture/characters, on top of floor)
   if (selection) {
@@ -574,7 +591,7 @@ export function renderFrame(
   // Draw walls + furniture + characters (z-sorted)
   const selectedId = selection?.selectedAgentId ?? null
   const hoveredId = selection?.hoveredAgentId ?? null
-  renderScene(ctx, allFurniture, characters, offsetX, offsetY, zoom, selectedId, hoveredId)
+  renderScene(ctx, allFurniture, characters, offsetX, offsetY, zoom, selectedId, hoveredId, canvasWidth, canvasHeight)
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom)

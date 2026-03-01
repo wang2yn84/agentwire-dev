@@ -2504,7 +2504,7 @@ class AgentWireServer:
                     return web.json_response({"error": "Failed to create SDK session"})
 
                 # Broadcast session created to dashboard clients
-                await self.broadcast_dashboard("session_created", {"session": name})
+                await self.broadcast_dashboard("session_created", {"session": name, "path": session_path})
                 sessions_data = await self._get_sessions_data()
                 await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
                 return web.json_response({"success": True, "name": name})
@@ -2585,7 +2585,7 @@ class AgentWireServer:
                 self._write_agentwire_yaml(session_path, yaml_config, machine_id)
 
             # Broadcast session created to dashboard clients
-            await self.broadcast_dashboard("session_created", {"session": session_name})
+            await self.broadcast_dashboard("session_created", {"session": session_name, "path": session_path})
             sessions_data = await self._get_sessions_data()
             await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
 
@@ -2730,7 +2730,8 @@ class AgentWireServer:
                 )
 
             # Broadcast to dashboard
-            await self.broadcast_dashboard("session_created", {"session": child_name})
+            child_path = data.get("path")
+            await self.broadcast_dashboard("session_created", {"session": child_name, "path": child_path})
             sessions_data = await self._get_sessions_data()
             await self.broadcast_dashboard("sessions_update", {"sessions": sessions_data})
 

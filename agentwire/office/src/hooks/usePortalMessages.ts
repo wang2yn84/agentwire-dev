@@ -4,6 +4,8 @@ import type { OfficeLayout, ToolActivity } from '../office/types.js'
 import { extractToolName } from '../office/toolUtils.js'
 import { migrateLayoutColors } from '../office/layout/layoutSerializer.js'
 import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js'
+import { composeOfficeLayout } from '../office/layout/layoutComposer.js'
+import type { ProjectInfo } from '../office/layout/layoutComposer.js'
 import { setFloorSprites } from '../office/floorTiles.js'
 import { setWallSprites } from '../office/wallTiles.js'
 import { setCharacterTemplates } from '../office/sprites/spriteData.js'
@@ -78,9 +80,15 @@ export function usePortalMessages(
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false)
 
+  // Track projects for layout composition and agent zone assignment
+  const projectsRef = useRef<ProjectInfo[]>([])
+  const agentProjectMap = useRef<Map<number, string>>(new Map())
+  // Track whether a composed layout has been applied (vs user custom layout)
+  const composedLayoutRef = useRef(false)
+
   useEffect(() => {
     // Buffer agents from existingAgents until layout is loaded
-    let pendingAgents: Array<{ id: number; palette?: number; hueShift?: number; seatId?: string; folderName?: string }> = []
+    let pendingAgents: Array<{ id: number; palette?: number; hueShift?: number; seatId?: string; folderName?: string; projectPath?: string }> = []
 
     const handler = (e: MessageEvent) => {
       // Only accept messages from the portal parent window
@@ -90,7 +98,31 @@ export function usePortalMessages(
 
       const os = getOfficeState()
 
-      if (msg.type === 'layoutLoaded') {
+      if (msg.type === 'projectsList') {
+        const projects = msg.projects as ProjectInfo[]
+        projectsRef.current = projects
+        // Compose a new building layout from the projects list
+        const composedLayout = composeOfficeLayout(projects)
+        composedLayoutRef.current = true
+        os.rebuildFromLayout(composedLayout)
+        onLayoutLoaded?.(composedLayout)
+        // Add buffered agents with zone hints
+        for (const p of pendingAgents) {
+          const zoneHint = p.projectPath ? `project-${p.projectPath}` : undefined
+          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName, zoneHint)
+        }
+        pendingAgents = []
+        layoutReadyRef.current = true
+        setLayoutReady(true)
+        if (os.characters.size > 0) {
+          saveAgentSeats(os)
+        }
+      } else if (msg.type === 'layoutLoaded') {
+        // Skip if we already applied a composed layout from projectsList
+        if (composedLayoutRef.current) {
+          console.log('[Office] Skipping localStorage layout — using composed building layout')
+          return
+        }
         // Skip external layout updates while editor has unsaved changes
         if (layoutReadyRef.current && isEditDirty?.()) {
           console.log('[Office] Skipping external layout update — editor has unsaved changes')
@@ -118,9 +150,12 @@ export function usePortalMessages(
       } else if (msg.type === 'agentCreated') {
         const id = msg.id as number
         const folderName = msg.folderName as string | undefined
+        const projectPath = msg.projectPath as string | undefined
+        if (projectPath) agentProjectMap.current.set(id, projectPath)
+        const zoneHint = projectPath ? `project-${projectPath}` : undefined
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]))
         setSelectedAgent(id)
-        os.addAgent(id, undefined, undefined, undefined, undefined, folderName)
+        os.addAgent(id, undefined, undefined, undefined, undefined, folderName, zoneHint)
         saveAgentSeats(os)
       } else if (msg.type === 'agentClosed') {
         const id = msg.id as number
@@ -152,6 +187,11 @@ export function usePortalMessages(
         const incoming = msg.agents as number[]
         const meta = (msg.agentMeta || {}) as Record<number, { palette?: number; hueShift?: number; seatId?: string }>
         const folderNames = (msg.folderNames || {}) as Record<number, string>
+        const projectPaths = (msg.projectPaths || {}) as Record<number, string>
+        // Update agent → project mapping
+        for (const id of incoming) {
+          if (projectPaths[id]) agentProjectMap.current.set(id, projectPaths[id])
+        }
         if (layoutReadyRef.current) {
           // Layout already loaded — add agents directly and reconcile
           // First remove agents that no longer exist
@@ -166,17 +206,18 @@ export function usePortalMessages(
           for (const id of incoming) {
             if (!os.characters.has(id)) {
               const m = meta[id]
-              os.addAgent(id, m?.palette, m?.hueShift, m?.seatId, true, folderNames[id])
+              const zoneHint = projectPaths[id] ? `project-${projectPaths[id]}` : undefined
+              os.addAgent(id, m?.palette, m?.hueShift, m?.seatId, true, folderNames[id], zoneHint)
             }
           }
           if (os.characters.size > 0) {
             saveAgentSeats(os)
           }
         } else {
-          // Buffer agents — they'll be added in layoutLoaded after seats are built
+          // Buffer agents — they'll be added in projectsList or layoutLoaded after seats are built
           for (const id of incoming) {
             const m = meta[id]
-            pendingAgents.push({ id, palette: m?.palette, hueShift: m?.hueShift, seatId: m?.seatId, folderName: folderNames[id] })
+            pendingAgents.push({ id, palette: m?.palette, hueShift: m?.hueShift, seatId: m?.seatId, folderName: folderNames[id], projectPath: projectPaths[id] })
           }
         }
         setAgents((prev) => {

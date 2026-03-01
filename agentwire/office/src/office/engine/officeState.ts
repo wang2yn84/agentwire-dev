@@ -13,7 +13,7 @@ import {
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
 } from '../../constants.js'
-import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
+import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture, Zone } from '../types.js'
 import { createCharacter, updateCharacter } from './characters.js'
 import { matrixEffectSeeds } from './matrixEffect.js'
 import { isWalkable, getWalkableTiles, findPath } from '../layout/tileMap.js'
@@ -42,6 +42,10 @@ export class OfficeState {
   subagentIdMap: Map<string, number> = new Map()
   /** Reverse lookup: sub-agent character ID → parent info */
   subagentMeta: Map<number, { parentAgentId: number; parentToolId: string }> = new Map()
+  /** Zone metadata for multi-room building layouts */
+  zones: Map<string, Zone> = new Map()
+  /** Maps seat UID → zone ID for fast zone lookup */
+  seatToZone: Map<string, string> = new Map()
   private nextSubagentId = -1
 
   constructor(layout?: OfficeLayout) {
@@ -51,6 +55,31 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture)
     this.furniture = layoutToFurnitureInstances(this.layout.furniture)
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles)
+    this.buildZoneMaps()
+  }
+
+  /** Build zone maps from layout zones */
+  private buildZoneMaps(): void {
+    this.zones.clear()
+    this.seatToZone.clear()
+    if (!this.layout.zones) return
+    for (const zone of this.layout.zones) {
+      this.zones.set(zone.id, zone)
+      for (const uid of zone.seatUids) {
+        this.seatToZone.set(uid, zone.id)
+      }
+    }
+  }
+
+  /** Find the first unassigned seat in a specific zone, or null */
+  findFreeSeatInZone(zoneId: string): string | null {
+    const zone = this.zones.get(zoneId)
+    if (!zone) return null
+    for (const uid of zone.seatUids) {
+      const seat = this.seats.get(uid)
+      if (seat && !seat.assigned) return uid
+    }
+    return null
   }
 
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
@@ -62,6 +91,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(layout.furniture)
     this.rebuildFurnitureInstances()
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles)
+    this.buildZoneMaps()
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -193,7 +223,7 @@ export class OfficeState {
     return { palette, hueShift }
   }
 
-  addAgent(id: number, preferredPalette?: number, preferredHueShift?: number, preferredSeatId?: string, skipSpawnEffect?: boolean, folderName?: string): void {
+  addAgent(id: number, preferredPalette?: number, preferredHueShift?: number, preferredSeatId?: string, skipSpawnEffect?: boolean, folderName?: string, zoneHint?: string): void {
     if (this.characters.has(id)) return
 
     let palette: number
@@ -207,7 +237,7 @@ export class OfficeState {
       hueShift = pick.hueShift
     }
 
-    // Try preferred seat first, then any free seat
+    // Seat priority: preferred seat → zone seat → lobby seat → any seat
     let seatId: string | null = null
     if (preferredSeatId && this.seats.has(preferredSeatId)) {
       const seat = this.seats.get(preferredSeatId)!
@@ -215,8 +245,18 @@ export class OfficeState {
         seatId = preferredSeatId
       }
     }
+    if (!seatId && zoneHint) {
+      seatId = this.findFreeSeatInZone(zoneHint)
+    }
     if (!seatId) {
-      seatId = this.findFreeSeat()
+      // Try lobby zone first, then any free seat
+      const lobbyZone = Array.from(this.zones.values()).find((z) => z.type === 'lobby')
+      if (lobbyZone) {
+        seatId = this.findFreeSeatInZone(lobbyZone.id)
+      }
+      if (!seatId) {
+        seatId = this.findFreeSeat()
+      }
     }
 
     let ch: Character

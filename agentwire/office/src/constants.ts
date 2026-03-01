@@ -4,8 +4,8 @@ import type { FloorColor } from './office/types.js'
 export const TILE_SIZE = 16
 export const DEFAULT_COLS = 20
 export const DEFAULT_ROWS = 11
-export const MAX_COLS = 64
-export const MAX_ROWS = 64
+export const MAX_COLS = 128
+export const MAX_ROWS = 128
 
 // ── Character Animation ─────────────────────────────────────
 export const WALK_SPEED_PX_PER_SEC = 48

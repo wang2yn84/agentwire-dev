@@ -205,7 +205,7 @@ class DesktopManager {
                 break;
 
             case 'session_created':
-                this.emit('session_created', { session: msg.session });
+                this.emit('session_created', { session: msg.session, path: msg.path });
                 break;
 
             case 'session_closed':

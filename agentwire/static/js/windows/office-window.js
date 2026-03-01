@@ -22,6 +22,9 @@ const sessionPanes = new Map();
 // Map pane_id → toolId used when spawning the sub-agent (needed for subagentClear)
 const paneToolIds = new Map();
 
+// Track known projects for layout recomposition
+let knownProjectsKey = '';
+
 /**
  * Hash a session name to a stable integer ID for character assignment.
  * Same session always gets the same character skin.
@@ -43,12 +46,46 @@ function postToOffice(payload) {
 }
 
 /**
+ * Extract project name from a session's working directory path.
+ * E.g. "/Users/dotdev/projects/agentwire-dev" → "agentwire-dev"
+ */
+function getProjectFromPath(path) {
+    if (!path) return null;
+    // Strip trailing slash
+    const clean = path.replace(/\/+$/, '');
+    const parts = clean.split('/');
+    return parts[parts.length - 1] || null;
+}
+
+/**
+ * Extract unique projects from sessions and send projectsList if changed.
+ */
+function updateProjectsList(sessions) {
+    const projectMap = new Map(); // name → path
+    for (const s of sessions) {
+        const path = s.path || s.cwd || null;
+        const name = getProjectFromPath(path);
+        if (name && path && !projectMap.has(name)) {
+            projectMap.set(name, path);
+        }
+    }
+    const sortedNames = Array.from(projectMap.keys()).sort();
+    const key = sortedNames.join(',');
+    if (key !== knownProjectsKey) {
+        knownProjectsKey = key;
+        const projects = sortedNames.map(name => ({ name, path: projectMap.get(name) }));
+        postToOffice({ type: 'projectsList', projects });
+    }
+}
+
+/**
  * Build an agent list from current sessions for existingAgents message.
  */
 function buildExistingAgents(sessions) {
     const agents = [];
     const folderNames = {};
     const agentMeta = {};
+    const projectPaths = {};
     const savedSeats = loadSeats();
 
     for (const s of sessions) {
@@ -59,8 +96,14 @@ function buildExistingAgents(sessions) {
         if (savedSeats[id]) {
             agentMeta[id] = savedSeats[id];
         }
+        // Map agent to project name derived from path
+        const path = s.path || s.cwd || null;
+        const projectName = getProjectFromPath(path);
+        if (projectName) {
+            projectPaths[id] = projectName;
+        }
     }
-    return { agents, folderNames, agentMeta };
+    return { agents, folderNames, agentMeta, projectPaths };
 }
 
 function loadLayout() {
@@ -136,15 +179,20 @@ function handleOfficeMessage(e) {
  * Send initial state to the office after iframe is ready.
  */
 function initializeOffice() {
-    // Send layout
+    // Send existing sessions as agents — projects are extracted first so
+    // the iframe can compose the building layout before placing agents
+    const sessions = desktop.sessions || [];
+
+    // Send projects list (triggers layout composition in iframe)
+    updateProjectsList(sessions);
+
+    // Send layout (user-customized layout from localStorage, if any)
     const layout = loadLayout();
     postToOffice({ type: 'layoutLoaded', layout });
 
-    // Send existing sessions as agents
-    const sessions = desktop.sessions || [];
     if (sessions.length > 0) {
-        const { agents, folderNames, agentMeta } = buildExistingAgents(sessions);
-        postToOffice({ type: 'existingAgents', agents, folderNames, agentMeta });
+        const { agents, folderNames, agentMeta, projectPaths } = buildExistingAgents(sessions);
+        postToOffice({ type: 'existingAgents', agents, folderNames, agentMeta, projectPaths });
 
         // Send initial activity status for each session
         for (const s of sessions) {
@@ -172,8 +220,9 @@ function setupEventBridge() {
     // Full session list update — reconcile agents and activity
     on('sessions', (sessions) => {
         if (!iframeReady) return;
-        const { agents, folderNames, agentMeta } = buildExistingAgents(sessions);
-        postToOffice({ type: 'existingAgents', agents, folderNames, agentMeta });
+        updateProjectsList(sessions);
+        const { agents, folderNames, agentMeta, projectPaths } = buildExistingAgents(sessions);
+        postToOffice({ type: 'existingAgents', agents, folderNames, agentMeta, projectPaths });
 
         // Send activity status for each session
         for (const s of sessions) {
@@ -189,10 +238,16 @@ function setupEventBridge() {
     });
 
     // New session created
-    on('session_created', ({ session }) => {
+    on('session_created', ({ session, path }) => {
         if (!iframeReady) return;
         const id = hashSessionName(session);
-        postToOffice({ type: 'agentCreated', id, folderName: session });
+        const projectName = getProjectFromPath(path);
+        postToOffice({ type: 'agentCreated', id, folderName: session, projectPath: projectName });
+        // Re-check projects if this session adds a new project
+        if (projectName) {
+            const sessions = desktop.sessions || [];
+            updateProjectsList(sessions);
+        }
     });
 
     // Session activity (active/idle)

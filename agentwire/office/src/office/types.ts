@@ -132,6 +132,21 @@ export interface PlacedFurniture {
   color?: FloorColor
 }
 
+export interface Zone {
+  /** Unique zone identifier, e.g. "project-agentwire-dev", "shared-kitchen" */
+  id: string
+  /** Display label, e.g. "agentwire-dev", "Kitchen" */
+  label: string
+  /** Zone type */
+  type: 'project' | 'shared' | 'lobby' | 'hallway'
+  /** Bounding rectangle in tile coordinates */
+  rect: { col: number; row: number; w: number; h: number }
+  /** Chair UIDs placed in this zone */
+  seatUids: string[]
+  /** Full project path (only for project zones) */
+  projectPath?: string
+}
+
 export interface OfficeLayout {
   version: 1
   cols: number
@@ -140,6 +155,8 @@ export interface OfficeLayout {
   furniture: PlacedFurniture[]
   /** Per-tile color settings, parallel to tiles array. null = wall/no color */
   tileColors?: Array<FloorColor | null>
+  /** Zone metadata for multi-room building layouts */
+  zones?: Zone[]
 }
 
 export interface Character {
