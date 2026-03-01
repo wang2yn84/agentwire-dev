@@ -79,6 +79,7 @@ class TaskConfig:
     # Completion configuration
     idle_timeout: int = 30  # Seconds of idle before completion
     exit_on_complete: bool = True  # Exit session after task completion
+    max_duration: int = 0  # Max wall-clock seconds (0 = no limit)
 
     # Loop configuration
     mode: str = "standard"  # "standard" or "loop"
@@ -182,6 +183,7 @@ def parse_task_config(name: str, config: dict, default_shell: str | None = None)
         retry_delay=config.get("retry_delay", 30),
         idle_timeout=config.get("idle_timeout", 30),
         exit_on_complete=config.get("exit_on_complete", True),
+        max_duration=config.get("max_duration", 0),
         mode=config.get("mode", "standard"),
         max_iterations=config.get("max_iterations", 3),
         loop_review=config.get("loop_review", True),
@@ -299,6 +301,9 @@ def validate_task(task: TaskConfig) -> list[str]:
 
     if task.idle_timeout <= 0:
         issues.append("Invalid idle_timeout (must be > 0)")
+
+    if task.max_duration < 0:
+        issues.append("Invalid max_duration (must be >= 0)")
 
     if task.mode not in ("standard", "loop"):
         issues.append(f"Invalid mode '{task.mode}' (must be 'standard' or 'loop')")

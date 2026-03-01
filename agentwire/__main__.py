@@ -7317,7 +7317,8 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, json_mode) -
 
         try:
             signal = wait_for_completion_signal(
-                session, summary_path=summary_path
+                session, summary_path=summary_path,
+                max_duration=task.max_duration,
             )
             last_status = signal.get("status", "incomplete")
             last_summary = signal.get("summary", "")

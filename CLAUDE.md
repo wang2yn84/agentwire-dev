@@ -497,6 +497,7 @@ tasks:
     retries: 2                 # Retry on failure (default: 0)
     retry_delay: 30            # Seconds between retries (default: 30)
     idle_timeout: 30           # Seconds of idle before completion (default: 30)
+    max_duration: 900          # Max wall-clock seconds, 0=no limit (default: 0)
     exit_on_complete: true     # Exit session after completion (default: true)
     pre:                       # Data gathering (NO {{ }} - these PRODUCE variables)
       weather: "curl -s wttr.in/?format=3"

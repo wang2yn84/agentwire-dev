@@ -230,27 +230,29 @@ def wait_for_completion_signal(
     session: str,
     poll_interval: float = 10.0,
     summary_path: Path | None = None,
+    max_duration: int = 0,
 ) -> dict:
     """Wait for task completion by polling the summary file directly.
 
     Exits when:
     1. Summary file appears (task completed normally)
     2. Session dies (agent crashed, tmux killed)
-
-    There is no wall-clock timeout. Tasks run until one of these conditions.
+    3. Wall-clock timeout exceeded (if max_duration > 0)
 
     Args:
         session: tmux session name
         poll_interval: Seconds between checks
         summary_path: Path to the summary .md file the agent will write
+        max_duration: Max wall-clock seconds (0 = no limit)
 
     Returns:
         Dict with 'status', 'summary', 'summary_file' keys
 
     Raises:
-        CompletionTimeout: If session dies before task completed
+        CompletionTimeout: If session dies or wall-clock timeout exceeded
     """
     complete_file = TASKS_DIR / f"{session}.complete"
+    start_time = time.time()
 
     # Build glob pattern for fuzzy summary detection (agents sometimes
     # invent their own timestamp instead of using the provided filename).
@@ -263,6 +265,13 @@ def wait_for_completion_signal(
         summary_glob = f"{prefix}*.md"
 
     while True:
+        # Wall-clock timeout (catches rate limits, stuck prompts, etc.)
+        if max_duration > 0:
+            elapsed = time.time() - start_time
+            if elapsed >= max_duration:
+                raise CompletionTimeout(
+                    f"Task exceeded max_duration ({max_duration}s)"
+                )
         # Primary: check if the agent has written the summary file AND
         # the hook has deleted the context file (signals cleanup complete).
         # This prevents ensure from proceeding before the hook finishes
