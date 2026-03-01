@@ -190,6 +190,20 @@ export function SettingsModal({ isOpen, onClose, isDebugMode, onToggleDebugMode 
             />
           )}
         </button>
+        {/* Credits */}
+        <div
+          style={{
+            borderTop: '1px solid var(--pixel-border)',
+            marginTop: '4px',
+            padding: '6px 10px 2px',
+            fontSize: '16px',
+            color: 'rgba(255, 255, 255, 0.3)',
+            lineHeight: 1.5,
+          }}
+        >
+          <div>Built on <a href="https://github.com/pablodelucca/pixel-agents" target="_blank" rel="noreferrer" style={{ color: 'rgba(255,255,255,0.45)', textDecoration: 'underline' }}>pixel-agents</a> (MIT)</div>
+          <div>Art: <a href="https://jik-a-4.itch.io/metrocity-free-topdown-character-pack" target="_blank" rel="noreferrer" style={{ color: 'rgba(255,255,255,0.45)', textDecoration: 'underline' }}>MetroCity</a> by Jik-A (CC0)</div>
+        </div>
       </div>
     </>
   )
