@@ -26,22 +26,20 @@ def _build_emotion_vector(request: TTSRequest) -> list[float]:
     """Build Zonos 8-dim emotion vector from request params.
 
     Dims: [happiness, sadness, disgust, fear, surprise, anger, other, neutral]
-    Disgust, surprise, and other are fixed at neutral defaults.
-    Neutral decreases as other emotions increase to keep the vector coherent.
+    If emotion_neutral is None, it auto-fills as 1.0 - sum(others), clamped to 0.
     """
     happiness = request.emotion_happiness
     sadness = request.emotion_sadness
-    anger = request.emotion_anger
+    disgust = request.emotion_disgust
     fear = request.emotion_fear
+    surprise = request.emotion_surprise
+    anger = request.emotion_anger
+    other = request.emotion_other
 
-    # Fix non-exposed dims at defaults
-    disgust = 0.0077
-    surprise = 0.0537
-    other = 0.1227
-
-    # Neutral fills the remainder (min 0)
-    total_expressive = happiness + sadness + anger + fear + disgust + surprise + other
-    neutral = max(0.0, 1.0 - total_expressive)
+    if request.emotion_neutral is None:
+        neutral = max(0.0, 1.0 - (happiness + sadness + disgust + fear + surprise + anger + other))
+    else:
+        neutral = request.emotion_neutral
 
     return [happiness, sadness, disgust, fear, surprise, anger, other, neutral]
 

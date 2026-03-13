@@ -38,10 +38,16 @@ class TTSRequest(BaseModel):
     language: str = "English"
 
     # Zonos-specific emotion sliders (0.0–1.0, ignored by other backends)
+    # Vector order: [happiness, sadness, disgust, fear, surprise, anger, other, neutral]
+    # neutral auto-fills remainder if not set explicitly
     emotion_happiness: float = 0.3777
     emotion_sadness: float = 0.0
-    emotion_anger: float = 0.0
+    emotion_disgust: float = 0.0077
     emotion_fear: float = 0.0
+    emotion_surprise: float = 0.0537
+    emotion_anger: float = 0.0
+    emotion_other: float = 0.1227
+    emotion_neutral: float | None = None  # None = auto (1.0 - sum of others)
     # Speaking characteristics (None = use Zonos defaults)
     speaking_rate: float | None = None  # Tokens/sec (default ~15.0)
     pitch_std: float | None = None  # Pitch variation (default ~45.0)
