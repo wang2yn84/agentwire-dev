@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-03-13
+
+### Added
+
+- **Zonos TTS engine** — Zyphra Zonos v0.1 Transformer and Hybrid backends (`zonos-transformer`, `zonos-hybrid`)
+  - Zero-shot voice cloning from 10–30s reference audio
+  - Fine-grained emotion control: 7 independent sliders (happiness, sadness, disgust, fear, surprise, anger, other); neutral auto-fills remainder automatically
+  - 5 language support: English, Japanese, Chinese, French, German
+  - <4 GB VRAM; runs in dedicated `.venv-zonos`
+- **Full emotion API on `TTSRequest`** — `emotion_happiness`, `emotion_sadness`, `emotion_disgust`, `emotion_fear`, `emotion_surprise`, `emotion_anger`, `emotion_other` (all `float = 0.0`)
+- **Speaking characteristics** — `speaking_rate` and `pitch_std` on `TTSRequest` (Zonos)
+- **`zonos` venv family** — wired through `_get_venv_for_backend` and `BACKEND_FAMILIES` with hot-swap support
+
+### Changed
+
+- `tts.backend` config now accepts `zonos-transformer` and `zonos-hybrid`
+
 ## [1.3.0] - 2026-02-10
 
 ### Added
