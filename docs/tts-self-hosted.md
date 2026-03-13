@@ -26,6 +26,7 @@ curl -X POST http://localhost:8100/engines/zonos-transformer/load
 
 | Backend | Model | VRAM | Voice Cloning | Emotion Control | Paralinguistic Tags | Languages | Streaming |
 |---------|-------|------|---------------|-----------------|--------------------|-----------|----|
+| `kokoro` | Kokoro 82M ONNX | **CPU only** | No | No | No | 8 languages | Yes |
 | `chatterbox` | Chatterbox Turbo (350M) | ~4–8 GB | Yes | No | Yes (`[laugh]` etc.) | English | No |
 | `chatterbox-streaming` | Chatterbox Streaming | ~4–8 GB | Yes | No | Yes | English | Yes |
 | `qwen-base-0.6b` | Qwen3-TTS 0.6B | ~4 GB | Yes | No | No | 10 languages | Yes |
@@ -37,6 +38,7 @@ curl -X POST http://localhost:8100/engines/zonos-transformer/load
 
 ### Choosing a Backend
 
+- **No GPU / CPU only** → `kokoro` (170 MB, near real-time, 30+ voices — use `af_heart` voice for best quality)
 - **Best voice quality + emotion control** → `zonos-transformer`
 - **Mid-sentence sounds** (laugh, sigh, cough) → `chatterbox` or `chatterbox-streaming`
 - **Multilingual** (10 languages) → `qwen-base-1.7b` or `qwen-custom`
@@ -49,11 +51,25 @@ Each backend family runs in its own Python venv to avoid dependency conflicts.
 
 | Venv | Backend Family |
 |------|---------------|
+| `.venv-kokoro` | `kokoro` |
 | `.venv-chatterbox` | `chatterbox`, `chatterbox-streaming` |
 | `.venv-qwen` | `qwen-base-0.6b`, `qwen-base-1.7b`, `qwen-custom`, `qwen-design` |
 | `.venv-zonos` | `zonos-transformer`, `zonos-hybrid` |
 
 `agentwire tts start` automatically selects the correct venv for the requested backend. If the venv doesn't exist, it will error with instructions.
+
+### Creating the Kokoro venv
+
+CPU-only. Uses CPU-only PyTorch (much smaller than CUDA builds — ~250 MB vs 2 GB+). The ONNX model (~170 MB) is auto-downloaded from HuggingFace on first use.
+
+```bash
+cd ~/projects/agentwire-dev
+uv venv .venv-kokoro
+source .venv-kokoro/bin/activate
+pip install kokoro-onnx
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install fastapi uvicorn faster-whisper pydantic python-multipart
+```
 
 ### Creating the Chatterbox venv
 
@@ -104,7 +120,7 @@ export PATH=/usr/local/cuda-12.4/bin:$PATH
 
 ```yaml
 tts:
-  backend: "zonos-transformer"  # runpod | chatterbox | chatterbox-streaming | qwen-base-0.6b | qwen-base-1.7b | qwen-custom | qwen-design | zonos-transformer | zonos-hybrid
+  backend: "zonos-transformer"  # runpod | kokoro | chatterbox | chatterbox-streaming | qwen-base-0.6b | qwen-base-1.7b | qwen-custom | qwen-design | zonos-transformer | zonos-hybrid
   url: "http://localhost:8100"
   default_voice: "default"
 

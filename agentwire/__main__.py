@@ -1132,6 +1132,8 @@ def _get_venv_for_backend(backend: str) -> str:
         return "chatterbox"
     if backend.startswith("zonos"):
         return "zonos"
+    if backend == "kokoro":
+        return "kokoro"
     return "qwen"
 
 
@@ -8732,7 +8734,7 @@ def main() -> int:
     tts_start.add_argument("--port", type=int, help="Server port (default: 8100)")
     tts_start.add_argument("--host", type=str, help="Server host (default: 0.0.0.0)")
     tts_start.add_argument("--backend", type=str,
-                           choices=["chatterbox", "chatterbox-streaming", "qwen-base-0.6b", "qwen-base-1.7b", "qwen-design", "qwen-custom"],
+                           choices=["kokoro", "chatterbox", "chatterbox-streaming", "qwen-base-0.6b", "qwen-base-1.7b", "qwen-design", "qwen-custom", "zonos-transformer", "zonos-hybrid"],
                            help="TTS backend (default: chatterbox)")
     tts_start.set_defaults(func=cmd_tts_start)
 
@@ -8741,10 +8743,10 @@ def main() -> int:
     tts_serve.add_argument("--port", type=int, help="Server port (default: 8100)")
     tts_serve.add_argument("--host", type=str, help="Server host (default: 0.0.0.0)")
     tts_serve.add_argument("--backend", type=str,
-                           choices=["chatterbox", "chatterbox-streaming", "qwen-base-0.6b", "qwen-base-1.7b", "qwen-design", "qwen-custom"],
+                           choices=["kokoro", "chatterbox", "chatterbox-streaming", "qwen-base-0.6b", "qwen-base-1.7b", "qwen-design", "qwen-custom", "zonos-transformer", "zonos-hybrid"],
                            help="TTS backend (default: chatterbox)")
     tts_serve.add_argument("--venv", type=str,
-                           choices=["chatterbox", "qwen"],
+                           choices=["kokoro", "chatterbox", "qwen", "zonos"],
                            help="Which venv family is running (for hot-swap detection)")
     tts_serve.set_defaults(func=cmd_tts_serve)
 
@@ -8757,10 +8759,10 @@ def main() -> int:
     tts_restart.add_argument("--port", type=int, help="Server port (default: 8100)")
     tts_restart.add_argument("--host", type=str, help="Server host (default: 0.0.0.0)")
     tts_restart.add_argument("--backend", type=str,
-                             choices=["chatterbox", "chatterbox-streaming", "qwen-base-0.6b", "qwen-base-1.7b", "qwen-design", "qwen-custom"],
+                             choices=["kokoro", "chatterbox", "chatterbox-streaming", "qwen-base-0.6b", "qwen-base-1.7b", "qwen-design", "qwen-custom", "zonos-transformer", "zonos-hybrid"],
                              help="TTS backend")
     tts_restart.add_argument("--venv", type=str,
-                             choices=["chatterbox", "qwen"],
+                             choices=["kokoro", "chatterbox", "qwen", "zonos"],
                              help="Force specific venv family")
     tts_restart.set_defaults(func=cmd_tts_restart)
 

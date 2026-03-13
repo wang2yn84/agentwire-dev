@@ -360,7 +360,7 @@ projects:
     suffix: "-worktrees"
 
 tts:
-  backend: "runpod"  # runpod | chatterbox | chatterbox-streaming | qwen-base-0.6b | qwen-base-1.7b | qwen-custom | qwen-design | zonos-transformer | zonos-hybrid | none
+  backend: "runpod"  # runpod | kokoro | chatterbox | chatterbox-streaming | qwen-base-0.6b | qwen-base-1.7b | qwen-custom | qwen-design | zonos-transformer | zonos-hybrid | none
   runpod_endpoint_id: "your-endpoint-id"
   runpod_api_key: "your-api-key"
   default_voice: "dotdev"

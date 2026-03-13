@@ -10,6 +10,7 @@ Supported backends:
   - qwen-custom: Qwen3-TTS CustomVoice (preset voices with emotion control)
   - zonos-hybrid: Zonos v0.1 SSM-Hybrid (<4 GB VRAM, emotion control, 5 languages)
   - zonos-transformer: Zonos v0.1 Transformer (standard arch variant)
+  - kokoro: Kokoro 82M ONNX (CPU-only, ~170 MB, 30+ voices, streaming)
 
 Run via:
     agentwire tts start                      # Start with default backend
@@ -59,10 +60,44 @@ BACKEND_FAMILIES = {
     "qwen-custom": "qwen",
     "zonos-hybrid": "zonos",
     "zonos-transformer": "zonos",
+    "kokoro": "kokoro",
 }
 
 # Global Whisper model (separate from TTS engines)
 whisper_model = None
+
+
+def _tensor_to_wav_bytes(audio: "torch.Tensor", sample_rate: int) -> bytes:
+    """Serialize a torch tensor to WAV bytes.
+
+    Falls back to stdlib wave module if torchaudio.save fails to write to
+    BytesIO (e.g. when torchcodec is the backend and doesn't support in-memory
+    writes — happens with CPU-only torch builds).
+    """
+    import io
+    import wave
+
+    import numpy as np
+
+    buf = io.BytesIO()
+    try:
+        torchaudio.save(buf, audio, sample_rate, format="wav")
+        if buf.tell() == 0:
+            raise RuntimeError("torchaudio.save wrote 0 bytes")
+        buf.seek(0)
+        return buf.read()
+    except Exception:
+        # Fallback: stdlib wave (PCM int16)
+        buf = io.BytesIO()
+        samples = audio.squeeze().numpy()
+        pcm = (samples * 32767).clip(-32768, 32767).astype(np.int16)
+        with wave.open(buf, "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm.tobytes())
+        buf.seek(0)
+        return buf.read()
 
 
 def get_required_venv(backend: str) -> str:
@@ -133,6 +168,14 @@ def register_engines():
     registry.register("zonos-hybrid", make_zonos_hybrid)
     registry.register("zonos-transformer", make_zonos_transformer)
 
+    # Kokoro engine (CPU-only)
+    def make_kokoro():
+        from .tts.engines.kokoro import KokoroEngine
+
+        return KokoroEngine(voices_dir=VOICES_DIR)
+
+    registry.register("kokoro", make_kokoro)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -159,7 +202,11 @@ async def lifespan(app: FastAPI):
 
     # Load Whisper for transcription
     print("Loading Whisper model (large-v3)...")
-    whisper_model = WhisperModel("large-v3", device="cuda", compute_type="float16")
+    try:
+        whisper_model = WhisperModel("large-v3", device="cuda", compute_type="float16")
+    except (ValueError, RuntimeError):
+        # CUDA unavailable (e.g. CPU-only venv) — fall back to CPU
+        whisper_model = WhisperModel("large-v3", device="cpu", compute_type="int8")
     print("Whisper model loaded!")
 
     print(f"Voices directory: {VOICES_DIR}")
@@ -231,11 +278,9 @@ async def generate_tts(request: TTSRequest):
         else:
             # Non-streaming response
             result = engine.generate(request)
-            buffer = io.BytesIO()
-            torchaudio.save(buffer, result.audio, result.sample_rate, format="wav")
-            buffer.seek(0)
+            wav_bytes = _tensor_to_wav_bytes(result.audio, result.sample_rate)
             return StreamingResponse(
-                buffer,
+                io.BytesIO(wav_bytes),
                 media_type="audio/wav",
                 headers={"Content-Disposition": "attachment; filename=speech.wav"},
             )

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Kokoro TTS engine** — CPU-only ultra-lightweight backend (`kokoro`)
+  - Kokoro 82M ONNX model via `kokoro-onnx`, auto-downloads ~170 MB from HuggingFace on first use
+  - No GPU required — pure ONNX CPU inference, near real-time on Apple Silicon / modern Intel CPU
+  - 30+ preset voices across 8 languages (English, Spanish, French, Hindi, Italian, Japanese, Portuguese, Chinese); `af_heart` is the default and highest quality voice
+  - Streaming support via `create_stream()`
+  - Runs in dedicated `.venv-kokoro` with CPU-only PyTorch (~250 MB vs 2 GB+ CUDA builds)
+
 ## [1.9.0] - 2026-03-13
 
 ### Added
