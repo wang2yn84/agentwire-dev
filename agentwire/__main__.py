@@ -2102,8 +2102,8 @@ def _local_say_runpod(
 
     if config_backend == "runpod":
         return _local_say_runpod_api(text, voice, exaggeration, cfg_weight, tts_config)
-    elif config_backend in ("chatterbox", "local"):
-        # Use HTTP-based local TTS server (supports hot-swap)
+    else:
+        # All HTTP-server-backed backends (kokoro, chatterbox, qwen-*, zonos-*, etc.)
         from .network import NetworkContext
         ctx = NetworkContext.from_config()
         tts_url = ctx.get_service_url("tts", use_tunnel=True)
@@ -2111,9 +2111,6 @@ def _local_say_runpod(
             text, voice, exaggeration, cfg_weight, tts_url,
             backend=backend, instruct=instruct, language=language, stream=stream
         )
-    else:
-        print(f"TTS backend '{config_backend}' not supported for local playback", file=sys.stderr)
-        return 1
 
 
 def _local_say_runpod_api(

@@ -69,6 +69,7 @@ source .venv-kokoro/bin/activate
 pip install kokoro-onnx
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install fastapi uvicorn faster-whisper pydantic python-multipart
+pip install -e /path/to/agentwire-dev  # installs agentwire + remaining deps
 ```
 
 ### Creating the Chatterbox venv
