@@ -818,6 +818,6 @@ desktop_open_artifact(url="https://example.com", title="External")
 - `docs/SHELL_ESCAPING.md` - Shell escaping guide
 - `docs/runpod-tts.md` - RunPod TTS setup
 - `docs/tts-self-hosted.md` - Self-hosted TTS
-- `docs/remote-machines.md` - Multi-machine orchestration
+- `docs/remote-machines.md` - Multi-machine orchestration, `~/.agentwire/machine/` agent context pattern, WSL2 setup
 - `docs/remote-access.md` - Cloudflare Tunnel setup for remote access
 - `docs/hammerspoon.md` - Hammerspoon push-to-talk setup for macOS

@@ -174,3 +174,96 @@ Machine configuration is stored in `~/.agentwire/machines.json`:
 | `host` | IP address or hostname |
 | `user` | SSH username |
 | `projects_dir` | Base directory for projects on the remote machine |
+
+---
+
+## Machine Context for AI Agents
+
+### The `~/.agentwire/machine/` Pattern
+
+Each machine should have a `~/.agentwire/machine/CLAUDE.md` — a living document describing that machine's role, services, venvs, paths, and any platform-specific gotchas.
+
+When an AI agent needs to do ops work on a remote machine (manage services, install packages, debug the box itself), spawn a Claude Code session in `~/.agentwire/machine/` rather than SSHing and running ad-hoc commands. The agent picks up both `~/.claude/CLAUDE.md` (user preferences) and `~/.agentwire/machine/CLAUDE.md` (machine context) automatically, giving it full situational awareness without needing to rediscover everything.
+
+```bash
+# Spawn an ops session on a remote machine
+ssh dotdev-pc
+cd ~/.agentwire/machine
+claude  # gets both global prefs and machine context
+
+# Or spawn via agentwire from the Mac
+agentwire new -s dotdev-pc-ops --machine dotdev-pc -p ~/.agentwire/machine
+```
+
+### What to Put in `~/.agentwire/machine/CLAUDE.md`
+
+- **Machine identity** — OS, hardware specs (CPU, GPU, RAM), role in the fleet
+- **Services** — what runs here, how to start/stop/check them, service file locations
+- **Python venvs** — what each venv is for, how to create new ones for the platform
+- **Key paths** — config files, scripts, data directories
+- **Platform gotchas** — WSL paths, sudo requirements, non-standard tool locations
+- **Install notes** — anything non-obvious that tripped you up (saves re-discovery)
+
+### Example Structure
+
+```
+~/.agentwire/
+├── config.yaml          # Main agentwire config
+├── machines.json        # Registered remote machines
+├── voices/              # TTS voice reference files
+├── scripts/             # Machine-specific helper scripts
+│   ├── tts              # TTS management wrapper
+│   ├── tts-start        # Quick start
+│   └── wsl-startup      # Boot hook (WSL example)
+└── machine/
+    └── CLAUDE.md        # Machine context for AI agents ← THIS
+```
+
+### Scripts in `~/.agentwire/scripts/`
+
+Machine-specific helper scripts live here — TTS management, startup hooks, service wrappers, etc. This is the canonical location. Scripts in `~/bin/` should symlink here so they're on PATH but the source of truth stays in one place.
+
+These scripts are not managed by agentwire and not version-controlled — they're local to each machine because different machines have different roles.
+
+---
+
+## WSL2 Machines
+
+Running agentwire on Windows Subsystem for Linux has a few differences from bare Linux:
+
+- **GPU access** — CUDA works normally; `nvidia-smi` is at `/usr/lib/wsl/lib/nvidia-smi` (not in default PATH)
+- **Driver location** — GPU driver lives on the Windows host; never install Linux GPU drivers
+- **CUDA toolkit** — Install `cuda-nvcc-12-4` etc. individually; the `cuda-toolkit-12-4` metapackage fails on Ubuntu 24.04 (requires `libtinfo5`, which is not available)
+- **Systemd** — WSL2 supports systemd user services (`systemctl --user`); use for persistent services like TTS
+- **Port exposure** — Ports are accessible from the Windows host and via SSH tunnels as normal
+- **Boot hook** — WSL doesn't have a traditional init; use a startup script called from Windows Task Scheduler or Windows Terminal profile
+
+### Recommended WSL Service Pattern
+
+```bash
+# ~/.agentwire/scripts/wsl-startup
+#!/bin/bash
+sudo service ssh start
+systemctl --user start agentwire-tts.service
+```
+
+```ini
+# ~/.config/systemd/user/agentwire-tts.service
+[Unit]
+Description=AgentWire TTS Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/projects/agentwire-dev
+ExecStartPre=/bin/bash -c 'fuser -k 8100/tcp 2>/dev/null || true'
+ExecStartPre=/bin/sleep 2
+ExecStart=/home/user/projects/agentwire-dev/.venv-chatterbox/bin/python -m uvicorn agentwire.tts_server:app --host 0.0.0.0 --port 8100
+Restart=on-failure
+RestartSec=30
+Environment=DEFAULT_BACKEND=chatterbox
+Environment=CURRENT_VENV=chatterbox
+
+[Install]
+WantedBy=default.target
+```
