@@ -113,9 +113,11 @@ class _ZonosEngine(TTSEngine):
         codes = self._model.generate(conditioning)
         wav = self._model.autoencoder.decode(codes).cpu().detach()
 
-        # Ensure shape (1, samples)
-        if wav.dim() == 1:
-            wav = wav.unsqueeze(0)
+        # Normalize to (channels, samples) — autoencoder may return (batch, channels, samples)
+        if wav.dim() == 3:
+            wav = wav.squeeze(0)  # (1, C, T) -> (C, T)
+        elif wav.dim() == 1:
+            wav = wav.unsqueeze(0)  # (T,) -> (1, T)
 
         return TTSResult(audio=wav, sample_rate=self._sample_rate)
 
