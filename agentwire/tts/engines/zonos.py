@@ -138,11 +138,19 @@ class ZonosHybridEngine(_ZonosEngine):
     - 5 languages: English, Japanese, Chinese, French, German
     - <4 GB VRAM
 
-    The hybrid variant uses a Mamba SSM architecture — architecturally novel
-    and generally preferred over the pure transformer variant.
+    The hybrid variant uses a Mamba SSM architecture. Requires `mamba-ssm`
+    and `causal-conv1d` to be installed in the venv:
+        pip install mamba-ssm causal-conv1d --no-build-isolation
     """
 
     def __init__(self, device: str = "cuda", voices_dir: Path | None = None):
+        try:
+            import mamba_ssm  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "Zonos hybrid model requires mamba-ssm. "
+                "Install with: pip install mamba-ssm causal-conv1d --no-build-isolation"
+            )
         super().__init__(
             model_id="Zyphra/Zonos-v0.1-hybrid",
             device=device,
