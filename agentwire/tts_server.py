@@ -8,6 +8,8 @@ Supported backends:
   - qwen-base-1.7b: Qwen3-TTS 1.7B (voice cloning, higher quality)
   - qwen-design: Qwen3-TTS VoiceDesign (generate voices from descriptions)
   - qwen-custom: Qwen3-TTS CustomVoice (preset voices with emotion control)
+  - zonos-hybrid: Zonos v0.1 SSM-Hybrid (<4 GB VRAM, emotion control, 5 languages)
+  - zonos-transformer: Zonos v0.1 Transformer (standard arch variant)
 
 Run via:
     agentwire tts start                      # Start with default backend
@@ -55,6 +57,8 @@ BACKEND_FAMILIES = {
     "qwen-base-1.7b": "qwen",
     "qwen-design": "qwen",
     "qwen-custom": "qwen",
+    "zonos-hybrid": "zonos",
+    "zonos-transformer": "zonos",
 }
 
 # Global Whisper model (separate from TTS engines)
@@ -110,6 +114,15 @@ def register_engines():
         from .tts.engines.qwen_custom import QwenCustomEngine
         return QwenCustomEngine(voices_dir=VOICES_DIR)
 
+    # Zonos engines
+    def make_zonos_hybrid():
+        from .tts.engines.zonos import ZonosHybridEngine
+        return ZonosHybridEngine(voices_dir=VOICES_DIR)
+
+    def make_zonos_transformer():
+        from .tts.engines.zonos import ZonosTransformerEngine
+        return ZonosTransformerEngine(voices_dir=VOICES_DIR)
+
     # Register all engines
     registry.register("chatterbox", make_chatterbox)
     registry.register("chatterbox-streaming", make_chatterbox_streaming)
@@ -117,6 +130,8 @@ def register_engines():
     registry.register("qwen-base-1.7b", make_qwen_base_17b)
     registry.register("qwen-design", make_qwen_design)
     registry.register("qwen-custom", make_qwen_custom)
+    registry.register("zonos-hybrid", make_zonos_hybrid)
+    registry.register("zonos-transformer", make_zonos_transformer)
 
 
 @asynccontextmanager

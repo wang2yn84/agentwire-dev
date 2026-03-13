@@ -37,6 +37,15 @@ class TTSRequest(BaseModel):
     instruct: str | None = None  # Emotion/style instruction
     language: str = "English"
 
+    # Zonos-specific emotion sliders (0.0–1.0, ignored by other backends)
+    emotion_happiness: float = 0.3777
+    emotion_sadness: float = 0.0
+    emotion_anger: float = 0.0
+    emotion_fear: float = 0.0
+    # Speaking characteristics (None = use Zonos defaults)
+    speaking_rate: float | None = None  # Tokens/sec (default ~15.0)
+    pitch_std: float | None = None  # Pitch variation (default ~45.0)
+
     # Streaming
     stream: bool = False
 

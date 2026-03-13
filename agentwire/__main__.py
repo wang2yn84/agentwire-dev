@@ -1130,6 +1130,8 @@ def _get_venv_for_backend(backend: str) -> str:
     """Get the venv family required for a backend."""
     if backend.startswith("chatterbox"):
         return "chatterbox"
+    if backend.startswith("zonos"):
+        return "zonos"
     return "qwen"
 
 
@@ -1331,8 +1333,7 @@ def cmd_tts_serve(args) -> int:
     # Determine venv family (explicit or auto-detect from backend)
     venv = getattr(args, "venv", None)
     if not venv:
-        # Auto-detect from backend
-        venv = "chatterbox" if backend.startswith("chatterbox") else "qwen"
+        venv = _get_venv_for_backend(backend)
 
     # Set env vars for the TTS server module
     os.environ["DEFAULT_BACKEND"] = backend
