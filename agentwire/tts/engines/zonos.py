@@ -36,10 +36,7 @@ def _build_emotion_vector(request: TTSRequest) -> list[float]:
     anger = request.emotion_anger
     other = request.emotion_other
 
-    if request.emotion_neutral is None:
-        neutral = max(0.0, 1.0 - (happiness + sadness + disgust + fear + surprise + anger + other))
-    else:
-        neutral = request.emotion_neutral
+    neutral = max(0.0, 1.0 - (happiness + sadness + disgust + fear + surprise + anger + other))
 
     return [happiness, sadness, disgust, fear, surprise, anger, other, neutral]
 
