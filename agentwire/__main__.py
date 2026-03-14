@@ -5710,6 +5710,16 @@ def cmd_safety_install(args) -> int:
     return cli_safety.safety_install_cmd()
 
 
+def cmd_safety_tooldefs_list(args) -> int:
+    """CLI command: agentwire safety tooldefs list"""
+    return cli_safety.safety_tooldefs_list_cmd()
+
+
+def cmd_safety_tooldefs_show(args) -> int:
+    """CLI command: agentwire safety tooldefs show <tool>"""
+    return cli_safety.safety_tooldefs_show_cmd(args.tool)
+
+
 def cmd_doctor(args) -> int:
     """Auto-diagnose and fix common issues."""
     from .network import NetworkContext
@@ -9321,6 +9331,19 @@ def main() -> int:
     )
     safety_install.set_defaults(func=cmd_safety_install)
 
+    # safety tooldefs
+    safety_tooldefs = safety_subparsers.add_parser(
+        "tooldefs", help="Browse tool definitions"
+    )
+    tooldefs_subparsers = safety_tooldefs.add_subparsers(dest="tooldefs_command")
+
+    tooldefs_list = tooldefs_subparsers.add_parser("list", help="List available tooldefs")
+    tooldefs_list.set_defaults(func=cmd_safety_tooldefs_list)
+
+    tooldefs_show = tooldefs_subparsers.add_parser("show", help="Show tooldef for a tool")
+    tooldefs_show.add_argument("tool", help="Tool name (e.g. git, gh, docker)")
+    tooldefs_show.set_defaults(func=cmd_safety_tooldefs_show)
+
     # === doctor command (top-level) ===
     doctor_parser = subparsers.add_parser(
         "doctor", help="Auto-diagnose and fix common issues"
@@ -9538,6 +9561,10 @@ def main() -> int:
 
     if args.command == "safety" and getattr(args, "safety_command", None) is None:
         safety_parser.print_help()
+        return 0
+
+    if args.command == "safety" and getattr(args, "safety_command", None) == "tooldefs" and getattr(args, "tooldefs_command", None) is None:
+        safety_tooldefs.print_help()
         return 0
 
     if args.command == "network" and getattr(args, "network_command", None) is None:

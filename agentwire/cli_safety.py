@@ -21,6 +21,7 @@ CONFIG_DIR = Path.home() / ".agentwire"
 HOOKS_DIR = CONFIG_DIR / "hooks" / "damage-control"
 LOGS_DIR = CONFIG_DIR / "logs" / "damage-control"
 RULES_DIR = CONFIG_DIR / "damage-control"
+TOOLDEFS_DIR = CONFIG_DIR / "tooldefs"
 
 # Files to install from the package (hook scripts only, not rules)
 DAMAGE_CONTROL_FILES = [
@@ -38,6 +39,15 @@ def get_damage_control_source() -> Path:
     if source_dir.exists():
         return source_dir
     raise FileNotFoundError("Could not find damage-control rules in package")
+
+
+def get_tooldefs_source() -> Path:
+    """Get path to bundled tooldefs directory."""
+    package_dir = Path(__file__).parent
+    source_dir = package_dir / "tooldefs"
+    if source_dir.exists():
+        return source_dir
+    raise FileNotFoundError("Could not find tooldefs in package")
 
 
 def is_glob_pattern(pattern: str) -> bool:
@@ -415,6 +425,8 @@ def get_safety_status() -> Dict[str, Any]:
 
     rule_files = sorted(f.name for f in RULES_DIR.glob("*.yaml")) if RULES_DIR.exists() else []
 
+    tooldefs_count = len(list(TOOLDEFS_DIR.glob("*.yaml"))) if TOOLDEFS_DIR.exists() else 0
+
     status = {
         "hooks_installed": HOOKS_DIR.exists(),
         "rules_dir": str(RULES_DIR),
@@ -422,6 +434,8 @@ def get_safety_status() -> Dict[str, Any]:
         "rule_files": rule_files,
         "logs_dir": str(LOGS_DIR),
         "logs_exist": LOGS_DIR.exists(),
+        "tooldefs_dir": str(TOOLDEFS_DIR),
+        "tooldefs_count": tooldefs_count,
         "pattern_counts": {
             "bash_patterns": len(patterns.get("bashToolPatterns", [])),
             "zero_access_paths": len(patterns.get("zeroAccessPaths", [])),
@@ -542,6 +556,11 @@ def format_safety_status(status: Dict[str, Any]) -> str:
     lines.append(f"  Exists: {status['logs_exist']}")
     lines.append("")
 
+    if "tooldefs_dir" in status:
+        lines.append(f"Tooldefs: {status['tooldefs_dir']}")
+        lines.append(f"  Installed: {status['tooldefs_count']} tool definitions")
+        lines.append("")
+
     if status["recent_blocks"]:
         lines.append(f"Recent Blocks (last {len(status['recent_blocks'])}):")
         for block in status["recent_blocks"]:
@@ -648,6 +667,105 @@ def safety_logs_cmd(
     return 0
 
 
+def safety_tooldefs_list_cmd() -> int:
+    """CLI command: agentwire safety tooldefs list"""
+    tooldefs_dir = TOOLDEFS_DIR if TOOLDEFS_DIR.exists() else None
+    if tooldefs_dir is None:
+        try:
+            tooldefs_dir = get_tooldefs_source()
+        except FileNotFoundError:
+            print("No tooldefs found. Run: agentwire safety install")
+            return 1
+
+    files = sorted(tooldefs_dir.glob("*.yaml"))
+    if not files:
+        print("No tooldefs installed.")
+        return 0
+
+    print(f"Available tooldefs ({len(files)}):")
+    for f in files:
+        try:
+            with open(f) as fh:
+                data = yaml.safe_load(fh) or {}
+            name = data.get("name", f.stem)
+            purpose = data.get("purpose", "")
+            print(f"  {f.stem:<20} {name} — {purpose}")
+        except Exception:
+            print(f"  {f.stem}")
+    return 0
+
+
+def safety_tooldefs_show_cmd(tool: str) -> int:
+    """CLI command: agentwire safety tooldefs show <tool>"""
+    if not yaml:
+        print("Error: PyYAML not installed.", file=sys.stderr)
+        return 1
+
+    yaml_name = f"{tool}.yaml"
+    candidates = []
+    if TOOLDEFS_DIR.exists():
+        candidates.append(TOOLDEFS_DIR / yaml_name)
+    try:
+        candidates.append(get_tooldefs_source() / yaml_name)
+    except FileNotFoundError:
+        pass
+
+    tooldef_file = next((p for p in candidates if p.exists()), None)
+    if not tooldef_file:
+        print(f"No tooldef found for '{tool}'. Available: agentwire safety tooldefs list")
+        return 1
+
+    with open(tooldef_file) as f:
+        data = yaml.safe_load(f) or {}
+
+    name = data.get("name", tool)
+    purpose = data.get("purpose", "")
+    docs = data.get("docs", "")
+    commands = data.get("commands", [])
+
+    read_cmds = [c for c in commands if c.get("access") == "read"]
+    write_cmds = [c for c in commands if c.get("access") == "write"]
+    blocked_cmds = [c for c in commands if c.get("access") == "blocked"]
+
+    print(f"\n{name}")
+    print("=" * len(name))
+    print(f"Purpose: {purpose}")
+    if docs:
+        print(f"Docs:    {docs}")
+    print()
+
+    green = "\033[32m"
+    yellow = "\033[33m"
+    red = "\033[31m"
+    reset = "\033[0m"
+
+    if read_cmds:
+        print(f"{green}READ (always allowed):{reset}")
+        for c in read_cmds:
+            print(f"  {c['cmd']}")
+            print(f"    {c['description']}")
+        print()
+
+    if write_cmds:
+        print(f"{yellow}WRITE (prompt before executing):{reset}")
+        for c in write_cmds:
+            print(f"  {c['cmd']}")
+            print(f"    {c['description']}")
+        print()
+
+    if blocked_cmds:
+        print(f"{red}BLOCKED (never execute):{reset}")
+        for c in blocked_cmds:
+            line = f"  {c['cmd']}"
+            if c.get("note"):
+                line += f"  [{c['note']}]"
+            print(line)
+            print(f"    {c['description']}")
+        print()
+
+    return 0
+
+
 def safety_install_cmd() -> int:
     """CLI command: agentwire safety install - interactive setup"""
     print("AgentWire Safety Installation")
@@ -691,9 +809,11 @@ def safety_install_cmd() -> int:
     HOOKS_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     RULES_DIR.mkdir(parents=True, exist_ok=True)
+    TOOLDEFS_DIR.mkdir(parents=True, exist_ok=True)
     print(f"✓ Created {HOOKS_DIR}")
     print(f"✓ Created {LOGS_DIR}")
     print(f"✓ Created {RULES_DIR}")
+    print(f"✓ Created {TOOLDEFS_DIR}")
 
     # Copy hook scripts from package to hooks directory
     hooks_source = Path(__file__).parent / "hooks" / "damage-control"
@@ -719,12 +839,25 @@ def safety_install_cmd() -> int:
         shutil.copy2(rules_file, target_file)
         print(f"✓ Installed {rules_file.name}")
 
+    # Copy tooldefs from package to user config
+    print()
+    print("Installing tooldefs...")
+    try:
+        tooldefs_source = get_tooldefs_source()
+        for tooldef_file in sorted(tooldefs_source.glob("*.yaml")):
+            target_file = TOOLDEFS_DIR / tooldef_file.name
+            shutil.copy2(tooldef_file, target_file)
+            print(f"✓ Installed {tooldef_file.name}")
+    except FileNotFoundError as e:
+        print(f"⚠️  {e}")
+
     print()
     print("✓ Installation complete!")
     print()
     print("Next steps:")
     print("  1. Test with: agentwire safety check 'rm -rf /'")
     print("  2. View status: agentwire safety status")
-    print("  3. Configure rules: edit files in ~/.agentwire/damage-control/")
+    print("  3. Add tool rules: ~/.agentwire/damage-control/<tool>.yaml")
+    print("  4. View tool commands: agentwire safety tooldefs list")
 
     return 0
