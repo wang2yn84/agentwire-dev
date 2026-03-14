@@ -115,6 +115,7 @@ exclude = [
     "agentwire/static/agentwire-logo-splash-dark.jpeg",
     "agentwire/static/agentwire-logo-splash-green.jpeg",
     "agentwire/static/agentwire-logo-splash-green-dark.jpeg",
+    "agentwire/office/node_modules/**",
 ]
 
 [tool.hatch.version]
@@ -142,6 +143,8 @@ exclude = [
     # Dev examples and scripts
     "examples/",
     "scripts/",
+    # Office app node_modules (dev dependency, not shipped)
+    "agentwire/office/node_modules/",
     # Static file dev assets
     "agentwire/static/*.xcf",
     "agentwire/static/*-blue.*",
