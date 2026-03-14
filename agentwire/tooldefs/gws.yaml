@@ -1,0 +1,186 @@
+name: Google Workspace CLI
+binary: gws
+purpose: Interact with Gmail, Drive, Calendar, Sheets, Docs, Chat, and Admin — AI-friendly JSON output
+docs: https://github.com/googleworkspace/cli
+install: npm install -g @googleworkspace/cli
+
+commands:
+  # Auth
+  - cmd: "gws auth login"
+    access: write
+    description: Authenticate with Google account
+
+  - cmd: "gws auth status"
+    access: read
+    description: Show current authentication state
+
+  # Gmail
+  - cmd: "gws gmail users.messages.list"
+    access: read
+    description: List messages in mailbox
+
+  - cmd: "gws gmail users.messages.get --id <message-id>"
+    access: read
+    description: Get a specific message
+
+  - cmd: "gws gmail users.threads.list"
+    access: read
+    description: List email threads
+
+  - cmd: "gws gmail users.labels.list"
+    access: read
+    description: List all labels
+
+  - cmd: "gws gmail +send --to <addr> --subject '<subject>' --body '<body>'"
+    access: write
+    description: Send an email
+
+  - cmd: "gws gmail +reply --message-id <id> --body '<body>'"
+    access: write
+    description: Reply to a message
+
+  - cmd: "gws gmail +forward --message-id <id> --to <addr>"
+    access: write
+    description: Forward a message
+
+  - cmd: "gws gmail users.messages.trash --id <id>"
+    access: write
+    description: Move message to trash
+
+  - cmd: "gws gmail users.messages.delete --id <id>"
+    access: blocked
+    description: Permanently delete a message (bypasses trash)
+
+  - cmd: "gws gmail users.messages.batchDelete"
+    access: blocked
+    description: Permanently delete multiple messages
+
+  # Calendar
+  - cmd: "gws calendar +agenda [--today] [--week] [--days <n>]"
+    access: read
+    description: Show calendar agenda
+
+  - cmd: "gws calendar calendarList.list"
+    access: read
+    description: List all calendars
+
+  - cmd: "gws calendar events.list --calendarId <id>"
+    access: read
+    description: List events in a calendar
+
+  - cmd: "gws calendar events.get --calendarId <id> --eventId <id>"
+    access: read
+    description: Get a specific event
+
+  - cmd: "gws calendar events.insert --calendarId <id>"
+    access: write
+    description: Create a calendar event
+
+  - cmd: "gws calendar events.update --calendarId <id> --eventId <id>"
+    access: write
+    description: Update a calendar event
+
+  - cmd: "gws calendar events.delete --calendarId <id> --eventId <id>"
+    access: write
+    description: Delete a calendar event
+
+  - cmd: "gws calendar calendars.delete --calendarId <id>"
+    access: blocked
+    description: Delete an entire calendar and all its events
+
+  # Drive
+  - cmd: "gws drive files.list [--q '<query>']"
+    access: read
+    description: List files in Drive
+
+  - cmd: "gws drive files.get --fileId <id>"
+    access: read
+    description: Get file metadata
+
+  - cmd: "gws drive +upload <file> [--name '<name>']"
+    access: write
+    description: Upload a file to Drive
+
+  - cmd: "gws drive files.update --fileId <id>"
+    access: write
+    description: Update file metadata or content
+
+  - cmd: "gws drive files.copy --fileId <id>"
+    access: write
+    description: Copy a file
+
+  - cmd: "gws drive files.delete --fileId <id>"
+    access: blocked
+    description: Permanently delete a file (bypasses trash)
+
+  - cmd: "gws drive files.emptyTrash"
+    access: blocked
+    description: Permanently delete all trashed files
+
+  # Sheets
+  - cmd: "gws sheets spreadsheets.get --spreadsheetId <id>"
+    access: read
+    description: Get spreadsheet metadata and structure
+
+  - cmd: "gws sheets spreadsheets.values.get --spreadsheetId <id> --range <range>"
+    access: read
+    description: Read cell values from a range
+
+  - cmd: "gws sheets spreadsheets.values.update --spreadsheetId <id> --range <range>"
+    access: write
+    description: Write values to a range
+
+  - cmd: "gws sheets spreadsheets.values.append --spreadsheetId <id> --range <range>"
+    access: write
+    description: Append rows to a sheet
+
+  - cmd: "gws sheets spreadsheets.values.clear --spreadsheetId <id> --range <range>"
+    access: write
+    description: Clear values in a range
+
+  # Docs
+  - cmd: "gws docs documents.get --documentId <id>"
+    access: read
+    description: Get document content and structure
+
+  - cmd: "gws docs documents.batchUpdate --documentId <id>"
+    access: write
+    description: Apply edits to a document
+
+  # Chat
+  - cmd: "gws chat spaces.list"
+    access: read
+    description: List Chat spaces
+
+  - cmd: "gws chat spaces.messages.list --parent <space>"
+    access: read
+    description: List messages in a Chat space
+
+  - cmd: "gws chat spaces.messages.create --parent <space>"
+    access: write
+    description: Send a message to a Chat space
+
+  # Admin (requires admin privileges)
+  - cmd: "gws admin users.list"
+    access: read
+    description: List users in the workspace (admin only)
+
+  - cmd: "gws admin users.get --userKey <email>"
+    access: read
+    description: Get user details (admin only)
+
+  - cmd: "gws admin users.insert"
+    access: write
+    description: Create a new user (admin only)
+
+  - cmd: "gws admin users.update --userKey <email>"
+    access: write
+    description: Update user details (admin only)
+
+  - cmd: "gws admin users.delete --userKey <email>"
+    access: blocked
+    description: Permanently delete a user account (admin only)
+
+  - cmd: "gws admin users.makeAdmin --userKey <email>"
+    access: blocked
+    description: Grant admin privileges to a user
