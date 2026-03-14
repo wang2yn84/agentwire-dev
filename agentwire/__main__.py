@@ -7023,6 +7023,72 @@ ENSURE_EXIT_TIMEOUT = 5
 ENSURE_EXIT_SESSION_ERROR = 6
 
 
+def _ensure_remote(args, session: str, machine_id: str, json_mode: bool) -> int:
+    """Delegate `ensure` to the remote machine via SSH.
+
+    When the session target is `name@machine`, we reconstruct the full
+    `agentwire ensure` command and run it on the remote machine natively.
+    All local concerns (locking, idle detection, pre/post commands, summary
+    files) happen on the remote machine where the session actually lives.
+    """
+    import shlex
+
+    machine = _get_machine_config(machine_id)
+    if machine is None:
+        return _output_result(False, json_mode, f"Machine '{machine_id}' not found in machines.json", exit_code=ENSURE_EXIT_SESSION_ERROR)
+
+    host = machine.get("host", machine_id)
+    user = machine.get("user")
+    port = machine.get("port")
+    ssh_target = f"{user}@{host}" if user else host
+
+    # Translate local project path to remote equivalent
+    remote_project = None
+    if hasattr(args, 'project') and args.project:
+        local_path = Path(args.project).expanduser().resolve()
+        # Get local projects dir from config
+        config = load_config()
+        local_projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser().resolve()
+        # Get remote projects dir from machine config (or default)
+        remote_projects_dir = machine.get("projects_dir", "~/projects")
+        try:
+            relative = local_path.relative_to(local_projects_dir)
+            remote_project = f"{remote_projects_dir}/{relative}"
+        except ValueError:
+            # Path not under local projects dir — use basename only
+            remote_project = f"{remote_projects_dir}/{local_path.name}"
+
+    # Reconstruct ensure command for the remote (session without @machine)
+    cmd_parts = ["agentwire", "ensure", "-s", session, "--task", args.task, "--json"]
+    if remote_project:
+        cmd_parts.extend(["--project", remote_project])
+    if getattr(args, 'wait_lock', False):
+        cmd_parts.append("--wait-lock")
+    if getattr(args, 'lock_timeout', 60) != 60:
+        cmd_parts.extend(["--lock-timeout", str(args.lock_timeout)])
+    if getattr(args, 'skip_if_locked', False):
+        cmd_parts.append("--skip-if-locked")
+
+    remote_cmd = f"bash -l -c {shlex.quote(' '.join(shlex.quote(p) for p in cmd_parts))}"
+
+    ssh_cmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes"]
+    if port:
+        ssh_cmd.extend(["-p", str(port)])
+    ssh_cmd.extend([ssh_target, remote_cmd])
+
+    # Stream output in real-time — ensure can run for tens of minutes
+    try:
+        proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        last_line = ""
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            last_line = line.rstrip()
+        proc.wait()
+        return proc.returncode
+    except Exception as e:
+        return _output_result(False, json_mode, f"SSH to {machine_id} failed: {e}", exit_code=ENSURE_EXIT_SESSION_ERROR)
+
+
 def cmd_ensure(args) -> int:
     """Run a named task with reliable session management.
 
@@ -7068,7 +7134,7 @@ def cmd_ensure(args) -> int:
     session, machine_id = _parse_session_target(session_name)
 
     if machine_id:
-        return _output_result(False, json_mode, "Remote sessions not yet supported for ensure", exit_code=ENSURE_EXIT_SESSION_ERROR)
+        return _ensure_remote(args, session, machine_id, json_mode)
 
     # Find project path from --project flag, or session's working directory
     if hasattr(args, 'project') and args.project:
