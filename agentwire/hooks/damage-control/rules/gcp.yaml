@@ -1,0 +1,26 @@
+# GCP (gcloud) damage control rules
+
+bashToolPatterns:
+  # ---------------------------------------------------------------------------
+  # GCP (gcloud) DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bgcloud\s+projects\s+delete\b'
+    reason: gcloud projects delete (DELETES ENTIRE PROJECT)
+
+  - pattern: '\bgcloud\s+compute\s+instances\s+delete\b'
+    reason: gcloud compute instances delete
+
+  - pattern: '\bgcloud\s+sql\s+instances\s+delete\b'
+    reason: gcloud sql instances delete
+
+  - pattern: '\bgcloud\s+container\s+clusters\s+delete\b'
+    reason: gcloud container clusters delete (GKE)
+
+  - pattern: '\bgcloud\s+storage\s+rm\s+.*-r'
+    reason: gcloud storage rm -r (recursive delete)
+
+  - pattern: '\bgcloud\s+functions\s+delete\b'
+    reason: gcloud functions delete
+
+  - pattern: '\bgcloud\s+iam\s+service-accounts\s+delete\b'
+    reason: gcloud iam service-accounts delete

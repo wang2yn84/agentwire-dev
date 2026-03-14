@@ -8,7 +8,7 @@ AgentWire Edit Tool Damage Control
 ===================================
 
 Blocks edits to protected files via PreToolUse hook on Edit tool.
-Loads zeroAccessPaths and readOnlyPaths from patterns.yaml.
+Loads zeroAccessPaths and readOnlyPaths from rules directory.
 
 Exit codes:
   0 = Allow edit
@@ -67,29 +67,47 @@ def match_path(file_path: str, pattern: str) -> bool:
         return False
 
 
-def get_config_path() -> Path:
-    """Get path to patterns.yaml, checking multiple locations."""
-    # 1. Check AgentWire hooks directory
+def get_rules_dir() -> Path:
+    """Get path to rules directory."""
     agentwire_dir = os.environ.get("AGENTWIRE_DIR", os.path.expanduser("~/.agentwire"))
-    config = Path(agentwire_dir) / "hooks" / "damage-control" / "patterns.yaml"
-    if config.exists():
-        return config
-
-    # 2. Fallback to script directory
-    return Path(__file__).parent / "patterns.yaml"
+    rules_dir = Path(agentwire_dir) / "damage-control"
+    if rules_dir.exists() and list(rules_dir.glob("*.yaml")):
+        return rules_dir
+    # Fallback: rules/ subdirectory next to this script
+    return Path(__file__).parent / "rules"
 
 
 def load_config() -> Dict[str, Any]:
-    """Load config from YAML."""
-    config_path = get_config_path()
+    """Load and merge patterns from all .yaml files in rules directory."""
+    rules_dir = get_rules_dir()
 
-    if not config_path.exists():
-        return {"zeroAccessPaths": [], "readOnlyPaths": []}
+    merged = {
+        "bashToolPatterns": [],
+        "zeroAccessPaths": [],
+        "readOnlyPaths": [],
+        "noDeletePaths": [],
+        "allowedPaths": [],
+    }
 
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f) or {}
+    if not rules_dir.exists():
+        print(f"Warning: Rules directory not found at {rules_dir}", file=sys.stderr)
+        return merged
 
-    return config
+    yaml_files = sorted(rules_dir.glob("*.yaml"))
+    if not yaml_files:
+        print(f"Warning: No .yaml files found in {rules_dir}", file=sys.stderr)
+        return merged
+
+    for rules_file in yaml_files:
+        try:
+            with open(rules_file, "r") as f:
+                data = yaml.safe_load(f) or {}
+            for key in merged:
+                merged[key].extend(data.get(key, []))
+        except Exception as e:
+            print(f"Warning: Could not load {rules_file.name}: {e}", file=sys.stderr)
+
+    return merged
 
 
 ALL_OPERATIONS = {"read", "write", "edit", "delete", "move", "chmod"}

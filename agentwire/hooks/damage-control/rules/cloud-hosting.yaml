@@ -1,0 +1,87 @@
+# Cloud hosting damage control rules
+# Vercel, Netlify, Cloudflare, Heroku, Fly.io, DigitalOcean, Supabase, GitHub CLI, npm
+
+bashToolPatterns:
+  # ---------------------------------------------------------------------------
+  # VERCEL DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bvercel\s+remove\s+.*--yes'
+    reason: vercel remove --yes (removes deployment)
+
+  - pattern: '\bvercel\s+projects\s+rm\b'
+    reason: vercel projects rm (deletes project)
+
+  - pattern: '\bvercel\s+env\s+rm\s+.*--yes'
+    reason: vercel env rm --yes (removes env variables)
+
+  # ---------------------------------------------------------------------------
+  # NETLIFY DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bnetlify\s+sites:delete\b'
+    reason: netlify sites:delete (deletes entire site)
+
+  - pattern: '\bnetlify\s+functions:delete\b'
+    reason: netlify functions:delete
+
+  # ---------------------------------------------------------------------------
+  # CLOUDFLARE (wrangler) DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bwrangler\s+delete\b'
+    reason: wrangler delete (deletes Worker)
+
+  - pattern: '\bwrangler\s+r2\s+bucket\s+delete\b'
+    reason: wrangler r2 bucket delete
+
+  - pattern: '\bwrangler\s+kv:namespace\s+delete\b'
+    reason: wrangler kv:namespace delete
+
+  - pattern: '\bwrangler\s+d1\s+delete\b'
+    reason: wrangler d1 delete (deletes database)
+
+  - pattern: '\bwrangler\s+queues\s+delete\b'
+    reason: wrangler queues delete
+
+  # ---------------------------------------------------------------------------
+  # HEROKU DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bheroku\s+apps:destroy\b'
+    reason: heroku apps:destroy
+
+  - pattern: '\bheroku\s+pg:reset\b'
+    reason: heroku pg:reset (resets database)
+
+  # ---------------------------------------------------------------------------
+  # FLY.IO DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bfly\s+apps\s+destroy\b'
+    reason: fly apps destroy (Fly.io)
+
+  - pattern: '\bfly\s+destroy\b'
+    reason: fly destroy (Fly.io)
+
+  # ---------------------------------------------------------------------------
+  # DIGITALOCEAN (doctl) DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bdoctl\s+compute\s+droplet\s+delete\b'
+    reason: doctl droplet delete (DigitalOcean)
+
+  - pattern: '\bdoctl\s+databases\s+delete\b'
+    reason: doctl databases delete (DigitalOcean)
+
+  # ---------------------------------------------------------------------------
+  # SUPABASE DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bsupabase\s+db\s+reset\b'
+    reason: supabase db reset
+
+  # ---------------------------------------------------------------------------
+  # GITHUB CLI DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bgh\s+repo\s+delete\b'
+    reason: gh repo delete (deletes repository)
+
+  # ---------------------------------------------------------------------------
+  # PACKAGE REGISTRY DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bnpm\s+unpublish\b'
+    reason: npm unpublish (removes package from registry)

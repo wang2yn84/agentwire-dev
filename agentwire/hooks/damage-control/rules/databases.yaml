@@ -1,0 +1,52 @@
+# Database damage control rules
+# Database CLIs and SQL
+
+bashToolPatterns:
+  # ---------------------------------------------------------------------------
+  # DATABASE CLI DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bredis-cli\s+FLUSHALL'
+    reason: redis-cli FLUSHALL (wipes ALL data)
+
+  - pattern: '\bredis-cli\s+FLUSHDB'
+    reason: redis-cli FLUSHDB (wipes database)
+
+  - pattern: '\bmongosh.*dropDatabase'
+    reason: MongoDB dropDatabase
+
+  - pattern: '\bmongo.*dropDatabase'
+    reason: MongoDB dropDatabase
+
+  - pattern: '\bdropdb\b'
+    reason: PostgreSQL dropdb
+
+  - pattern: '\bmysqladmin\s+drop\b'
+    reason: MySQL drop database
+
+  # ---------------------------------------------------------------------------
+  # SQL DESTRUCTIVE OPERATIONS (catastrophic - no WHERE clause)
+  # ---------------------------------------------------------------------------
+  - pattern: 'DELETE\s+FROM\s+\w+\s*;'
+    reason: DELETE without WHERE clause (will delete ALL rows)
+
+  - pattern: 'DELETE\s+FROM\s+\w+\s*$'
+    reason: DELETE without WHERE clause (will delete ALL rows)
+
+  - pattern: 'DELETE\s+\*\s+FROM'
+    reason: DELETE * (will delete ALL rows)
+
+  - pattern: '\bTRUNCATE\s+TABLE\b'
+    reason: TRUNCATE TABLE (will delete ALL rows)
+
+  - pattern: '\bDROP\s+TABLE\b'
+    reason: DROP TABLE
+
+  - pattern: '\bDROP\s+DATABASE\b'
+    reason: DROP DATABASE
+
+  # ---------------------------------------------------------------------------
+  # SQL OPERATIONS REQUIRING CONFIRMATION (ask: true)
+  # ---------------------------------------------------------------------------
+  - pattern: '\bDELETE\s+FROM\s+\w+\s+WHERE\b.*\bid\s*='
+    reason: SQL DELETE with specific ID
+    ask: true

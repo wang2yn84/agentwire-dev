@@ -1,0 +1,33 @@
+# AgentWire infrastructure damage control rules
+
+bashToolPatterns:
+  # ---------------------------------------------------------------------------
+  # AGENTWIRE INFRASTRUCTURE PROTECTION
+  # ---------------------------------------------------------------------------
+  # Protect AgentWire's core infrastructure from catastrophic damage
+  # AgentWire manages parallel agent sessions via tmux and stores state in ~/.agentwire/
+
+  # Tmux session destruction
+  - pattern: '\btmux\s+kill-server\b'
+    reason: tmux kill-server (destroys ALL tmux sessions including AgentWire)
+
+  - pattern: '\btmux\s+kill-session\s+.*\bagentwire'
+    reason: tmux kill-session targeting AgentWire sessions
+
+  - pattern: '\btmux\s+kill-session\s+.*-a\b'
+    reason: tmux kill-session -a (kills all except current)
+    ask: true
+
+  # AgentWire CLI destructive commands (future-proofing)
+  - pattern: '\bagentwire\s+destroy\b'
+    reason: agentwire destroy (if implemented - destroys AgentWire state)
+
+  - pattern: '\bagentwire\s+.*--force.*remove\b'
+    reason: agentwire force remove operations
+
+  # AgentWire directory destruction
+  - pattern: '\brm\s+.*\.agentwire'
+    reason: Removing .agentwire directory (destroys all AgentWire state)
+
+  - pattern: '\brm\s+.*~/.agentwire'
+    reason: Removing ~/.agentwire directory (destroys all AgentWire state)

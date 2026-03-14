@@ -1,0 +1,51 @@
+# Remote execution damage control rules
+# SSH remote execution safeguards
+
+bashToolPatterns:
+  # ---------------------------------------------------------------------------
+  # REMOTE EXECUTION SAFEGUARDS
+  # ---------------------------------------------------------------------------
+  # Remote commands amplify risk - a single rm -rf on remote is unrecoverable
+  # Block dangerous remote operations that could destroy remote systems
+
+  # SSH with destructive commands
+  - pattern: '\bssh\s+.*\brm\s+-[rRf]'
+    reason: SSH remote rm with recursive/force flags
+
+  - pattern: '\bssh\s+.*\bsudo\s+rm\b'
+    reason: SSH remote sudo rm
+
+  - pattern: '\bssh\s+.*\bmkfs\b'
+    reason: SSH remote filesystem format
+
+  - pattern: '\bssh\s+.*\bdd\s+.*of=/dev/'
+    reason: SSH remote dd to device
+
+  - pattern: '\bssh\s+.*\breboot\b'
+    reason: SSH remote reboot
+    ask: true
+
+  - pattern: '\bssh\s+.*\bshutdown\b'
+    reason: SSH remote shutdown
+    ask: true
+
+  - pattern: '\bssh\s+.*\bsystemctl\s+stop\b'
+    reason: SSH remote service stop
+    ask: true
+
+  # Remote database operations
+  - pattern: '\bssh\s+.*\bdropdb\b'
+    reason: SSH remote PostgreSQL database drop
+
+  - pattern: '\bssh\s+.*\bmysqladmin\s+drop\b'
+    reason: SSH remote MySQL database drop
+
+  - pattern: '\bssh\s+.*\bredis-cli\s+FLUSHALL\b'
+    reason: SSH remote Redis FLUSHALL
+
+  # Remote Docker destruction
+  - pattern: '\bssh\s+.*\bdocker\s+system\s+prune\s+-a'
+    reason: SSH remote docker system prune -a
+
+  - pattern: '\bssh\s+.*\bdocker\s+rm\s+.*-f'
+    reason: SSH remote docker rm -f

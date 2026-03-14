@@ -8,7 +8,7 @@ AgentWire Security Firewall - Bash Tool Hook
 =============================================
 
 Blocks dangerous commands before execution via PreToolUse hook.
-Loads patterns from patterns.yaml for easy customization.
+Loads patterns from rules directory for easy customization.
 
 Exit codes:
   0 = Allow command (or JSON output with permissionDecision)
@@ -129,28 +129,47 @@ NO_DELETE_BLOCKED = DELETE_PATTERNS
 # CONFIGURATION LOADING
 # ============================================================================
 
-def get_config_path() -> Path:
-    """Get path to patterns.yaml, checking multiple locations."""
-    # 1. Check AgentWire hooks directory
+def get_rules_dir() -> Path:
+    """Get path to rules directory."""
     agentwire_dir = os.environ.get("AGENTWIRE_DIR", os.path.expanduser("~/.agentwire"))
-    config = Path(agentwire_dir) / "hooks" / "damage-control" / "patterns.yaml"
-    if config.exists():
-        return config
-
-    # 2. Fallback to script directory
-    return Path(__file__).parent / "patterns.yaml"
+    rules_dir = Path(agentwire_dir) / "damage-control"
+    if rules_dir.exists() and list(rules_dir.glob("*.yaml")):
+        return rules_dir
+    # Fallback: rules/ subdirectory next to this script
+    return Path(__file__).parent / "rules"
 
 
 def load_config() -> Dict[str, Any]:
-    """Load patterns from YAML config file."""
-    config_path = get_config_path()
+    """Load and merge patterns from all .yaml files in rules directory."""
+    rules_dir = get_rules_dir()
 
-    if not config_path.exists():
-        print(f"Warning: Config not found at {config_path}", file=sys.stderr)
-        return {"bashToolPatterns": [], "zeroAccessPaths": [], "readOnlyPaths": [], "noDeletePaths": []}
+    merged = {
+        "bashToolPatterns": [],
+        "zeroAccessPaths": [],
+        "readOnlyPaths": [],
+        "noDeletePaths": [],
+        "allowedPaths": [],
+    }
 
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f) or {}
+    if not rules_dir.exists():
+        print(f"Warning: Rules directory not found at {rules_dir}", file=sys.stderr)
+        return merged
+
+    yaml_files = sorted(rules_dir.glob("*.yaml"))
+    if not yaml_files:
+        print(f"Warning: No .yaml files found in {rules_dir}", file=sys.stderr)
+        return merged
+
+    for rules_file in yaml_files:
+        try:
+            with open(rules_file, "r") as f:
+                data = yaml.safe_load(f) or {}
+            for key in merged:
+                merged[key].extend(data.get(key, []))
+        except Exception as e:
+            print(f"Warning: Could not load {rules_file.name}: {e}", file=sys.stderr)
+
+    return merged
 
 
 # ============================================================================

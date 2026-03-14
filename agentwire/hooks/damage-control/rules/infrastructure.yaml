@@ -1,0 +1,21 @@
+# Infrastructure as Code damage control rules
+# Terraform, Pulumi, Serverless Framework, SAM
+
+bashToolPatterns:
+  # ---------------------------------------------------------------------------
+  # INFRASTRUCTURE AS CODE DESTRUCTIVE OPERATIONS
+  # ---------------------------------------------------------------------------
+  - pattern: '\bterraform\s+destroy\b'
+    reason: terraform destroy (destroys all infrastructure)
+
+  - pattern: '\bpulumi\s+destroy\b'
+    reason: pulumi destroy (destroys all resources)
+
+  - pattern: '\bserverless\s+remove\b'
+    reason: serverless remove (removes stack)
+
+  - pattern: '\bsls\s+remove\b'
+    reason: sls remove (removes stack)
+
+  - pattern: '\bsam\s+delete\b'
+    reason: sam delete (deletes SAM application)

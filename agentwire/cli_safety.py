@@ -1,7 +1,6 @@
 """Safety CLI commands for AgentWire damage control integration."""
 
 import fnmatch
-import importlib.resources
 import json
 import os
 import re
@@ -21,11 +20,10 @@ except ImportError:
 CONFIG_DIR = Path.home() / ".agentwire"
 HOOKS_DIR = CONFIG_DIR / "hooks" / "damage-control"
 LOGS_DIR = CONFIG_DIR / "logs" / "damage-control"
-PATTERNS_FILE = HOOKS_DIR / "patterns.yaml"
+RULES_DIR = CONFIG_DIR / "damage-control"
 
-# Files to install from the package
+# Files to install from the package (hook scripts only, not rules)
 DAMAGE_CONTROL_FILES = [
-    "patterns.yaml",
     "bash-tool-damage-control.py",
     "edit-tool-damage-control.py",
     "write-tool-damage-control.py",
@@ -34,22 +32,12 @@ DAMAGE_CONTROL_FILES = [
 
 
 def get_damage_control_source() -> Path:
-    """Get the path to the damage-control hooks in the installed package."""
-    # First try: hooks/damage-control inside the agentwire package
+    """Get path to the bundled rules directory."""
     package_dir = Path(__file__).parent
-    source_dir = package_dir / "hooks" / "damage-control"
+    source_dir = package_dir / "hooks" / "damage-control" / "rules"
     if source_dir.exists():
         return source_dir
-
-    # Fallback: try importlib.resources (for installed packages)
-    try:
-        with importlib.resources.files("agentwire").joinpath("hooks/damage-control") as p:
-            if p.exists():
-                return Path(p)
-    except (TypeError, FileNotFoundError):
-        pass
-
-    raise FileNotFoundError("Could not find damage-control hooks in package")
+    raise FileNotFoundError("Could not find damage-control rules in package")
 
 
 def is_glob_pattern(pattern: str) -> bool:
@@ -273,20 +261,33 @@ def _infer_operation_from_reason(reason: str) -> str:
 
 
 def load_patterns() -> Dict[str, Any]:
-    """Load patterns from patterns.yaml."""
+    """Load and merge patterns from all .yaml files in RULES_DIR."""
     if not yaml:
-        print("Error: PyYAML not installed. Install with: pip install pyyaml", file=sys.stderr)
+        print("Error: PyYAML not installed.", file=sys.stderr)
         return {}
 
-    if not PATTERNS_FILE.exists():
+    if not RULES_DIR.exists():
         return {}
 
-    try:
-        with open(PATTERNS_FILE, "r") as f:
-            return yaml.safe_load(f) or {}
-    except Exception as e:
-        print(f"Error loading patterns: {e}", file=sys.stderr)
-        return {}
+    merged = {
+        "bashToolPatterns": [],
+        "zeroAccessPaths": [],
+        "readOnlyPaths": [],
+        "noDeletePaths": [],
+        "allowedPaths": [],
+    }
+
+    yaml_files = sorted(RULES_DIR.glob("*.yaml"))
+    for rules_file in yaml_files:
+        try:
+            with open(rules_file, "r") as f:
+                data = yaml.safe_load(f) or {}
+            for key in merged:
+                merged[key].extend(data.get(key, []))
+        except Exception as e:
+            print(f"Warning: Could not load {rules_file.name}: {e}", file=sys.stderr)
+
+    return merged
 
 
 def check_command_safety(command: str, verbose: bool = False) -> Dict[str, Any]:
@@ -412,10 +413,13 @@ def get_safety_status() -> Dict[str, Any]:
     """Get current safety status - patterns count, recent blocks, etc."""
     patterns = load_patterns()
 
+    rule_files = sorted(f.name for f in RULES_DIR.glob("*.yaml")) if RULES_DIR.exists() else []
+
     status = {
         "hooks_installed": HOOKS_DIR.exists(),
-        "patterns_file": str(PATTERNS_FILE),
-        "patterns_exist": PATTERNS_FILE.exists(),
+        "rules_dir": str(RULES_DIR),
+        "patterns_exist": RULES_DIR.exists() and any(RULES_DIR.glob("*.yaml")),
+        "rule_files": rule_files,
         "logs_dir": str(LOGS_DIR),
         "logs_exist": LOGS_DIR.exists(),
         "pattern_counts": {
@@ -523,8 +527,10 @@ def format_safety_status(status: Dict[str, Any]) -> str:
         return "\n".join(lines)
 
     lines.append(f"✓ Hooks directory: {status['hooks_installed']}")
-    lines.append(f"✓ Patterns file: {status['patterns_file']}")
+    lines.append(f"✓ Rules directory: {status['rules_dir']}")
     lines.append(f"  Exists: {status['patterns_exist']}")
+    if status.get("rule_files"):
+        lines.append(f"  Files: {', '.join(status['rule_files'])}")
     lines.append("")
 
     lines.append("Pattern Counts:")
@@ -649,7 +655,7 @@ def safety_install_cmd() -> int:
     print()
 
     # Check if already installed
-    if HOOKS_DIR.exists() and PATTERNS_FILE.exists():
+    if HOOKS_DIR.exists() and RULES_DIR.exists() and any(RULES_DIR.glob("*.yaml")):
         print("⚠️  Safety hooks already installed")
         print(f"   Location: {HOOKS_DIR}")
         response = input("Reinstall? [y/N] ").strip().lower()
@@ -684,14 +690,17 @@ def safety_install_cmd() -> int:
     print("Creating directories...")
     HOOKS_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    RULES_DIR.mkdir(parents=True, exist_ok=True)
     print(f"✓ Created {HOOKS_DIR}")
     print(f"✓ Created {LOGS_DIR}")
+    print(f"✓ Created {RULES_DIR}")
 
-    # Copy files from package to user config
+    # Copy hook scripts from package to hooks directory
+    hooks_source = Path(__file__).parent / "hooks" / "damage-control"
     print()
     print("Installing hooks...")
     for filename in DAMAGE_CONTROL_FILES:
-        source_file = source_dir / filename
+        source_file = hooks_source / filename
         target_file = HOOKS_DIR / filename
         if source_file.exists():
             shutil.copy2(source_file, target_file)
@@ -702,12 +711,20 @@ def safety_install_cmd() -> int:
         else:
             print(f"⚠️  Missing {filename} in package")
 
+    # Copy rules directory from package to user config
+    print()
+    print("Installing rules...")
+    for rules_file in sorted(source_dir.glob("*.yaml")):
+        target_file = RULES_DIR / rules_file.name
+        shutil.copy2(rules_file, target_file)
+        print(f"✓ Installed {rules_file.name}")
+
     print()
     print("✓ Installation complete!")
     print()
     print("Next steps:")
     print("  1. Test with: agentwire safety check 'rm -rf /'")
     print("  2. View status: agentwire safety status")
-    print("  3. Configure patterns: edit ~/.agentwire/hooks/damage-control/patterns.yaml")
+    print("  3. Configure rules: edit files in ~/.agentwire/damage-control/")
 
     return 0
