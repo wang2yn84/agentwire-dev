@@ -4,6 +4,12 @@ purpose: Interact with Gmail, Drive, Calendar, Sheets, Docs, Chat, and Admin —
 docs: https://github.com/googleworkspace/cli
 install: npm install -g @googleworkspace/cli
 
+# Granted scopes (dotdev):
+#   Gmail:    read-only
+#   Drive:    read-only
+#   Calendar: read + create/update events (not delete calendar)
+#   gcloud:   read-only
+
 commands:
   # Auth
   - cmd: "gws auth login"
