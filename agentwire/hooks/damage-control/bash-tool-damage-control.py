@@ -139,8 +139,69 @@ def get_rules_dir() -> Path:
     return Path(__file__).parent / "rules"
 
 
+def get_tooldefs_dir() -> Path:
+    """Get path to tooldefs directory."""
+    agentwire_dir = os.environ.get("AGENTWIRE_DIR", os.path.expanduser("~/.agentwire"))
+    tooldefs_dir = Path(agentwire_dir) / "tooldefs"
+    if tooldefs_dir.exists():
+        return tooldefs_dir
+    # Fallback: tooldefs/ relative to agentwire package (hooks/damage-control/../../tooldefs)
+    return Path(__file__).parent.parent.parent / "tooldefs"
+
+
+def _cmd_to_regex(cmd: str) -> Optional[str]:
+    """Convert a tooldef command string to a regex matching its fixed prefix.
+
+    Stops at the first flag (- or --), placeholder (<...>), or optional ([...]).
+    Example: "gws gmail +send --to <addr>" -> r'\\bgws\\s+gmail\\s+\\+send\\b'
+    """
+    tokens = cmd.strip().split()
+    fixed = []
+    for token in tokens:
+        if token.startswith('<') or token.startswith('[') or token.startswith('-'):
+            break
+        fixed.append(token)
+    if not fixed:
+        return None
+    parts = [re.escape(t) for t in fixed]
+    pattern = r'\b' + r'\s+'.join(parts)
+    last = fixed[-1]
+    if last and (last[-1].isalnum() or last[-1] == '_'):
+        pattern += r'\b'
+    return pattern
+
+
+def load_write_patterns_from_tooldefs() -> List[Dict[str, Any]]:
+    """Generate ask:true patterns from write-tier commands in tooldefs."""
+    patterns = []
+    tooldefs_dir = get_tooldefs_dir()
+    if not tooldefs_dir.exists():
+        return patterns
+    for tf_file in sorted(tooldefs_dir.glob("*.yaml")):
+        try:
+            with open(tf_file, "r") as f:
+                data = yaml.safe_load(f) or {}
+            tool_name = data.get("name", tf_file.stem)
+            for cmd_def in data.get("commands", []):
+                if cmd_def.get("access") != "write":
+                    continue
+                cmd_str = cmd_def.get("cmd", "")
+                regex = _cmd_to_regex(cmd_str)
+                if not regex:
+                    continue
+                patterns.append({
+                    "pattern": regex,
+                    "reason": f"{tool_name}: {cmd_def.get('description', cmd_str)}",
+                    "ask": True,
+                })
+        except Exception:
+            continue
+    return patterns
+
+
 def load_config() -> Dict[str, Any]:
-    """Load and merge patterns from all .yaml files in rules directory."""
+    """Load and merge patterns from all .yaml files in rules directory,
+    then append ask:true patterns generated from write-tier tooldef commands."""
     rules_dir = get_rules_dir()
 
     merged = {
@@ -168,6 +229,9 @@ def load_config() -> Dict[str, Any]:
                 merged[key].extend(data.get(key, []))
         except Exception as e:
             print(f"Warning: Could not load {rules_file.name}: {e}", file=sys.stderr)
+
+    # Append write-tier tooldef patterns after rules (so explicit blocks take precedence)
+    merged["bashToolPatterns"].extend(load_write_patterns_from_tooldefs())
 
     return merged
 

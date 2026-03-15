@@ -270,8 +270,64 @@ def _infer_operation_from_reason(reason: str) -> str:
     return "write"
 
 
+def _cmd_to_regex(cmd: str) -> Optional[str]:
+    """Convert a tooldef command string to a regex matching its fixed prefix.
+
+    Stops at the first flag (- or --), placeholder (<...>), or optional ([...]).
+    Example: "gws gmail +send --to <addr>" -> r'\\bgws\\s+gmail\\s+\\+send\\b'
+    """
+    tokens = cmd.strip().split()
+    fixed = []
+    for token in tokens:
+        if token.startswith('<') or token.startswith('[') or token.startswith('-'):
+            break
+        fixed.append(token)
+    if not fixed:
+        return None
+    parts = [re.escape(t) for t in fixed]
+    pattern = r'\b' + r'\s+'.join(parts)
+    last = fixed[-1]
+    if last and (last[-1].isalnum() or last[-1] == '_'):
+        pattern += r'\b'
+    return pattern
+
+
+def _load_write_patterns_from_tooldefs() -> List[Dict[str, Any]]:
+    """Generate ask:true patterns from write-tier commands in tooldefs."""
+    if not yaml:
+        return []
+    patterns = []
+    tooldefs_source = TOOLDEFS_DIR if TOOLDEFS_DIR.exists() else None
+    if tooldefs_source is None:
+        try:
+            tooldefs_source = get_tooldefs_source()
+        except FileNotFoundError:
+            return patterns
+    for tf_file in sorted(tooldefs_source.glob("*.yaml")):
+        try:
+            with open(tf_file, "r") as f:
+                data = yaml.safe_load(f) or {}
+            tool_name = data.get("name", tf_file.stem)
+            for cmd_def in data.get("commands", []):
+                if cmd_def.get("access") != "write":
+                    continue
+                cmd_str = cmd_def.get("cmd", "")
+                regex = _cmd_to_regex(cmd_str)
+                if not regex:
+                    continue
+                patterns.append({
+                    "pattern": regex,
+                    "reason": f"{tool_name}: {cmd_def.get('description', cmd_str)}",
+                    "ask": True,
+                })
+        except Exception:
+            continue
+    return patterns
+
+
 def load_patterns() -> Dict[str, Any]:
-    """Load and merge patterns from all .yaml files in RULES_DIR."""
+    """Load and merge patterns from all .yaml files in RULES_DIR,
+    then append ask:true patterns generated from write-tier tooldef commands."""
     if not yaml:
         print("Error: PyYAML not installed.", file=sys.stderr)
         return {}
@@ -296,6 +352,9 @@ def load_patterns() -> Dict[str, Any]:
                 merged[key].extend(data.get(key, []))
         except Exception as e:
             print(f"Warning: Could not load {rules_file.name}: {e}", file=sys.stderr)
+
+    # Append write-tier tooldef patterns after rules (so explicit blocks take precedence)
+    merged["bashToolPatterns"].extend(_load_write_patterns_from_tooldefs())
 
     return merged
 
