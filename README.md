@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://agentwire.dev/images/splash-full-transparent.png" alt="AgentWire" width="500">
+  <img src="https://agentwire.dev/images/echo-banner.png" alt="AgentWire" width="600">
 </p>
 
 <p align="center">
