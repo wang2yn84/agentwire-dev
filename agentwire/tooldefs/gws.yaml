@@ -32,173 +32,144 @@ commands:
     access: read
     description: Show current authentication state and authed accounts
 
-  # Gmail
-  - cmd: "gws gmail users.messages.list"
+  # Gmail — all commands require --params '{"userId":"me",...}'
+  - cmd: "gws gmail users messages list --params '{\"userId\":\"me\",\"maxResults\":50,\"q\":\"<query>\"}'"
     access: read
-    description: List messages in mailbox
+    description: List/search messages in mailbox
 
-  - cmd: "gws gmail users.messages.get --id <message-id>"
+  - cmd: "gws gmail users messages get --params '{\"userId\":\"me\",\"id\":\"<id>\",\"format\":\"full\"}'"
     access: read
-    description: Get a specific message
+    description: Get a specific message (format: full|metadata|minimal)
 
-  - cmd: "gws gmail users.threads.list"
+  - cmd: "gws gmail users messages attachments get --params '{\"userId\":\"me\",\"messageId\":\"<id>\",\"id\":\"<attachmentId>\"}' --output <file>"
+    access: read
+    description: Download a message attachment
+
+  - cmd: "gws gmail users threads list --params '{\"userId\":\"me\"}'"
     access: read
     description: List email threads
 
-  - cmd: "gws gmail users.labels.list"
+  - cmd: "gws gmail users labels list --params '{\"userId\":\"me\"}'"
     access: read
     description: List all labels
 
-  - cmd: "gws gmail +send --to <addr> --subject '<subject>' --body '<body>'"
-    access: write
-    description: Send an email
+  - cmd: "gws gmail users getProfile --params '{\"userId\":\"me\"}'"
+    access: read
+    description: Get account profile (confirms which account is active)
 
-  - cmd: "gws gmail +reply --message-id <id> --body '<body>'"
-    access: write
-    description: Reply to a message
-
-  - cmd: "gws gmail +forward --message-id <id> --to <addr>"
-    access: write
-    description: Forward a message
-
-  - cmd: "gws gmail users.messages.trash --id <id>"
+  - cmd: "gws gmail users messages trash --params '{\"userId\":\"me\",\"id\":\"<id>\"}'"
     access: write
     description: Move message to trash
 
-  - cmd: "gws gmail users.messages.delete --id <id>"
+  - cmd: "gws gmail users messages delete --params '{\"userId\":\"me\",\"id\":\"<id>\"}'"
     access: blocked
     description: Permanently delete a message (bypasses trash)
 
-  - cmd: "gws gmail users.messages.batchDelete"
+  - cmd: "gws gmail users messages batchDelete"
     access: blocked
     description: Permanently delete multiple messages
 
-  # Calendar
-  - cmd: "gws calendar +agenda [--today] [--week] [--days <n>]"
-    access: read
-    description: Show calendar agenda
-
-  - cmd: "gws calendar calendarList.list"
+  # Calendar — all commands require calendarId
+  - cmd: "gws calendar calendarList list --params '{\"userId\":\"me\"}'"
     access: read
     description: List all calendars
 
-  - cmd: "gws calendar events.list --calendarId <id>"
+  - cmd: "gws calendar events list --params '{\"calendarId\":\"primary\"}'"
     access: read
     description: List events in a calendar
 
-  - cmd: "gws calendar events.get --calendarId <id> --eventId <id>"
+  - cmd: "gws calendar events get --params '{\"calendarId\":\"primary\",\"eventId\":\"<id>\"}'"
     access: read
     description: Get a specific event
 
-  - cmd: "gws calendar events.insert --calendarId <id>"
+  - cmd: "gws calendar events insert --params '{\"calendarId\":\"primary\"}' --json '{\"summary\":\"...\",\"start\":{...},\"end\":{...}}'"
     access: write
     description: Create a calendar event
 
-  - cmd: "gws calendar events.update --calendarId <id> --eventId <id>"
+  - cmd: "gws calendar events update --params '{\"calendarId\":\"primary\",\"eventId\":\"<id>\"}'"
     access: write
     description: Update a calendar event
 
-  - cmd: "gws calendar events.delete --calendarId <id> --eventId <id>"
+  - cmd: "gws calendar events delete --params '{\"calendarId\":\"primary\",\"eventId\":\"<id>\"}'"
     access: write
     description: Delete a calendar event
 
-  - cmd: "gws calendar calendars.delete --calendarId <id>"
+  - cmd: "gws calendar calendars delete --params '{\"calendarId\":\"<id>\"}'"
     access: blocked
     description: Delete an entire calendar and all its events
 
   # Drive
-  - cmd: "gws drive files.list [--q '<query>']"
+  - cmd: "gws drive files list --params '{\"q\":\"<query>\"}'"
     access: read
     description: List files in Drive
 
-  - cmd: "gws drive files.get --fileId <id>"
+  - cmd: "gws drive files get --params '{\"fileId\":\"<id>\"}'"
     access: read
     description: Get file metadata
 
-  - cmd: "gws drive +upload <file> [--name '<name>']"
-    access: write
-    description: Upload a file to Drive
-
-  - cmd: "gws drive files.update --fileId <id>"
+  - cmd: "gws drive files update --params '{\"fileId\":\"<id>\"}'"
     access: write
     description: Update file metadata or content
 
-  - cmd: "gws drive files.copy --fileId <id>"
+  - cmd: "gws drive files copy --params '{\"fileId\":\"<id>\"}'"
     access: write
     description: Copy a file
 
-  - cmd: "gws drive files.delete --fileId <id>"
+  - cmd: "gws drive files delete --params '{\"fileId\":\"<id>\"}'"
     access: blocked
     description: Permanently delete a file (bypasses trash)
 
-  - cmd: "gws drive files.emptyTrash"
-    access: blocked
-    description: Permanently delete all trashed files
-
   # Sheets
-  - cmd: "gws sheets spreadsheets.get --spreadsheetId <id>"
+  - cmd: "gws sheets spreadsheets get --params '{\"spreadsheetId\":\"<id>\"}'"
     access: read
     description: Get spreadsheet metadata and structure
 
-  - cmd: "gws sheets spreadsheets.values.get --spreadsheetId <id> --range <range>"
+  - cmd: "gws sheets spreadsheets values get --params '{\"spreadsheetId\":\"<id>\",\"range\":\"<range>\"}'"
     access: read
     description: Read cell values from a range
 
-  - cmd: "gws sheets spreadsheets.values.update --spreadsheetId <id> --range <range>"
+  - cmd: "gws sheets spreadsheets values update --params '{\"spreadsheetId\":\"<id>\",\"range\":\"<range>\"}'"
     access: write
     description: Write values to a range
 
-  - cmd: "gws sheets spreadsheets.values.append --spreadsheetId <id> --range <range>"
+  - cmd: "gws sheets spreadsheets values append --params '{\"spreadsheetId\":\"<id>\",\"range\":\"<range>\"}'"
     access: write
     description: Append rows to a sheet
 
-  - cmd: "gws sheets spreadsheets.values.clear --spreadsheetId <id> --range <range>"
+  - cmd: "gws sheets spreadsheets values clear --params '{\"spreadsheetId\":\"<id>\",\"range\":\"<range>\"}'"
     access: write
     description: Clear values in a range
 
   # Docs
-  - cmd: "gws docs documents.get --documentId <id>"
+  - cmd: "gws docs documents get --params '{\"documentId\":\"<id>\"}'"
     access: read
     description: Get document content and structure
 
-  - cmd: "gws docs documents.batchUpdate --documentId <id>"
+  - cmd: "gws docs documents batchUpdate --params '{\"documentId\":\"<id>\"}'"
     access: write
     description: Apply edits to a document
 
-  # Chat
-  - cmd: "gws chat spaces.list"
-    access: read
-    description: List Chat spaces
-
-  - cmd: "gws chat spaces.messages.list --parent <space>"
-    access: read
-    description: List messages in a Chat space
-
-  - cmd: "gws chat spaces.messages.create --parent <space>"
-    access: write
-    description: Send a message to a Chat space
-
   # Admin (requires admin privileges)
-  - cmd: "gws admin users.list"
+  - cmd: "gws admin users list"
     access: read
     description: List users in the workspace (admin only)
 
-  - cmd: "gws admin users.get --userKey <email>"
+  - cmd: "gws admin users get --params '{\"userKey\":\"<email>\"}'"
     access: read
     description: Get user details (admin only)
 
-  - cmd: "gws admin users.insert"
+  - cmd: "gws admin users insert"
     access: write
     description: Create a new user (admin only)
 
-  - cmd: "gws admin users.update --userKey <email>"
+  - cmd: "gws admin users update --params '{\"userKey\":\"<email>\"}'"
     access: write
     description: Update user details (admin only)
 
-  - cmd: "gws admin users.delete --userKey <email>"
+  - cmd: "gws admin users delete --params '{\"userKey\":\"<email>\"}'"
     access: blocked
     description: Permanently delete a user account (admin only)
 
-  - cmd: "gws admin users.makeAdmin --userKey <email>"
+  - cmd: "gws admin users makeAdmin --params '{\"userKey\":\"<email>\"}'"
     access: blocked
     description: Grant admin privileges to a user
