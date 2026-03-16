@@ -4,7 +4,20 @@ purpose: Interact with Gmail, Drive, Calendar, Sheets, Docs, Chat, and Admin —
 docs: https://github.com/googleworkspace/cli
 install: npm install -g @googleworkspace/cli
 
-# Granted scopes (dotdev):
+# Multi-account usage:
+#   ALWAYS use --params '{"userId":"me"}' — gws requires explicit userId
+#   Account selection via env var (--account flag doesn't work as a subcommand flag):
+#     GOOGLE_WORKSPACE_CLI_ACCOUNT=email@gmail.com gws gmail ...
+#   To add a new account: gws auth login --account email@gmail.com
+#     (browser will open — sign in as that account)
+#     The OAuth app is shared (dotdev-workspace GCP project)
+#     New accounts must be added as test users on the OAuth consent screen first
+#
+# Authed accounts:
+#   dotdevdotdev@gmail.com  — default (no env var needed)
+#   jordangarygerard@gmail.com — GOOGLE_WORKSPACE_CLI_ACCOUNT=jordangarygerard@gmail.com
+#
+# Granted scopes (both accounts):
 #   Gmail:    read-only
 #   Drive:    read-only
 #   Calendar: read + create/update events (not delete calendar)
@@ -12,13 +25,13 @@ install: npm install -g @googleworkspace/cli
 
 commands:
   # Auth
-  - cmd: "gws auth login"
+  - cmd: "gws auth login --account <email>"
     access: write
-    description: Authenticate with Google account
+    description: Authenticate a new Google account (opens browser — sign in as that account)
 
   - cmd: "gws auth status"
     access: read
-    description: Show current authentication state
+    description: Show current authentication state and authed accounts
 
   # Gmail
   - cmd: "gws gmail users.messages.list"
