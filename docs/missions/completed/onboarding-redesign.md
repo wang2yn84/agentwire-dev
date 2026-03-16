@@ -4,7 +4,7 @@
 
 **Issue:** [#63](https://github.com/dotdevdotdev/agentwire/issues/63)
 **Branch:** `63-onboarding-redesign`
-**Status:** Implementation Complete (needs testing)
+**Status:** Complete
 
 ## Goal
 
@@ -63,8 +63,8 @@ Keep `agentwire init --non-interactive` with:
 - [x] Implement: Refactor onboarding.py for minimal flow
 - [x] Implement: Create init role for Claude-assisted setup
 - [x] Fix parameter mismatch bug (`skip_agentwire` → `skip_session`)
-- [ ] Test: Both paths end-to-end
-- [ ] Implement: Add `--non-interactive` with proper flags (future)
+- [x] Test: Both paths end-to-end
+- [ ] Implement: Add `--non-interactive` with proper flags (future, not blocking)
 
 ## Files to Modify
 

@@ -31,17 +31,38 @@ Walk through each service interactively. For each:
 TTS converts agent responses to spoken audio that plays in the browser or local speakers.
 
 **Options:**
-- `chatterbox` - Local server, high quality, requires GPU for fast inference
-- `runpod` - Cloud API using RunPod serverless, good quality, costs ~$0.0001/request
+- `kokoro` - Local server, CPU-only, no GPU required — recommended for Mac and most users
+- `chatterbox` - Local server, high quality voice cloning, requires GPU for fast inference
+- `runpod` - Cloud API using RunPod serverless, no local GPU needed, costs ~$0.0001/request
 - `none` - Text only, no voice output
 
-**If chatterbox:**
+**If kokoro (recommended for most users):**
 ```bash
-# Start the TTS server
+# Start the TTS server (uses Kokoro — CPU, no GPU required)
 agentwire tts start
 
 # Test it
 curl http://localhost:8100/voices
+```
+
+Update `~/.agentwire/config.yaml`:
+```yaml
+tts:
+  backend: "kokoro"
+  default_voice: "af_heart"  # or another voice from /voices
+```
+
+**If chatterbox (GPU required for fast inference):**
+```bash
+agentwire tts start
+curl http://localhost:8100/voices
+```
+
+Update `~/.agentwire/config.yaml`:
+```yaml
+tts:
+  backend: "chatterbox"
+  default_voice: "default"
 ```
 
 **If runpod:**
@@ -53,11 +74,9 @@ They'll need a RunPod account and endpoint. Guide them through:
 Update `~/.agentwire/config.yaml`:
 ```yaml
 tts:
-  backend: "chatterbox"  # or "runpod" or "none"
-  url: "http://localhost:8100"  # for chatterbox
-  # For runpod:
-  # runpod_endpoint_id: "abc123"
-  # runpod_api_key: "rp_xxxxx"
+  backend: "runpod"
+  runpod_endpoint_id: "abc123"
+  runpod_api_key: "rp_xxxxx"
   default_voice: "default"
 ```
 

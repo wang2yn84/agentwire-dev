@@ -7764,6 +7764,18 @@ def _handle_task_notification(notify_config: str, ctx, session: str, json_mode: 
             if not json_mode:
                 print(f"Warning: Webhook notification failed: {e}")
 
+    elif notify_config == "email":
+        # Send email with task result
+        subject = f"Task {ctx.task}: {ctx.status}"
+        body_lines = [f"**{ctx.task}** finished with status: **{ctx.status}**"]
+        if ctx.summary:
+            body_lines.append(f"\n{ctx.summary}")
+        body_lines.append(f"\nSession: {ctx.session}")
+        subprocess.run(
+            ["agentwire", "email", "--subject", subject, "--body", "\n".join(body_lines)],
+            capture_output=True,
+        )
+
     elif notify_config.startswith("command "):
         # Run custom command
         cmd = notify_config[8:].strip()

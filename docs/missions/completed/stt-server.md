@@ -4,7 +4,7 @@
 
 **Issue:** [#65](https://github.com/dotdevdotdev/agentwire/issues/65)
 **Branch:** `65-stt-server`
-**Status:** In Progress
+**Status:** Complete
 
 ## Goal
 
@@ -49,8 +49,8 @@ agentwire/
 - [x] Implement `/transcribe` endpoint
 - [x] Implement `/health` endpoint
 - [x] Update `listen.py` to check for server and use it
-- [ ] Test `agentwire stt start/stop/status` commands
-- [ ] Update CLAUDE.md config docs
+- [x] Test `agentwire stt start/stop/status` commands
+- [x] Update CLAUDE.md config docs
 
 ## Reference
 

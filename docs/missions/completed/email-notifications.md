@@ -2,7 +2,7 @@
 
 > Living document. Update this, don't create new versions.
 
-## Status: In Progress
+## Status: Complete
 
 ## Summary
 
@@ -83,13 +83,13 @@ agentwire email --to team@example.com --subject "Deploy Done" --body "v2.1.0 is 
 
 ### TODO
 
-- [ ] HTML email template with Echo branding
-- [ ] Markdown → HTML rendering for body
-- [ ] Attachment support (Resend attachments API)
-- [ ] Playful greeting variations
-- [ ] MCP tool: `agentwire_email()`
-- [ ] Task integration: `output.notify: email`
-- [ ] Echo owl image asset for emails
+- [x] HTML email template with Echo branding
+- [x] Markdown → HTML rendering for body
+- [x] Attachment support (Resend attachments API)
+- [x] Playful greeting variations
+- [x] MCP tool: `agentwire_email()`
+- [x] Task integration: `output.notify: email`
+- [ ] Echo owl image asset for emails (optional — uses placeholder when not configured)
 
 ### HTML Template
 
