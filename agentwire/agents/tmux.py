@@ -36,13 +36,19 @@ def parse_env_var_prefix(command: str) -> tuple[str | None, str | None, str]:
     return None, None, command
 
 
+def _tmux_path() -> str:
+    """Resolve tmux binary path, with fallback to common locations."""
+    import shutil
+    return shutil.which("tmux") or "/opt/homebrew/bin/tmux"
+
+
 def tmux_session_exists(name: str) -> bool:
     """Check if a local tmux session exists (exact match).
 
     Module-level helper for use outside the TmuxAgent class.
     """
     result = subprocess.run(
-        ["tmux", "has-session", "-t", f"={name}"],
+        [_tmux_path(), "has-session", "-t", f"={name}"],
         capture_output=True,
     )
     return result.returncode == 0

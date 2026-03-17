@@ -370,8 +370,11 @@ tts:
   runpod_timeout: 120  # API timeout for RunPod (seconds)
 
 stt:
-  url: "http://localhost:8100"
+  url: "http://localhost:8101"
   timeout: 30
+  backend: "auto"       # auto (moonshine → faster-whisper fallback), moonshine, whisper
+  model: "base"         # Whisper model size (used when backend=whisper)
+  moonshine_model: "moonshine/base"  # moonshine/tiny (faster) or moonshine/base
 
 agent:
   command: "claude --dangerously-skip-permissions"

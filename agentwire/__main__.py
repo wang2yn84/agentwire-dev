@@ -1577,7 +1577,11 @@ def cmd_stt_start(args) -> int:
 
     port = args.port or 8101
     host = args.host or "0.0.0.0"
-    model = args.model or os.environ.get("WHISPER_MODEL", "base")
+    config = load_config()
+    stt_config = config.get("stt", {})
+    model = args.model or stt_config.get("model", "base")
+    backend = getattr(args, 'backend', None) or stt_config.get("backend", "auto")
+    moonshine_model = stt_config.get("moonshine_model", "moonshine/base")
 
     # Find agentwire source directory (for running from source venv)
     source_dir = get_source_dir()
@@ -1589,7 +1593,7 @@ def cmd_stt_start(args) -> int:
 
     # Build command using source venv
     python_path = agentwire_dir / ".venv" / "bin" / "python"
-    cmd = f"cd {agentwire_dir} && WHISPER_MODEL={model} WHISPER_DEVICE=cpu STT_PORT={port} STT_HOST={host} {python_path} -m agentwire.stt.stt_server"
+    cmd = f"cd {agentwire_dir} && WHISPER_MODEL={model} WHISPER_DEVICE=cpu STT_PORT={port} STT_HOST={host} STT_BACKEND={backend} MOONSHINE_MODEL={moonshine_model} {python_path} -m agentwire.stt.stt_server"
 
     # Create tmux session
     subprocess.run([
@@ -1613,10 +1617,16 @@ def cmd_stt_serve(args) -> int:
 
     port = args.port or 8101
     host = args.host or "0.0.0.0"
-    model = args.model or "base"
+    config = load_config()
+    stt_config = config.get("stt", {})
+    model = args.model or stt_config.get("model", "base")
+    backend = getattr(args, 'backend', None) or stt_config.get("backend", "auto")
+    moonshine_model = stt_config.get("moonshine_model", "moonshine/base")
 
     os.environ["WHISPER_MODEL"] = model
     os.environ["WHISPER_DEVICE"] = "cpu"
+    os.environ["STT_BACKEND"] = backend
+    os.environ["MOONSHINE_MODEL"] = moonshine_model
 
     print(f"Starting STT server on {host}:{port} with model {model}...")
     uvicorn.run(
@@ -8865,6 +8875,7 @@ def main() -> int:
     stt_start.add_argument("--port", type=int, help="Server port (default: 8101)")
     stt_start.add_argument("--host", type=str, help="Server host (default: 0.0.0.0)")
     stt_start.add_argument("--model", type=str, help="Whisper model (tiny/base/small/medium/large-v3)")
+    stt_start.add_argument("--backend", type=str, help="STT backend: auto (default), moonshine, whisper")
     stt_start.set_defaults(func=cmd_stt_start)
 
     # stt serve
@@ -8872,6 +8883,7 @@ def main() -> int:
     stt_serve.add_argument("--port", type=int, help="Server port (default: 8101)")
     stt_serve.add_argument("--host", type=str, help="Server host (default: 0.0.0.0)")
     stt_serve.add_argument("--model", type=str, help="Whisper model (tiny/base/small/medium/large-v3)")
+    stt_serve.add_argument("--backend", type=str, help="STT backend: auto (default), moonshine, whisper")
     stt_serve.set_defaults(func=cmd_stt_serve)
 
     # stt stop

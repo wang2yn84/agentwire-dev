@@ -28,6 +28,10 @@ WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 STT_HOST = os.environ.get("STT_HOST", "0.0.0.0")
 STT_PORT = int(os.environ.get("STT_PORT", "8101"))
+# Set STT_BACKEND=moonshine to force Moonshine, STT_BACKEND=whisper to force faster-whisper
+STT_BACKEND = os.environ.get("STT_BACKEND", "auto")
+# Moonshine model: moonshine/tiny (fastest) or moonshine/base (better accuracy)
+MOONSHINE_MODEL = os.environ.get("MOONSHINE_MODEL", "moonshine/base")
 
 # Global model instance
 whisper_model = None
@@ -35,33 +39,67 @@ model_info = {}
 
 
 def load_whisper_model():
-    """Load Whisper model based on environment config."""
+    """Load STT model based on environment config."""
     global whisper_model, model_info
 
-    # Try faster-whisper first (better performance)
-    try:
-        from faster_whisper import WhisperModel
+    # Try Moonshine ONNX first (fast CPU inference, no GPU/torch required)
+    if STT_BACKEND in ("auto", "moonshine"):
+        try:
+            import moonshine_onnx
+            import numpy as np
+            import soundfile as sf
 
-        compute_type = "float32" if WHISPER_DEVICE == "cpu" else "float16"
-        print(f"Loading faster-whisper model: {WHISPER_MODEL} on {WHISPER_DEVICE}...")
-        start = time.time()
-        whisper_model = WhisperModel(
-            WHISPER_MODEL,
-            device=WHISPER_DEVICE,
-            compute_type=compute_type,
-        )
-        elapsed = time.time() - start
-        model_info = {
-            "backend": "faster-whisper",
-            "model": WHISPER_MODEL,
-            "device": WHISPER_DEVICE,
-            "compute_type": compute_type,
-            "load_time": round(elapsed, 2),
-        }
-        print(f"Model loaded in {elapsed:.2f}s")
-        return
-    except ImportError:
-        print("faster-whisper not available, trying openai-whisper...")
+            print(f"Loading Moonshine ONNX model: {MOONSHINE_MODEL}...")
+            start = time.time()
+            # Warm up: load model weights with a dummy transcription
+            dummy = np.zeros(16000, dtype=np.float32)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                sf.write(f.name, dummy, 16000)
+                moonshine_onnx.transcribe(f.name, MOONSHINE_MODEL)
+                os.unlink(f.name)
+            elapsed = time.time() - start
+            whisper_model = moonshine_onnx
+            model_info = {
+                "backend": "moonshine",
+                "model": MOONSHINE_MODEL,
+                "load_time": round(elapsed, 2),
+            }
+            print(f"Moonshine ONNX loaded in {elapsed:.2f}s")
+            return
+        except ImportError:
+            if STT_BACKEND == "moonshine":
+                raise RuntimeError("useful-moonshine-onnx not installed. Run: pip install useful-moonshine-onnx soundfile")
+            print("moonshine_onnx not available, trying faster-whisper...")
+        except Exception as e:
+            if STT_BACKEND == "moonshine":
+                raise
+            print(f"Moonshine failed ({e}), trying faster-whisper...")
+
+    # Try faster-whisper
+    if STT_BACKEND in ("auto", "whisper"):
+        try:
+            from faster_whisper import WhisperModel
+
+            compute_type = "float32" if WHISPER_DEVICE == "cpu" else "float16"
+            print(f"Loading faster-whisper model: {WHISPER_MODEL} on {WHISPER_DEVICE}...")
+            start = time.time()
+            whisper_model = WhisperModel(
+                WHISPER_MODEL,
+                device=WHISPER_DEVICE,
+                compute_type=compute_type,
+            )
+            elapsed = time.time() - start
+            model_info = {
+                "backend": "faster-whisper",
+                "model": WHISPER_MODEL,
+                "device": WHISPER_DEVICE,
+                "compute_type": compute_type,
+                "load_time": round(elapsed, 2),
+            }
+            print(f"Model loaded in {elapsed:.2f}s")
+            return
+        except ImportError:
+            print("faster-whisper not available, trying openai-whisper...")
 
     # Fall back to openai-whisper
     try:
@@ -89,8 +127,17 @@ def transcribe_audio(audio_path: str) -> dict:
         raise RuntimeError("Model not loaded")
 
     start = time.time()
+    backend = model_info.get("backend")
 
-    if model_info.get("backend") == "faster-whisper":
+    if backend == "moonshine":
+        texts = whisper_model.transcribe(audio_path, MOONSHINE_MODEL)
+        text = " ".join(t.strip() for t in texts) if isinstance(texts, (list, tuple)) else str(texts).strip()
+        result = {
+            "text": text,
+            "language": "en",
+            "duration": None,
+        }
+    elif backend == "faster-whisper":
         segments, info = whisper_model.transcribe(
             audio_path,
             beam_size=5,
@@ -109,7 +156,7 @@ def transcribe_audio(audio_path: str) -> dict:
         result = {
             "text": result["text"].strip(),
             "language": result.get("language", "en"),
-            "duration": None,  # openai-whisper doesn't provide this easily
+            "duration": None,
         }
 
     result["transcribe_time"] = round(time.time() - start, 2)

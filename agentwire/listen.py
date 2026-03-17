@@ -370,7 +370,13 @@ def stop_recording(session: str, voice_prompt: bool = True, type_at_cursor: bool
         print(f"Typed: {text}")
     else:
         # Send to tmux session (original behavior)
-        if not tmux_session_exists(session):
+        try:
+            exists = tmux_session_exists(session)
+        except Exception as e:
+            log(f"ERROR: tmux_session_exists failed: {e}")
+            exists = False
+
+        if not exists:
             log(f"ERROR: No session '{session}'")
             notify(f"No session: {session}")
             beep("error")
@@ -388,11 +394,18 @@ def stop_recording(session: str, voice_prompt: bool = True, type_at_cursor: bool
         log(f"Sending to session: {session}")
 
         # Use agentwire send CLI for consistent behavior
-        result = subprocess.run(
-            [AGENTWIRE_PATH, "send", "-s", session, full_text],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [AGENTWIRE_PATH, "send", "-s", session, full_text],
+                capture_output=True,
+                text=True,
+            )
+        except Exception as e:
+            log(f"ERROR: agentwire send raised exception: {e}")
+            notify("Failed to send to session")
+            beep("error")
+            AUDIO_FILE.unlink(missing_ok=True)
+            return 1
 
         if result.returncode != 0:
             log(f"ERROR: agentwire send failed: {result.stderr}")

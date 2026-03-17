@@ -177,7 +177,7 @@ tts:
 
 Or self-host with `agentwire tts start` on a GPU machine.
 
-**STT (Speech-to-Text):** Runs locally on macOS via WhisperKit. Linux uses faster-whisper server.
+**STT (Speech-to-Text):** Runs locally via `agentwire stt start`. Uses Moonshine ONNX by default (fast CPU inference, no GPU required), with automatic fallback to faster-whisper. Configure backend in `config.yaml`.
 
 <details>
 <summary><strong>Disable voice (text-only mode)</strong></summary>

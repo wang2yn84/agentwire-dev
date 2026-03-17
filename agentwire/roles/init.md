@@ -91,7 +91,7 @@ STT converts voice input (push-to-talk) to text that gets sent to agents.
 
 **Setup local STT:**
 ```bash
-# Start the STT server (uses faster-whisper, ~0.3-0.5s transcription)
+# Start the STT server (uses Moonshine ONNX by default — fast CPU inference)
 agentwire stt start
 
 # Test it
@@ -101,7 +101,9 @@ curl http://localhost:8101/health
 Update `~/.agentwire/config.yaml`:
 ```yaml
 stt:
-  url: "http://localhost:8101"  # or empty to disable
+  url: "http://localhost:8101"   # or empty to disable
+  backend: "auto"                # auto (moonshine → faster-whisper fallback), moonshine, whisper
+  moonshine_model: "moonshine/base"  # or moonshine/tiny for maximum speed
 ```
 
 ### 3. SSL Certificates
