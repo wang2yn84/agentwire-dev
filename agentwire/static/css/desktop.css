@@ -64,6 +64,7 @@ body {
     padding: 0 var(--spacing-base);
     border-bottom: 1px solid var(--chrome-border);
     user-select: none;
+    position: relative;
     z-index: 1000;
 }
 
@@ -413,6 +414,8 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 0 var(--spacing-base);
+    position: relative;
+    z-index: 1000;
 }
 
 .taskbar-windows {
@@ -1082,8 +1085,10 @@ body {
     background-color: var(--hover) !important;
 }
 
-/* Maximized windows must account for menu bar and taskbar */
-.winbox.max {
+/* Maximized windows must account for menu bar and taskbar.
+ * Use body selector for higher specificity than WinBox's own .winbox.max rules,
+ * which are injected dynamically and would otherwise win the !important cascade. */
+body .winbox.max {
     top: var(--menu-height) !important;
     height: calc(100% - var(--menu-height) - var(--taskbar-height)) !important;
 }
