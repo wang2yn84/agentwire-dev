@@ -107,6 +107,27 @@ async function init() {
     // Initialize tile manager for drag-to-tile window management
     tileManager.init();
 
+    // Set up viewport resize handling — tile-manager handles tiled windows,
+    // we handle maximized session windows here (notify terminal to refit content)
+    desktop.initViewportResize();
+    desktop.on('viewport_resize', () => {
+        const desktopArea = document.getElementById('desktopArea');
+        const areaRect = desktopArea.getBoundingClientRect();
+
+        for (const [id, sw] of sessionWindows) {
+            const winbox = desktop.getWindow(id);
+            if (winbox && !winbox.min) {
+                if (!desktop.tileStates.has(id)) {
+                    // Maximized windows: WinBox has contain:size which prevents CSS width:100%
+                    // from working, so we must explicitly resize to match the viewport.
+                    winbox.move(areaRect.left, areaRect.top);
+                    winbox.resize(areaRect.width, areaRect.height);
+                }
+                sw._handleResize();
+            }
+        }
+    });
+
     // Trigger terminal resize after a window is tiled
     desktop.on('window_tiled', ({ id }) => {
         if (sessionWindows.has(id)) {

@@ -1394,6 +1394,9 @@ class AgentWireServer:
         and tmux session. Handles terminal input, output, and resize commands.
         """
         session_name = request.match_info["name"]
+        # Browser passes initial terminal size as query params to avoid 80x24 flash
+        init_cols = int(request.rel_url.query.get("cols", 80))
+        init_rows = int(request.rel_url.query.get("rows", 24))
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
@@ -1483,11 +1486,10 @@ class AgentWireServer:
                 # Make master fd non-blocking for async reads
                 os.set_blocking(master_fd, False)
 
-                # Send initial window size to trigger tmux redraw
-                # Default to 80x24 if browser hasn't sent resize yet
-                winsize = struct.pack("HHHH", 24, 80, 0, 0)
+                # Set initial PTY size from browser's reported dimensions
+                winsize = struct.pack("HHHH", init_rows, init_cols, 0, 0)
                 fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-                logger.info(f"[Terminal] Set initial PTY size to 80x24 (fd={master_fd})")
+                logger.info(f"[Terminal] Set initial PTY size to {init_cols}x{init_rows} (fd={master_fd})")
 
             # Task: Forward tmux stdout → WebSocket
             async def forward_tmux_to_ws():
@@ -1625,9 +1627,12 @@ class AgentWireServer:
                                                 os.kill(proc.pid, signal.SIGWINCH)
                                             except (OSError, ProcessLookupError):
                                                 pass  # Process may have exited
-                                        # Force tmux to resize window to fit largest client
+                                        # Explicitly resize the tmux window to match the browser.
+                                        # Using -x/-y instead of -A avoids the race condition where
+                                        # tmux hasn't yet processed SIGWINCH when resize-window runs.
                                         resize_proc = await asyncio.create_subprocess_exec(
-                                            "tmux", "resize-window", "-a", "-t", session_name,
+                                            "tmux", "resize-window", "-t", session_name,
+                                            "-x", str(cols), "-y", str(rows),
                                             stdout=asyncio.subprocess.DEVNULL,
                                             stderr=asyncio.subprocess.DEVNULL,
                                         )

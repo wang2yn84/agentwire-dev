@@ -85,6 +85,13 @@ class TileManager {
             }
         });
 
+        // Re-tile tiled windows when the viewport resizes
+        desktop.on('viewport_resize', () => {
+            for (const [id, zone] of desktop.tileStates) {
+                this._tileWindow(id, zone);
+            }
+        });
+
         // Re-apply tile positions on browser resize
         window.addEventListener('resize', () => {
             for (const [id, zone] of desktop.tileStates) {

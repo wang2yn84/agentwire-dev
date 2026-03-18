@@ -581,6 +581,22 @@ class DesktopManager {
         return this.activeWindow;
     }
 
+    /**
+     * Set up viewport resize listener.
+     * Emits 'viewport_resize' event after resize settles so consumers
+     * (tile-manager, session windows) can respond accordingly.
+     */
+    initViewportResize() {
+        let resizeTimer = null;
+
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                this.emit('viewport_resize', {});
+            }, 100);
+        });
+    }
+
     // ============================================
     // Data Access
     // ============================================

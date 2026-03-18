@@ -71,6 +71,11 @@ export class SessionWindow {
         this._createWinBox(container);
         // Now create terminal - fit addon will have actual dimensions to work with
         this._createTerminal(container);
+        // Re-trigger resize after terminal is created — onmaximize fired before terminal
+        // existed so the initial fit was a no-op; now fit with real dimensions
+        if (this.mode === 'terminal') {
+            this._handleResizeAfterAnimation();
+        }
         this._connectWebSocket();
         this._setupResizeObserver(container);
         // Set up PTT button for terminal mode
@@ -425,9 +430,20 @@ export class SessionWindow {
         // Choose endpoint based on mode
         // Terminal mode: /ws/terminal/{session} - bidirectional
         // Monitor/SDK mode: /ws/{session} - JSON messages
-        const endpoint = this.mode === 'terminal'
-            ? `/ws/terminal/${sessionPath}`
-            : `/ws/${sessionPath}`;
+        let endpoint;
+        if (this.mode === 'terminal') {
+            // Force layout reflow so fitAddon.fit() gets real container dimensions,
+            // then pass cols/rows as query params so the server creates the PTY at
+            // the correct size from the start (avoids dots on first render).
+            if (this.fitAddon && this.terminal) {
+                try { this.fitAddon.fit(); } catch (e) {}
+            }
+            const cols = this.terminal ? this.terminal.cols : 80;
+            const rows = this.terminal ? this.terminal.rows : 24;
+            endpoint = `/ws/terminal/${sessionPath}?cols=${cols}&rows=${rows}`;
+        } else {
+            endpoint = `/ws/${sessionPath}`;
+        }
 
         const url = `${protocol}//${location.host}${endpoint}`;
 
@@ -441,6 +457,12 @@ export class SessionWindow {
         this.ws.onopen = () => {
             this._updateStatus('connected', 'Connected');
             this._hideDisconnectOverlay();
+
+            // Re-fit terminal before sending size — the maximize animation may have
+            // completed while the socket was connecting, so fit now to get current dims
+            if (this.mode === 'terminal' && this.fitAddon && this.terminal) {
+                this.fitAddon.fit();
+            }
 
             // Send initial terminal size (both modes need it for proper display)
             this._sendResize();
@@ -604,7 +626,7 @@ export class SessionWindow {
                     this.fitAddon.fit();
                     this._sendResize();
                 } catch (e) {
-                    // Terminal might not be fully initialized
+                    console.error('[_handleResize] error:', e);
                 }
             });
         }
