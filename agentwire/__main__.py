@@ -6517,6 +6517,52 @@ def get_hooks_source() -> Path:
     raise FileNotFoundError("Could not find hooks directory in package")
 
 
+CLAUDE_COMMANDS_DIR = Path.home() / ".claude" / "commands"
+
+
+def get_commands_source() -> Path:
+    """Get the path to the commands directory in the installed package."""
+    package_dir = Path(__file__).parent
+    commands_dir = package_dir / "commands"
+    if commands_dir.exists():
+        return commands_dir
+
+    try:
+        with importlib.resources.files("agentwire").joinpath("commands") as p:
+            if p.exists():
+                return Path(p)
+    except (TypeError, FileNotFoundError):
+        pass
+
+    raise FileNotFoundError("Could not find commands directory in package")
+
+
+def install_commands(force: bool = False) -> list[str]:
+    """Symlink bundled slash commands into ~/.claude/commands/.
+
+    Returns list of command names that were installed or updated.
+    """
+    try:
+        commands_source = get_commands_source()
+    except FileNotFoundError:
+        return []
+
+    CLAUDE_COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
+
+    installed = []
+    for src_file in commands_source.glob("*.md"):
+        target = CLAUDE_COMMANDS_DIR / src_file.name
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() and target.resolve() == src_file.resolve() and not force:
+                continue  # Already correctly symlinked
+            target.unlink()
+
+        target.symlink_to(src_file.resolve())
+        installed.append(src_file.stem)
+
+    return installed
+
+
 def register_hook_in_settings() -> bool:
     """Register the permission hook in Claude's settings.json.
 
@@ -6636,13 +6682,22 @@ def install_permission_hook(force: bool = False, copy: bool = False) -> bool:
 
 
 def cmd_hooks_install(args) -> int:
-    """Install Claude Code permission hook for AgentWire integration."""
+    """Install Claude Code permission hook and slash commands for AgentWire integration."""
     hook_installed = install_permission_hook(force=args.force, copy=args.copy)
     if hook_installed:
         print(f"Installed permission hook to {CLAUDE_HOOKS_DIR / 'agentwire-permission.sh'}")
         print("\nPermission hook enables prompted sessions to show permission dialogs in the portal.")
     else:
         print("Permission hook already installed.")
+
+    installed_commands = install_commands(force=args.force)
+    if installed_commands:
+        print(f"\nInstalled slash commands to {CLAUDE_COMMANDS_DIR}:")
+        for name in installed_commands:
+            print(f"  /{name}")
+    else:
+        print("Slash commands already installed.")
+
     return 0
 
 
