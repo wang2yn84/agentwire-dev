@@ -5,54 +5,50 @@ description: Rolling pre-warmed session for multi-phase project execution. Under
 
 # Leapfrog Session
 
-You are a leapfrog session. Your purpose is to be pre-warmed and ready before you execute, then self-perpetuate by spawning your own successor.
+You are a leapfrog session. You pre-warm before executing, spawn your own successor while executing, and hand off cleanly when done — so the next session is always ready before it's needed.
 
-## The Protocol
+## Three Commands
 
-You operate in two stages:
+| Command | When to run | What it does |
+|---------|-------------|-------------|
+| `/leapfrog-prime <phase> [notes]` | On session start | Load mission files, read source, build plan, go idle |
+| `/leapfrog-scout <next-phase> [notes]` | Before or at start of execution | Spawn successor, send it `/leapfrog-prime`, write `.leapfrog` state file |
+| `/leapfrog-prune [successor] [notes]` | After your phase is committed | Write handoff file, activate successor with replan message, exit |
 
-### Stage 1: Pre-Warm (triggered by /leapfrog-prime)
-Load context, enter plan mode, reach "ready" state. Go idle when done.
-You will receive a second message with actual results from the current phase before you execute.
+## Your Lifecycle
 
-### Stage 2: Execute (triggered by data point 2 message)
-When told "Phase N committed at {sha}", do:
-1. Read `docs/leapfrog-handoff.md` if it exists
-2. Confirm or adjust your plan based on actual results
-3. **Spawn the next session before executing:**
-   ```
-   session_create(name="{next_session}")
-   session_send(session="{next_session}", message="<pre-warm prompt for next phase>")
-   ```
-4. Execute your phase
-5. When done: write `docs/leapfrog-handoff.md`, then say "Phase {phase} complete — ready for review."
-
-## Handoff File Format
-
-Write to `docs/leapfrog-handoff.md` when your phase is done:
-
-```markdown
-# Leapfrog Handoff
-
-## Phase Completed
-[phase name/number]
-
-## Committed At
-[sha]
-
-## What Was Done
-[brief summary]
-
-## Deferred to Next Phase
-[anything moved out]
-
-## Decisions That Affect the Plan
-[anything the next session should know before executing]
-
-## New Files / Patterns Introduced
-[list relevant new code the next session will touch]
+```
+1. Human: agentwire leapfrog {project}-lf1 -p ~/projects/{project}
+2. Human: /leapfrog-prime phase 2
+   → You: read missions, load files, plan, go idle ("ready and waiting")
+3. Prior session or human: "phase 1 committed at {sha}, begin"
+   → You: read docs/leapfrog-handoff.md, revise plan
+   → You: /leapfrog-scout phase 3       ← spawn lf2 immediately, runs in parallel
+   → You: execute phase 2
+4. Phase 2 committed
+   → You: /leapfrog-prune               ← writes handoff, activates lf2, exits
 ```
 
-## Session Naming Convention
+## Session Naming
 
-Use `{project}-lf{N}` naming — e.g., `myproject-lf1`, `myproject-lf2`. When spawning your successor, increment N.
+Use `{project}-lf{N}` — e.g. `myproject-lf1`, `myproject-lf2`. Scout auto-increments.
+
+## State File
+
+`/leapfrog-scout` writes `.leapfrog` in the project root:
+```
+successor=myproject-lf2
+next_phase=phase 3
+```
+`/leapfrog-prune` reads this to find the successor automatically.
+
+## Handoff File
+
+`/leapfrog-prune` writes `docs/leapfrog-handoff.md` before exiting:
+- Phase completed + sha
+- What was done
+- What was deferred
+- Decisions that affect the next plan
+- New files/patterns introduced
+
+The successor reads this during replan to calibrate against reality.
