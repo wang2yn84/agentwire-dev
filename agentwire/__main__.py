@@ -3559,6 +3559,34 @@ def cmd_new(args) -> int:
     return 0
 
 
+def cmd_leapfrog(args) -> int:
+    """Create a session with the leapfrog role injected."""
+    # Load existing roles from project config or defaults
+    path = getattr(args, 'path', None)
+    project_path = Path(path).expanduser().resolve() if path else None
+
+    existing_roles: list[str] = []
+    if project_path:
+        existing = load_project_config(project_path)
+        if existing and existing.roles:
+            existing_roles = list(existing.roles)
+        else:
+            config = load_config()
+            default_role = config.get("session", {}).get("default_role", "agentwire")
+            existing_roles = [default_role] if default_role else []
+    else:
+        config = load_config()
+        default_role = config.get("session", {}).get("default_role", "agentwire")
+        existing_roles = [default_role] if default_role else []
+
+    if 'leapfrog' not in existing_roles:
+        existing_roles.append('leapfrog')
+
+    args.roles = ','.join(existing_roles)
+    # cmd_new expects args.session from --session flag; positional 'session' maps to same attr
+    return cmd_new(args)
+
+
 def cmd_output(args) -> int:
     """Read output from a tmux session or pane.
 
@@ -9030,6 +9058,17 @@ def main() -> int:
     new_parser.add_argument("--persist", action="store_true", help="Write --type/--roles to .agentwire.yml (default: session-level override only)")
     new_parser.add_argument("--json", action="store_true", help="Output as JSON")
     new_parser.set_defaults(func=cmd_new)
+
+    # === leapfrog command (top-level) ===
+    leapfrog_parser = subparsers.add_parser("leapfrog", help="Create a session with the leapfrog role (rolling pre-warmed context)")
+    leapfrog_parser.add_argument("session", help="Session name (e.g. myproject-lf1)")
+    leapfrog_parser.add_argument("-p", "--path", help="Working directory (default: ~/projects/<name>)")
+    leapfrog_parser.add_argument("-f", "--force", action="store_true", help="Replace existing session")
+    leapfrog_parser.add_argument("--type", help="Session type override")
+    leapfrog_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
+    leapfrog_parser.add_argument("--persist", action="store_true", help="Write roles to .agentwire.yml")
+    leapfrog_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    leapfrog_parser.set_defaults(func=cmd_leapfrog)
 
     # === output command (top-level) ===
     output_parser = subparsers.add_parser("output", help="Read session or pane output")
