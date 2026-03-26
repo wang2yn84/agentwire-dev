@@ -16,6 +16,7 @@ class SessionType(str, Enum):
     """Session type determines Claude execution mode."""
     BARE = "bare"                    # No Claude, just tmux session
     CLAUDE_BYPASS = "claude-bypass"  # Claude with --dangerously-skip-permissions
+    CLAUDE_AUTO = "claude-auto"      # Claude with auto mode (classifier safety net)
     CLAUDE_PROMPTED = "claude-prompted"  # Claude with permission hooks
     CLAUDE_RESTRICTED = "claude-restricted"  # Claude with only say allowed
     CLAUDEGLM_BYPASS = "claudeglm-bypass"  # Claude via Z.AI GLM-5 with skip permissions
@@ -47,6 +48,8 @@ class SessionType(str, Enum):
             return ["--dangerously-skip-permissions"]
         elif self == SessionType.CLAUDE_PROMPTED:
             return []  # Uses permission hooks, no bypass
+        elif self == SessionType.CLAUDE_AUTO:
+            return ["--enable-auto-mode", "--permission-mode", "auto"]
         elif self == SessionType.CLAUDE_RESTRICTED:
             return ["--tools", "Bash"]  # ONLY bash tool (for say command)
         return []
@@ -91,7 +94,7 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
     """
     # If already agent-specific, return as-is
     agent_specific_types = [
-        "claude-bypass", "claude-prompted", "claude-restricted",
+        "claude-bypass", "claude-auto", "claude-prompted", "claude-restricted",
         "claudeglm-bypass", "claudeglm-prompted", "claudeglm-restricted",
         "sdk-bypass", "sdk-prompted", "sdk-restricted",
         "bare"

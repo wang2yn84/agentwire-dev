@@ -192,7 +192,7 @@ work, but prevents catastrophic failures at 3am when nobody's watching.
 
 ## AgentWire Integration Plan
 
-### Phase 1: Add `claude-auto` session type
+### Phase 1: Add `claude-auto` session type ✅ Complete
 
 **`agentwire/project_config.py`** — add to `SessionType`:
 ```python
@@ -287,17 +287,18 @@ creation time if the combination is invalid.
 
 ---
 
-## Open Questions
+## Open Questions (Resolved)
 
-1. **`--allowedTools` format** — comma-separated? Space-separated? Need to verify
-   exact CLI syntax for passing multiple allowed tools at launch.
+1. **`--allowedTools` format** — comma-separated, passed as a single string argument:
+   `--allowedTools "Bash(git *),Read(*),Edit(*)"`. Verified in implementation.
 
-2. **Allow rule interaction** — does `--allowedTools` at launch MERGE with settings
-   files, or override them? Need to verify before Phase 1 implementation.
+2. **Allow rule interaction** — `--allowedTools` MERGES with settings files. The full
+   allow list = `--allowedTools` + `~/.claude/settings.json` allows + `<project>/.claude/settings.json` allows.
+   No overriding occurs. Implemented accordingly.
 
-3. **Headless `-p` mode** — when the classifier blocks in non-interactive mode
-   (agentwire `ensure`), it aborts the session. Need to test with real tasks to
-   confirm idle_timeout is sufficient fallback.
+3. **Headless `-p` mode** — confirmed that `idle_timeout` in task config is sufficient
+   fallback. When classifier blocks 3+ times, agent stalls waiting for a prompt that
+   won't come; AgentWire's idle timeout catches it and marks the task as timed out.
 
 ---
 

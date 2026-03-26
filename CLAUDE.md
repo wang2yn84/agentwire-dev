@@ -482,7 +482,7 @@ session:
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type` | `claude-bypass`, `claude-prompted`, `sdk-bypass`, etc. | Session permission level |
+| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `sdk-bypass`, etc. | Session permission level |
 | `roles` | List of role names | Roles to load (from bundled or `~/.agentwire/roles/`) |
 | `voice` | Voice name | TTS voice for this project |
 | `parent` | Session name | Parent session for hierarchical notifications |
