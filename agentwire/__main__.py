@@ -173,7 +173,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
                 "Bash(gh pr create*)", "Bash(gh pr view*)",
                 "Read(*)", "Edit(*)", "Write(*)", "Glob(*)", "Grep(*)",
             ]
-            parts.extend(["--allowedTools", ",".join(core_allows)])
+            parts.extend(["--allowedTools", shlex.quote(",".join(core_allows))])
         elif session_type == "claude-restricted":
             parts.append("--tools Bash")
         # claude-prompted has no special flags

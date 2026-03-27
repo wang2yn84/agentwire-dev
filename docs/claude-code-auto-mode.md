@@ -184,7 +184,7 @@ work, but prevents catastrophic failures at 3am when nobody's watching.
 | Constraint | Detail |
 |------------|--------|
 | **Anthropic API only** | Classifier runs on Sonnet 4.6; requires Anthropic auth. Z.AI/GLM-5 sessions cannot use auto mode. |
-| **Plan required** | Team, Enterprise, or API plan. Admin must enable on Team/Enterprise first. |
+| **Plan required** | Team or Enterprise plan (research preview). Pro/Max individual plans not supported. Admin must enable in Claude Code admin settings first. |
 | **Model requirement** | Session model must be Sonnet 4.6 or Opus 4.6. Not available on Haiku or claude-3. |
 | **Not a safety guarantee** | 6–17% false negative rate. Not for production systems without backup strategy. |
 
