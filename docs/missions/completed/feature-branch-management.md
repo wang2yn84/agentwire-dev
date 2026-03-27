@@ -8,7 +8,7 @@ Allow tasks to declare `starting_ref`, `work_branch`, `pr_target`, and `pr_draft
 the task lifecycle handles all git branch plumbing automatically. Eliminates custom
 scripts for the overnight async agent workflow.
 
-## Status: In Progress
+## Status: Complete
 
 ## Use Case
 
@@ -92,10 +92,10 @@ agentwire ensure -s test-project --task test-branch-task
 
 ## Done When
 
-- [ ] `starting_ref` triggers branch setup before task runs
-- [ ] `work_branch` is created (with auto-dedup if exists)
-- [ ] Changes are committed and pushed after task completes
-- [ ] Draft PR is created via `gh`
-- [ ] PR URL appears in task output / summary
-- [ ] No `starting_ref` → existing behavior unchanged
-- [ ] `gh` missing → graceful warning, no failure
+- [x] `starting_ref` triggers branch setup before task runs
+- [x] `work_branch` is created (with auto-dedup if exists)
+- [x] Changes are committed and pushed after task completes
+- [x] Draft PR is created via `gh`
+- [x] PR URL appears in task output / summary
+- [x] No `starting_ref` → existing behavior unchanged
+- [x] `gh` missing → graceful warning, no failure

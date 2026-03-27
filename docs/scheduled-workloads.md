@@ -1,760 +1,383 @@
-# Mission: Scheduled Workloads
+> Living document. Update this, don't create new versions.
 
-> Reliable headless task execution with data pipeline
+# Scheduled Workloads
 
-## Problem
-
-Users want to run agent workloads on a schedule (cron), but can't reliably because:
-- Session might not exist when cron fires
-- Session might have crashed
-- Session might be busy with other work
-- No way to gather fresh data before prompting
-- No way to capture/report results after
-
-## Solution
-
-Two primitives:
-
-1. **`agentwire ensure`** - Reliable session management + task execution
-2. **Tasks in `.agentwire.yml`** - Named workflows with pre/prompt/post phases
-
-## Deliverables
-
-### 1. `ensure` Command
-
-Runs a named task from `.agentwire.yml` with reliable session management.
-
-```bash
-agentwire ensure -s newsbot --task news-check
-agentwire ensure -s newsbot --task morning-briefing --timeout 600
-```
-
-**Note:** For ad-hoc prompts without task config, use `agentwire send` instead.
-
-Behavior:
-1. Acquire lock for session (fail if locked, or wait with `--wait-lock`)
-2. Session exists? If not, create it (using project's `.agentwire.yml`)
-3. Session healthy? If not, recreate it
-4. Session idle? If not, wait until idle (respects `--timeout`)
-5. Run pre-commands, validate outputs, template prompt
-6. Send templated prompt to session
-7. Write task context file (`~/.agentwire/tasks/{session}.json`) for hook coordination
-8. **Hook's first idle:** Hook reads context, sends summary prompt to agent
-9. Agent writes `.agentwire/task-summary-{session}-{task}-{datetime}.md`
-10. **Hook's second idle:** Hook sends `/exit`, deletes context file, kills session
-11. `ensure` detects both: summary file exists AND context file deleted → proceeds
-12. Parse summary file for status
-13. If `on_task_end` defined: send user's final prompt, wait for idle
-14. Run post-commands with `{{ status }}` populated
-15. If status is `failed` and retries remaining: wait `retry_delay`, retry from step 5
-16. Release lock
-
-Flags:
-- `-s, --session NAME` - Target session (required)
-- `--task NAME` - Task from `.agentwire.yml` (required)
-- `--dry-run` - Show what would execute (skips pre commands with side effects)
-- `--timeout SECONDS` - Max wait time for completion (default: 300)
-- `--wait-lock` - Wait for lock instead of failing if session is locked
-- `--lock-timeout SECONDS` - Max time to wait for lock (default: 60)
-
-Exit codes:
-| Code | Meaning |
-|------|---------|
-| 0 | Task completed successfully (`status: complete`) |
-| 1 | Task failed (`status: failed`) |
-| 2 | Task incomplete (`status: incomplete`) |
-| 3 | Lock conflict (session locked, `--wait-lock` not used) |
-| 4 | Pre-phase failure (command failed, validation failed, or timeout) |
-| 5 | Timeout (hard timeout exceeded) |
-| 6 | Session error (couldn't create, recreate, or connect to session) |
-
-#### Completion Detection
-
-Completion uses a two-phase prompt system at task end. This is reliable because we prompt the agent directly at the right moment, rather than hoping it follows instructions from earlier.
-
-**Phase 1: System Summary (always runs)**
-
-When first idle is detected after the task prompt, we send:
-
-```
-Write a task summary to .agentwire/task-summary-{timestamp}.md in YAML format:
+Reliable headless task execution for overnight and automated agent workflows.
 
 ---
-status: complete | incomplete | failed
-summary: one line describing what you accomplished
-files_modified:
-  - path/to/file1
-  - path/to/file2
-blockers:
-  - any issues preventing completion
+
+## Overview
+
+Two primitives work together:
+
+1. **`agentwire ensure`** — Reliable session management + task execution with lifecycle hooks
+2. **Tasks in `.agentwire.yml`** — Named workflows with pre/prompt/post phases and branch management
+
+For scheduled execution, combine with `~/.agentwire/scheduler.yaml` and the AgentWire scheduler daemon.
+
 ---
 
-Additional notes can follow the YAML front matter.
-```
+## Task Definition Schema
 
-The YAML front matter is machine-parseable for extracting `{{ status }}` and `{{ summary }}`.
-
-**Phase 2: User's `on_task_end` (if defined)**
-
-After the system summary is written, we send the user's custom prompt:
-
-```
-{{ user's on_task_end content }}
-
-Reference {{ summary_file }} for task outcome.
-```
-
-This gives users full control of the final interaction, with access to the structured summary.
-
-**Completion signals:**
-
-| Signal | How Detected | Indicates |
-|--------|--------------|-----------|
-| Summary file exists | `.agentwire/task-summary-{session}-{task}-{datetime}.md` created | Agent responded to summary prompt |
-| Context file deleted | `~/.agentwire/tasks/{session}.json` removed | Hook finished cleanup (sent /exit, killing session) |
-| Both signals together | Summary exists AND context deleted | Safe for `ensure` to proceed |
-| Hard timeout | `--timeout` exceeded | Failure |
-
-**Summary file naming:** Each task run creates a new timestamped file (e.g., `.agentwire/task-summary-2024-01-15T07-00-00.md`). This preserves history across runs. User manages cleanup.
-
-**Task-level configuration:**
+Define tasks in `.agentwire.yml`:
 
 ```yaml
-tasks:
-  my-task:
-    prompt: "..."
-    idle_timeout: 30              # Seconds of idle before triggering completion (default: 30)
-    on_task_end: |                # Optional: user's final prompt (runs after system summary)
-      If status is complete, announce success.
-      If failed, explain what went wrong.
-```
-
-#### Concurrency & Locking
-
-Each session has a lock file at `~/.agentwire/locks/{session}.lock`. The lock:
-- Is acquired at start of `ensure` command
-- Is released after post-phase completes (or on error/timeout)
-- Uses flock for atomic acquisition
-- Has configurable timeout for waiting
-
-```bash
-# Fail immediately if locked
-agentwire ensure -s bot --task daily  # Returns exit code 3 if locked
-
-# Wait up to 2 minutes for lock
-agentwire ensure -s bot --task daily --wait-lock --lock-timeout 120
-```
-
-### 2. Task Definition Schema
-
-Extend `.agentwire.yml` to support `tasks:` section:
-
-```yaml
-type: claudeglm-bypass
+type: claude-auto    # Recommended for overnight work — see claude-auto below
 roles:
-  - agentwire
-  - voice
-shell: /bin/sh               # Optional: default shell for task commands (default: /bin/sh)
+  - task-runner
+shell: /bin/sh       # Default shell for task commands
 
 tasks:
-  task-name:
-    shell: /bin/bash         # Optional: override shell for this task
-    retries: 2               # Optional: retry count on failure (default: 0)
-    retry_delay: 30          # Optional: seconds between retries (default: 30)
-    pre:                     # Optional: data gathering (NO {{ }} variables - these PRODUCE variables)
-      var_name:
-        cmd: "shell command"
-        required: true       # Fail if output is empty (default: false)
-        validate: "jq . > /dev/null"  # Optional validation command
-        timeout: 30          # Optional: command timeout in seconds
-      other_var: "simple command"     # Shorthand (no validation)
-    prompt: |                # Required: the prompt (supports {{ variables }})
-      Do something with {{ var_name }}
-    idle_timeout: 30         # Optional: seconds of idle before completion (default: 30)
-    on_task_end: |           # Optional: user's final prompt after system summary
+  write-tests:
+    # Execution control
+    shell: /bin/bash         # Override shell for this task
+    priority: 10             # Pipeline ordering (lower = higher priority, default: 99)
+    retries: 2               # Retry on failure (default: 0)
+    retry_delay: 30          # Seconds between retries (default: 30)
+    idle_timeout: 60         # Seconds of idle before completion (default: 30)
+    exit_on_complete: true   # Exit session after completion (default: true)
+    role: piinpoint-test-writer  # Role override for this task (optional)
+
+    # Branch management (for autonomous overnight workflows)
+    starting_ref: main       # Git ref to checkout before task runs
+    work_branch: agent/task  # Branch for agent's work (default: agent/<task>-<date>)
+    pr_target: main          # PR target branch (default: starting_ref)
+    pr_draft: true           # Create as draft PR (default: true)
+
+    # Context inheritance
+    starting_session: ctx-loaded  # Fork Claude context from this session before running
+
+    # Data gathering (produces variables for use in prompt)
+    pre:
+      weather: "curl -s wttr.in/?format=3"
+      calendar:
+        cmd: "gcal-cli today --json"
+        required: true          # Fail task if output is empty
+        validate: "jq . > /dev/null"  # Fail task if command exits non-zero
+        timeout: 30             # Fail task if takes longer than 30s
+
+    # Main prompt (supports {{ variables }})
+    prompt: |
+      Weather: {{ weather }}
+      Calendar: {{ calendar }}
+      Write tests for the payments module.
+
+    # Optional: final prompt after system summary
+    on_task_end: |
       Read {{ summary_file }}.
-      If complete, do X. If failed, do Y.
-    post:                    # Optional: list of commands to run after (supports {{ variables }})
-      - "shell command with {{ status }}"
-    output:                  # Optional: output handling
-      capture: 50                 # Lines to capture from session
-      save: ~/logs/{{ task }}.log # Where to save captured output
-      notify: voice               # Notification method (supports ${ENV_VAR} expansion)
+      If complete, push your work.
+
+    # Post-task commands (runs after completion)
+    post:
+      - "echo 'Status: {{ status }}'"
+
+    # Output handling
+    output:
+      capture: 50                    # Lines to capture from session
+      save: ~/logs/{{ task }}.log    # Save captured output here
+      notify: voice                  # voice | alert | webhook ${URL} | command "..."
 ```
 
-### 3. Built-in Variables
+---
+
+## Branch Management
+
+When `starting_ref` is set, the task lifecycle handles all git plumbing automatically:
+
+**Pre-task:**
+1. `git checkout starting_ref` (+ `git pull --ff-only` if it's a branch)
+2. Create `work_branch` (default: `agent/<task>-<YYYY-MM-DD>`, auto-deduped if exists)
+3. `git checkout -b work_branch`
+
+**Post-task:**
+1. Commit any uncommitted changes: `git add -A && git commit -m "chore: agent task <task>"`
+2. `git push -u origin work_branch`
+3. Open PR: `gh pr create --base pr_target --head work_branch [--draft]`
+4. PR URL is stored in summary file (available as `{{ pr_url }}` in post phase)
+5. `git checkout starting_ref` — reset working state
+
+**Edge cases:**
+- `starting_ref` not found → task fails (exit code 4)
+- No changes after task → no commit, no push, no PR (graceful skip)
+- `gh` not in PATH → warning logged, task continues without PR
+
+**Variables available in post phase when branch management is active:**
+
+| Variable | Description |
+|----------|-------------|
+| `{{ work_branch }}` | Branch name used for agent's work |
+| `{{ pr_url }}` | URL of the created PR (empty if no PR was created) |
+
+---
+
+## Context Inheritance
+
+`starting_session` forks a session's Claude conversation history into the task session before running, giving the agent pre-loaded context instead of a cold start:
+
+```yaml
+tasks:
+  continue-payments-refactor:
+    prompt: "Continue the payments refactor from where we left off"
+    starting_session: payments-loaded   # Fork Claude context from here
+    starting_ref: feature/payments      # Also start from this branch
+```
+
+When the task runs, `payments-loaded`'s Claude conversation JSONL is copied into the new session. The agent starts with full prior context.
+
+**Fallback:** If `starting_session` doesn't exist, a warning is logged and the task runs with a fresh session — not a hard failure.
+
+---
+
+## Per-Task Role Override
+
+`role` loads a specialized persona for that task, overriding the session's default roles:
+
+```yaml
+tasks:
+  write-tests:
+    prompt: "Write unit tests for the payments module"
+    role: piinpoint-test-writer    # Specialized test-writing persona
+
+  lint-cleanup:
+    prompt: "Fix all lint errors"
+    role: task-runner              # Minimal, focused persona
+
+  pr-review:
+    prompt: "Review the open PRs and leave detailed comments"
+    role: code-reviewer            # Review-oriented persona
+```
+
+Role applies at session creation time. With `exit_on_complete: true` (default), each task run creates a fresh session with the specified role loaded.
+
+---
+
+## Built-in Variables
 
 | Variable | Available In | Description |
-|----------|--------------|-------------|
+|----------|-------------|-------------|
 | `{{ var_name }}` | prompt, on_task_end, post | Output from pre command |
 | `{{ summary_file }}` | on_task_end, post | Path to current run's summary file |
 | `{{ output }}` | post | Captured session output |
-| `{{ status }}` | on_task_end, post | `complete`, `incomplete`, or `failed` (from summary) |
+| `{{ status }}` | on_task_end, post | `complete`, `incomplete`, or `failed` |
 | `{{ summary }}` | on_task_end, post | One-line summary from summary file |
+| `{{ work_branch }}` | post | Branch created by branch management |
+| `{{ pr_url }}` | post | PR URL created by branch management |
 | `{{ date }}` | all | YYYY-MM-DD |
 | `{{ time }}` | all | HH:MM:SS |
 | `{{ datetime }}` | all | Full ISO timestamp |
 | `{{ session }}` | all | Session name |
 | `{{ task }}` | all | Task name |
 | `{{ project_root }}` | all | Absolute path to project directory |
-| `{{ attempt }}` | prompt, on_task_end, post | Current attempt number (1-based, for retries) |
+| `{{ attempt }}` | prompt, on_task_end, post | Current attempt number (1-based) |
 
-**Variable scope rules:**
-- `pre:` commands **produce** variables - they cannot use `{{ }}` syntax
-- `prompt:`, `on_task_end:`, and `post:` commands **consume** variables
-- Environment variables use `${ENV_VAR}` syntax (expanded at runtime)
+`pre:` commands **produce** variables — they cannot use `{{ }}` syntax.
+`prompt`, `on_task_end`, and `post` **consume** variables.
+Environment variables use `${ENV_VAR}` syntax (expanded at runtime).
 
-### 4. Task Management Commands
+---
 
-```bash
-agentwire task list [SESSION]           # List tasks for session/project
-agentwire task show SESSION/TASK        # Show task definition
-agentwire task validate SESSION/TASK    # Validate task syntax
-```
+## Exit Codes
 
-### 5. Notification Methods
+| Code | Meaning |
+|------|---------|
+| 0 | Complete (`status: complete`) |
+| 1 | Failed (`status: failed`) |
+| 2 | Incomplete (`status: incomplete`) |
+| 3 | Lock conflict (session locked, `--wait-lock` not used) |
+| 4 | Pre-phase failure (command failed, `required` empty, `validate` failed, `starting_ref` not found) |
+| 5 | Timeout (hard timeout exceeded) |
+| 6 | Session error (couldn't create or connect) |
 
-| Method | Syntax | Description |
-|--------|--------|-------------|
-| Voice | `notify: voice` | `agentwire say "Task {task} {status}"` |
-| Alert | `notify: alert` | `agentwire alert "Task {task} {status}"` |
-| Webhook | `notify: webhook ${SLACK_WEBHOOK}` | POST JSON to URL (supports `${ENV_VAR}` expansion) |
-| Command | `notify: command "..."` | Run arbitrary command |
+---
 
-**Webhook payload:**
-```json
-{
-  "task": "task-name",
-  "session": "session-name",
-  "status": "complete|incomplete|failed",
-  "summary": "one-line summary from agent",
-  "timestamp": "ISO8601",
-  "attempt": 1
-}
-```
-
-**Webhook security:** Never hardcode secrets in `.agentwire.yml`. Use environment variable expansion:
-```yaml
-output:
-  notify: webhook ${SLACK_WEBHOOK_URL}  # Expanded at runtime from environment
-```
-
-## Implementation Plan
-
-### Phase 1: Core `ensure` Command
-- [ ] Add `ensure` subcommand to CLI
-- [ ] Session existence check (reuse from `send`)
-- [ ] Session health check (can we send to it?)
-- [ ] Session idle detection (reuse from portal)
-- [ ] Create session if missing (reuse from `new`)
-- [ ] Basic wait for idle
-- [ ] Implement exit codes (0-6) for different outcomes
-
-### Phase 2: Locking
-- [ ] Create `~/.agentwire/locks/` directory structure
-- [ ] Implement flock-based session locking
-- [ ] Add `--wait-lock` and `--lock-timeout` flags
-- [ ] Release lock on completion, error, or timeout
-
-### Phase 3: Task Loading
-- [ ] Extend `.agentwire.yml` parser to load `tasks:` section
-- [ ] Task schema validation (prompt required, pre/post structure)
-- [ ] Support both shorthand (`var: "cmd"`) and expanded (`var: {cmd, required, validate}`) pre syntax
-- [ ] `task list` command
-- [ ] `task show` command
-- [ ] `task validate` command
-
-### Phase 4: Templating
-- [ ] Implement `{{ variable }}` substitution
-- [ ] Implement `${ENV_VAR}` expansion for environment variables
-- [ ] Built-in variables (date, time, session, task, project_root, attempt, summary_file)
-- [ ] Error on undefined `{{ }}` variables
-- [ ] Pass through undefined `${ENV_VAR}` (shell will handle or error)
-
-### Phase 5: Pre Phase
-- [ ] Execute pre commands sequentially
-- [ ] Capture stdout as variable values
-- [ ] Fail on non-zero exit code
-- [ ] Validate `required: true` (fail if output empty)
-- [ ] Run `validate` command if specified (fail on non-zero)
-- [ ] Implement per-command `timeout` option
-- [ ] Log stderr but don't capture as variable
-- [ ] On pre failure: release lock and exit with code 4 (no prompt sent, no post-phase)
-
-### Phase 6: Completion Detection
-- [ ] Detect first idle after task prompt sent
-- [ ] Generate timestamped summary filename (e.g., `task-summary-2024-01-15T07-00-00.md`)
-- [ ] Send system summary prompt with the generated filename
-- [ ] Watch for summary file creation
-- [ ] Parse summary file for status/summary fields
-- [ ] Set `{{ status }}`, `{{ summary }}`, and `{{ summary_file }}` variables
-- [ ] Send user's `on_task_end` prompt if defined (with variables expanded)
-- [ ] Detect second idle (all prompts processed)
-- [ ] Implement hard timeout (`--timeout` flag)
-
-### Phase 7: Retry Logic
-- [ ] Implement `retries` count from task config (default 0)
-- [ ] Implement `retry_delay` seconds between attempts
-- [ ] Track `{{ attempt }}` variable
-- [ ] Only retry on `failed` status (not `complete` or `incomplete`)
-- [ ] Recreate session if it crashed during task
-- [ ] Each retry creates new timestamped summary file
-
-### Phase 8: Post Phase
-- [ ] Capture session output after completion
-- [ ] Execute post commands with variables
-- [ ] Handle different status values appropriately
-
-### Phase 9: Output Handling
-- [ ] `output.capture` - capture N lines after completion
-- [ ] `output.save` - save captured output to file (with `{{ }}` expansion in path)
-- [ ] `output.notify` - voice/alert/webhook/command with `${ENV_VAR}` expansion
-- [ ] Webhook POST with JSON payload
-
-### Phase 10: MCP Tools
-- [ ] `agentwire_task_list` - list tasks for session
-- [ ] `agentwire_task_show` - show task definition
-- [ ] `agentwire_task_run` - run named task with full lifecycle
-
-### Phase 11: Roles
-- [ ] Create `task-runner` role for scheduled execution
-- [x] Role system simplified (leader → agentwire + voice)
-- [ ] Consider `--role` override for tasks
-
-### Phase 12: Documentation
-- [ ] Update CLAUDE.md with ensure/task commands
-- [ ] Update CLAUDE.md MCP tools table
-- [ ] Finalize docs/scheduled-workloads.md for users
-- [ ] Add examples to role files
-
-## Test Cases
-
-### Basic Ensure
-```bash
-# Session doesn't exist - should create and run task
-agentwire ensure -s newsbot --task daily-check
-
-# Session exists and idle - should run immediately
-agentwire ensure -s newsbot --task daily-check
-
-# Session busy - should wait until idle, then run
-agentwire ensure -s newsbot --task daily-check
-
-# Session locked by another ensure - should fail immediately
-agentwire ensure -s newsbot --task daily-check  # Returns exit code 3
-
-# Session locked - wait for lock
-agentwire ensure -s newsbot --task daily-check --wait-lock --lock-timeout 60
-```
-
-### Locking
-```bash
-# In terminal 1 (holds lock for duration of task)
-agentwire ensure -s bot --task long-running
-
-# In terminal 2 (fails immediately)
-agentwire ensure -s bot --task quick-check
-# Error: Session 'bot' is locked by another ensure process
-
-# In terminal 2 (waits for lock)
-agentwire ensure -s bot --task quick-check --wait-lock
-# Blocks until terminal 1 releases lock
-```
-
-### Pre Validation
-```yaml
-# .agentwire.yml
-tasks:
-  with-validation:
-    pre:
-      api_data:
-        cmd: "curl -s https://api.example.com/data"
-        required: true  # Fail if empty response
-        validate: "jq . > /dev/null"  # Fail if not valid JSON
-        timeout: 30     # Fail if takes longer than 30s
-    prompt: "Process: {{ api_data }}"
-```
+## `ensure` Command
 
 ```bash
-# API returns empty - should fail before sending prompt
-agentwire ensure -s bot --task with-validation
-# Error: Pre command 'api_data' returned empty output (required: true)
-
-# API returns invalid JSON - should fail validation
-agentwire ensure -s bot --task with-validation
-# Error: Pre command 'api_data' failed validation
+agentwire ensure -s session --task name              # Run named task
+agentwire ensure -s session --task name --timeout 600   # Custom timeout
+agentwire ensure -s session --task name --wait-lock     # Wait if locked
+agentwire ensure -s session --task name --dry-run       # Preview without executing
 ```
 
-### Completion Flow
+**Lifecycle:**
+1. Acquire lock for session (fail if locked, or wait with `--wait-lock`)
+2. Session exists? If not, create it
+3. Session healthy? If not, recreate it
+4. Session idle? If not, wait
+5. If `starting_session` set: fork Claude conversation context
+6. If `starting_ref` set: checkout branch, create work branch
+7. Run pre-commands, validate outputs
+8. Send templated prompt
+9. Agent works → goes idle → system sends summary prompt
+10. Agent writes `.agentwire/task-summary-{session}-{task}-{datetime}.md`
+11. If `on_task_end` defined: send user's final prompt, wait for idle
+12. If `starting_ref` set: commit changes, push, open PR
+13. Run post-commands with `{{ status }}`, `{{ pr_url }}`, etc.
+14. Release lock, exit session
+
+---
+
+## Scheduler Integration
+
+Schedule tasks in `~/.agentwire/scheduler.yaml`:
+
 ```yaml
 tasks:
-  with-on-task-end:
-    prompt: "Analyze the codebase and identify issues"
-    on_task_end: |
-      Read {{ summary_file }}.
-      If status is complete, say "Analysis finished" aloud.
-      If status is failed, explain what went wrong.
-```
+  nightly-tests:
+    project: ~/projects/piinpoint
+    session: piinpoint-tests
+    task: write-tests
+    type: claude-auto          # Session type override
+    roles: [task-runner]
+    once: true                 # Auto-disable after first run
+    schedule:
+      every: 1m
+      not_before: "22:00"
+      not_after: "06:00"
 
-Flow:
-1. Prompt sent: "Analyze the codebase..."
-2. Agent works, goes idle
-3. System prompt sent: "Write a task summary to .agentwire/task-summary-{datetime}.md..."
-4. Agent writes summary, goes idle
-5. User's on_task_end sent: "Read {{ summary_file }}..." (with actual path)
-6. Agent reads summary, speaks result, goes idle
-7. Task complete, post-phase runs
+  nightly-lint:
+    project: ~/projects/piinpoint
+    session: piinpoint-lint
+    task: lint-cleanup
+    type: claude-auto
+    schedule:
+      after: nightly-tests
+      delay: 2m
 
-### Retry Logic
-```yaml
-tasks:
-  flaky-api:
-    retries: 2
-    retry_delay: 30
-    pre:
-      data:
-        cmd: "curl -s https://flaky-api.example.com/data"
-        required: true
-        timeout: 10
-    prompt: "Process: {{ data }}"
-```
-
-```bash
-# First attempt fails (API down), waits 30s, retries
-# Second attempt fails, waits 30s, retries
-# Third attempt succeeds
-agentwire ensure -s bot --task flaky-api
-# Output shows: Attempt 3/3 succeeded
-```
-
-### Task Execution
-```yaml
-# .agentwire.yml
-tasks:
-  simple:
-    prompt: "Say hello"
-
-  with-pre:
-    pre:
-      data: echo "test data"  # Shorthand syntax
-    prompt: "Process: {{ data }}"
-
-  full-workflow:
-    pre:
-      headlines:
-        cmd: "curl -s https://httpbin.org/json | jq '.slideshow.title'"
-        required: true
-        timeout: 15
-    prompt: |
-      Analyze: {{ headlines }}
-    on_task_end: |
-      Read {{ summary_file }}.
-      If complete, save your analysis to /tmp/analysis.md
+  morning-report:
+    project: ~/projects/piinpoint
+    session: piinpoint-report
+    task: morning-report
+    schedule:
+      after: [nightly-tests, nightly-lint]
+      delay: 5m
     post:
-      - "echo 'Task {{ task }} finished with status: {{ status }}'"
-    output:
-      capture: 20
-      save: /tmp/test-log.txt
+      - "agentwire scheduler report --since 12h --artifact"
 ```
 
-### Morning Briefing (Real World)
+### One-Time and Limited Tasks
+
+Tasks can auto-disable after a set number of runs:
+
 ```yaml
 tasks:
-  morning-briefing:
+  tonight-scaffold:
+    # ...
+    once: true        # Run once, then auto-disable (shorthand for max_runs: 1)
+    schedule:
+      every: 1m
+
+  quarterly-report:
+    # ...
+    max_runs: 4       # Run 4 times then auto-disable
+    schedule:
+      every: day
+      at: "09:00"
+```
+
+- `once: true` — shorthand for `max_runs: 1`
+- `max_runs: N` — auto-disables after N dispatches, logs `task_disabled` event
+- Re-enable with `agentwire scheduler enable <task-name>`
+
+---
+
+## Morning Dashboard
+
+After overnight tasks run, generate a summary report:
+
+```bash
+agentwire scheduler report --since 8h           # Print summary + artifact path
+agentwire scheduler report --since 8h --artifact  # Also open in portal
+```
+
+The HTML report includes: task name, status badge, branch, PR link, duration, and one-line summary. PR URLs are populated automatically when tasks use `starting_ref` + `work_branch`.
+
+---
+
+## `claude-auto` — Recommended Session Type
+
+For overnight/unattended work, use `claude-auto` instead of `claude-bypass`:
+
+```yaml
+# .agentwire.yml
+type: claude-auto
+```
+
+`claude-auto` uses Claude Code's auto mode: a background Sonnet 4.6 classifier reviews each tool call before execution. Safe actions (file reads, edits, git ops) run immediately with no overhead. Dangerous actions (force push to main, mass deletion, credential exfiltration) are blocked.
+
+`claude-bypass` has no safety checks. `claude-auto` does everything `claude-bypass` does for normal overnight work but prevents catastrophic failures at 3am when nobody's watching.
+
+**Requires:** Team or Enterprise Claude plan. Pro/Max individual plans not supported.
+
+See `docs/claude-code-auto-mode.md` for full setup, allow rule configuration, and constraints.
+
+---
+
+## Full Overnight Workflow Example
+
+```yaml
+# ~/projects/piinpoint/.agentwire.yml
+type: claude-auto
+roles:
+  - task-runner
+
+tasks:
+  write-tests:
+    prompt: "Write missing unit tests for recent changes in the payments module. Focus on edge cases."
+    starting_ref: main
+    pr_target: main
+    pr_draft: true
+    role: piinpoint-test-writer
     retries: 1
-    retry_delay: 60
-    pre:
-      weather: curl -s "wttr.in/?format=3"
-      calendar:
-        cmd: "gcal-cli today --json"
-        required: true
-        timeout: 30
-      news:
-        cmd: "curl -s https://api.news.com/top | jq '.[:5]'"
-        validate: "jq . > /dev/null"
-        timeout: 30
-    prompt: |
-      Good morning! Prepare my daily briefing.
+    idle_timeout: 60
+    exit_on_complete: true
 
-      Weather: {{ weather }}
-      Calendar: {{ calendar }}
-      Top News: {{ news }}
+  lint-cleanup:
+    prompt: "Run the linter, fix all auto-fixable issues, commit the fixes."
+    starting_ref: main
+    pr_target: main
+    pr_draft: false
+    role: task-runner
+    exit_on_complete: true
 
-      Summarize what I need to know today.
-    on_task_end: |
-      Read {{ summary_file }}.
-      If status is complete:
-        - Save the briefing to ~/briefings/{{ date }}.md
-        - Read the briefing aloud
-      If status is failed or incomplete:
-        - Say "Briefing could not be completed" and explain why
+  morning-report:
+    prompt: "Summarize what was accomplished overnight. Check the PRs that were opened."
     post:
-      - "cp {{ summary_file }} ~/logs/briefing-{{ datetime }}.md"
-    output:
-      capture: 50
-      save: ~/briefings/{{ date }}-log.txt
-      notify: webhook ${SLACK_BRIEFING_WEBHOOK}
+      - "agentwire scheduler report --since 12h --artifact"
+    exit_on_complete: true
 ```
 
-```bash
-# Cron entry
-0 7 * * * agentwire ensure -s newsbot --task morning-briefing --timeout 600
-```
-
-## Dry Run Behavior
-
-`--dry-run` shows what would execute without making changes:
-
-| Phase | Dry Run Behavior |
-|-------|-----------------|
-| Lock | Skipped (no lock acquired) |
-| Session check | Shows what would happen (create/recreate/use existing) |
-| Pre phase | Shows commands but **does not execute** (may have side effects) |
-| Prompt | Shows final templated prompt (with built-in vars only) |
-| Send | Skipped |
-| System summary prompt | Shows the hardcoded prompt |
-| on_task_end | Shows user's prompt (if defined) |
-| Post phase | Shows commands but does not execute |
-
-**Note:** Since pre commands don't run in dry-run mode, `{{ var_name }}` variables will show as `<pre:var_name>` placeholders in the prompt output.
-
-## Non-Goals
-
-- **No built-in scheduler** - Users use cron/launchd/systemd
-- **No job management UI** - Tasks are code, managed in yaml/git
-- **No approval workflows** - Fire and execute
-- **No cost guardrails** - User's API keys, user's problem
-- **No prompt validation** - Minimal syntax check only
-- **No task inheritance** - Each task is standalone (use YAML anchors if needed)
-- **No sentinel files** - We don't rely on agents following "write to X when done" instructions
-- **No automatic cleanup** - Summary files persist; user manages cleanup
-
-## Cross-Platform
-
-Works on macOS and Linux. Windows not supported (no tmux).
-
-| Component | Approach |
-|-----------|----------|
-| Shell | Default `/bin/sh` (POSIX), user can override per-project or per-task |
-| Paths | Python pathlib, `~/` expansion handled |
-| User commands | User's responsibility to write portable pre/post commands |
-
-Shell configuration:
 ```yaml
-# Project-level default
-shell: /bin/sh
-
+# ~/.agentwire/scheduler.yaml
 tasks:
-  needs-bash:
-    shell: /bin/bash  # Task-level override
-    pre:
-      data: "bash-specific stuff"
+  nightly-tests:
+    project: ~/projects/piinpoint
+    session: piinpoint-tests
+    task: write-tests
+    type: claude-auto
+    once: true
+    schedule:
+      every: 1m
+      not_before: "22:00"
+      not_after: "06:00"
+
+  nightly-lint:
+    project: ~/projects/piinpoint
+    session: piinpoint-lint
+    task: lint-cleanup
+    type: claude-auto
+    once: true
+    schedule:
+      after: nightly-tests
+      delay: 2m
+
+  morning-report:
+    project: ~/projects/piinpoint
+    session: piinpoint-report
+    task: morning-report
+    schedule:
+      after: [nightly-tests, nightly-lint]
+      delay: 5m
 ```
 
-Default: `/bin/sh` for maximum portability. Users who need bash/zsh features can override.
-
-## Dependencies
-
-- Jinja2 or similar for `{{ }}` templating (or simple regex replace)
-- `fcntl` (stdlib) for flock-based locking
-- Existing: session management, idle detection, output capture
-
-**Note:** No external dependencies required beyond what's already in the project. Locking uses Python's `fcntl.flock()` which is available on macOS and Linux.
-
-## Files to Modify
-
-- `agentwire/__main__.py` - Add `ensure`, `task` commands
-- `agentwire/config.py` - Extend `.agentwire.yml` schema for tasks
-- `agentwire/tasks.py` - New module for task loading/execution
-- `agentwire/templating.py` - New module for `{{ }}` and `${ENV}` substitution
-- `agentwire/locking.py` - New module for session locking (flock-based)
-- `agentwire/completion.py` - New module for completion detection (idle + summary file)
-- `agentwire/mcp_server.py` - Add MCP tools for tasks
-- `agentwire/roles/*.md` - Update/add roles for scheduled work
-- `CLAUDE.md` - Document new commands and MCP tools
-- `docs/scheduled-workloads.md` - User-facing documentation
-
-## MCP Tools
-
-New tools for agents to work with tasks:
-
-```python
-@mcp.tool()
-def task_list(session: str | None = None) -> str:
-    """List available tasks for a session/project.
-
-    Args:
-        session: Session name (uses its project's .agentwire.yml)
-
-    Returns:
-        JSON list of task names and descriptions
-    """
-
-@mcp.tool()
-def task_show(session: str, task: str) -> str:
-    """Show task definition details.
-
-    Args:
-        session: Session name
-        task: Task name from .agentwire.yml
-
-    Returns:
-        JSON with full task configuration
-    """
-
-@mcp.tool()
-def task_run(session: str, task: str, timeout: int = 300) -> str:
-    """Run a named task from .agentwire.yml.
-
-    Executes full task lifecycle:
-    1. Acquire lock, ensure session exists and is healthy
-    2. Run pre-commands, validate outputs
-    3. Send templated prompt, wait for idle
-    4. Send system summary prompt, wait for summary file
-    5. Send on_task_end if defined, wait for idle
-    6. Run post-commands
-    7. Release lock
-
-    Args:
-        session: Target session name
-        task: Task name from .agentwire.yml
-        timeout: Max seconds to wait (default 300)
-
-    Returns:
-        JSON with status, summary, output capture, and attempt count
-    """
-```
-
-**Note:** For ad-hoc prompts without task config, use the existing `session_send()` MCP tool.
-
-## Role Updates
-
-### New Role: `task-runner`
-
-Optimized for scheduled/headless execution:
-
-```markdown
-# Task Runner
-
-You're executing a scheduled task. Work autonomously and report results.
-
-## Context
-
-You're running as part of a scheduled workflow:
-- Pre-commands have already gathered data (in your prompt)
-- When you go idle, you'll be asked to write a task summary
-- If on_task_end is defined, you'll get a final prompt after the summary
-- Post-commands will handle notifications
-
-## Task Summary Format
-
-When asked to write the task summary, use YAML front matter:
-
-\`\`\`yaml
----
-status: complete
-summary: Brief description of what you accomplished
-files_modified:
-  - src/feature.py
-  - tests/test_feature.py
-blockers: []
----
-\`\`\`
-
-Additional notes can follow the front matter if needed.
-
-## Expectations
-
-- Complete the task without user interaction
-- Be honest about status - use 'incomplete' if you couldn't finish
-- Use voice sparingly (scheduled = possibly unattended)
-- Be concise - this runs repeatedly
-```
-
-### Update: `task-runner` Role
-
-Add section for scheduled context awareness:
-
-```markdown
-## Scheduled Execution
-
-When running via `agentwire ensure --task`:
-- Pre-phase has populated your context with fresh data
-- You'll be prompted for a summary when you finish
-- on_task_end gives you a chance for final actions (voice, save files)
-- Post-phase will handle notifications
-- Keep output structured for automation
-```
-
-## Documentation Updates
-
-### CLAUDE.md Additions
-
-```markdown
-## Scheduled Workloads
-
-### ensure Command
-
-\`\`\`bash
-agentwire ensure -s session --task name           # Run named task
-agentwire ensure -s session --task name --wait-lock  # Wait if locked
-agentwire ensure -s session --task name --timeout 600  # Custom timeout
-\`\`\`
-
-Runs a named task from `.agentwire.yml` with reliable session management. Acquires lock to prevent concurrent execution. For ad-hoc prompts, use `agentwire send` instead.
-
-### Tasks
-
-Define in `.agentwire.yml`:
-
-\`\`\`yaml
-tasks:
-  task-name:
-    retries: 2
-    pre:
-      var: "command"              # Shorthand
-      data:
-        cmd: "curl api"           # With validation
-        required: true
-        validate: "jq . > /dev/null"
-        timeout: 30
-    prompt: "Use {{ var }} and {{ data }}"
-    on_task_end: |                # Optional: runs after system summary
-      Read {{ summary_file }}.
-      If complete, announce success.
-    output:
-      notify: webhook ${SLACK_URL}
-\`\`\`
-
-### Completion Flow
-
-1. Task prompt sent
-2. Agent works, goes idle
-3. System prompts for `.agentwire/task-summary-{datetime}.md`
-4. If `on_task_end` defined, user's prompt sent (can reference `{{ summary_file }}`)
-5. Post-phase runs with `{{ status }}` from summary
-
-### MCP Tools
-
-| CLI | MCP Tool |
-|-----|----------|
-| `agentwire ensure -s x --task y` | `agentwire_task_run(session="x", task="y")` |
-| `agentwire task list x` | `agentwire_task_list(session="x")` |
-| `agentwire task show x/y` | `agentwire_task_show(session="x", task="y")` |
-```
-
-## Success Criteria
-
-1. `agentwire ensure -s session --task name` works reliably from cron
-2. Concurrent `ensure` calls to same session are properly serialized (locking works)
-3. Tasks with pre/prompt/post execute correctly
-4. Pre command validation (`required`, `validate`, `timeout`) catches bad data before prompting
-5. Variables substitute in prompt, on_task_end, and post commands (`{{ }}` and `${ENV}`)
-6. Completion detection works via idle + system summary prompt
-7. `on_task_end` prompt fires after system summary, with access to `{{ summary_file }}`
-8. `{{ status }}` in post-phase comes from parsed summary file
-9. Summary files are timestamped, preserving history across runs
-10. Retry logic recovers from transient failures (retries on `failed` status)
-11. Notifications fire on completion (including webhook with env var expansion)
-12. Exit codes accurately reflect outcome (0=complete, 1=failed, 2=incomplete, etc.)
-13. Morning briefing example works end-to-end
+Each night: tests task and lint task each fork their own branch, do their work, and open a draft PR. Morning report runs after both, generates an HTML dashboard showing statuses and PR links.

@@ -7,7 +7,7 @@
 `agentwire scheduler report` generates an HTML artifact summarizing all overnight
 task work: statuses, branches created, PRs opened, durations, summaries.
 
-## Status: In Progress
+## Status: Complete
 
 ## Use Case
 
@@ -81,8 +81,8 @@ agentwire scheduler report --since 8h --artifact
 
 ## Done When
 
-- [ ] `agentwire scheduler report` generates HTML artifact
-- [ ] Shows all tasks from the time window with status/branch/PR/summary
-- [ ] `--artifact` opens in portal
-- [ ] PR URLs shown when available (from Feature 1 summary data)
-- [ ] No tasks in window → graceful empty state HTML
+- [x] `agentwire scheduler report` generates HTML artifact
+- [x] Shows all tasks from the time window with status/branch/PR/summary
+- [x] `--artifact` opens in portal
+- [x] PR URLs shown when available (from Feature 1 summary data)
+- [x] No tasks in window → graceful empty state HTML

@@ -7,7 +7,7 @@
 Allow `agentwire fork` and the `session_fork()` MCP tool to accept a `--commit` parameter
 so forked worktrees start from a specific commit/ref rather than HEAD.
 
-## Status: In Progress
+## Status: Complete
 
 ## Use Case
 
@@ -82,7 +82,7 @@ cd ~/projects/myproject-worktrees/test-branch && git log --oneline -1
 
 ## Done When
 
-- [ ] `agentwire fork --commit REF` creates worktree at that commit
-- [ ] `session_fork(commit="...")` MCP tool passes it through
-- [ ] No `--commit` → existing HEAD behavior unchanged
-- [ ] Invalid commit ref → clear error, no partial worktree left behind
+- [x] `agentwire fork --commit REF` creates worktree at that commit
+- [x] `session_fork(commit="...")` MCP tool passes it through
+- [x] No `--commit` → existing HEAD behavior unchanged
+- [x] Invalid commit ref → clear error, no partial worktree left behind

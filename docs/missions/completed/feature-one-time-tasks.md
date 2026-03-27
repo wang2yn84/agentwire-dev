@@ -8,7 +8,7 @@ Scheduler tasks can declare `max_runs: N` or `once: true` to auto-disable after 
 set number of successful runs. Enables "queue up tonight's work" without manual
 enable/disable.
 
-## Status: In Progress
+## Status: Complete
 
 ## Use Case
 
@@ -96,9 +96,9 @@ agentwire scheduler board
 
 ## Done When
 
-- [ ] `once: true` task auto-disables after first successful dispatch
-- [ ] `max_runs: N` task auto-disables after N successful dispatches
-- [ ] Board shows remaining runs for limited tasks
-- [ ] Scheduler event logged when task auto-disables (`max_runs_reached`)
-- [ ] Tasks at limit are skipped without error (graceful)
-- [ ] Re-enabling a disabled task resets the limit check (respects run_count vs max_runs)
+- [x] `once: true` task auto-disables after first successful dispatch
+- [x] `max_runs: N` task auto-disables after N successful dispatches
+- [x] Board shows remaining runs for limited tasks
+- [x] Scheduler event logged when task auto-disables (`max_runs_reached`)
+- [x] Tasks at limit are skipped without error (graceful)
+- [x] Re-enabling a disabled task resets the limit check (respects run_count vs max_runs)
