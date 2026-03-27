@@ -882,7 +882,7 @@ def _kill_session(session: str) -> None:
 
     # Step 2: Send /exit to pane 0 for clean agent shutdown
     subprocess.run(
-        ["tmux", "send-keys", "-t", f"={session}:0.0", "/exit", "Enter"],
+        ["tmux", "send-keys", "-t", f"={session}.0", "/exit", "Enter"],
         capture_output=True, timeout=5,
     )
     time.sleep(3)

@@ -3877,7 +3877,7 @@ def cmd_kill(args) -> int:
             return _output_result(False, json_mode, f"Session '{session}' not found on {machine_id}")
 
         # Send /exit to Claude first for clean shutdown (target pane 0 specifically)
-        exit_cmd = f"tmux send-keys -t {shlex.quote(session)}:0.0 /exit Enter"
+        exit_cmd = f"tmux send-keys -t {shlex.quote(session)}.0 /exit Enter"
         _run_remote(machine_id, exit_cmd)
         if not json_mode:
             print(f"Sent /exit to {session_full}, waiting 3s...")
@@ -3906,7 +3906,7 @@ def cmd_kill(args) -> int:
     # Send /exit to Claude first for clean shutdown
     # Target pane 0 specifically and capture output to avoid terminal noise
     subprocess.run(
-        ["tmux", "send-keys", "-t", f"{session}:0.0", "/exit", "Enter"],
+        ["tmux", "send-keys", "-t", f"{session}.0", "/exit", "Enter"],
         capture_output=True
     )
     if not json_mode:
@@ -4014,7 +4014,7 @@ def cmd_spawn(args) -> int:
         target_session = session or pane_manager.get_current_session()
         if target_session:
             result = subprocess.run(
-                ["tmux", "display", "-t", f"{target_session}:0.0", "-p", "#{pane_current_path}"],
+                ["tmux", "display", "-t", f"{target_session}.0", "-p", "#{pane_current_path}"],
                 capture_output=True, text=True
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -4140,7 +4140,7 @@ def cmd_split(args) -> int:
 
     # Apply main-top layout: orchestrator (pane 0) at top with 60%, workers below
     pane_manager._apply_main_top_layout(session)
-    subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.0"], capture_output=True)
+    subprocess.run(["tmux", "select-pane", "-t", f"{session}.0"], capture_output=True)
 
     pane_count = 1 + count  # original + new
     print(f"Added {count} pane(s) - now {pane_count} panes")
@@ -4203,7 +4203,7 @@ def cmd_detach(args) -> int:
 
     # Re-align remaining panes with main-top layout
     pane_manager._apply_main_top_layout(source_session)
-    subprocess.run(["tmux", "select-pane", "-t", f"{source_session}:0.0"], capture_output=True)
+    subprocess.run(["tmux", "select-pane", "-t", f"{source_session}.0"], capture_output=True)
 
     print(f"Moved pane {pane_index} to session '{new_session}'")
     return 0

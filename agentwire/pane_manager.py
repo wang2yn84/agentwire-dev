@@ -72,7 +72,7 @@ def _get_window_dimensions(session: str) -> tuple[int, int]:
         Tuple of (width, height) in characters.
     """
     result = run_command(
-        ["tmux", "display", "-t", f"{session}:0", "-p", "#{window_width}:#{window_height}"],
+        ["tmux", "display", "-t", session, "-p", "#{window_width}:#{window_height}"],
         timeout=5,
     )
     if result.success:
@@ -179,7 +179,7 @@ def _apply_main_top_layout(session: str) -> None:
 
     # Get window height for main pane size calculation
     result = run_command(
-        ["tmux", "display", "-t", f"{session}:0", "-p", "#{window_height}"],
+        ["tmux", "display", "-t", session, "-p", "#{window_height}"],
         timeout=5,
     )
     if not result.success:
@@ -191,17 +191,17 @@ def _apply_main_top_layout(session: str) -> None:
     # Apply main-horizontal layout (main pane on top, others tiled below)
     # The main-pane-height option sets how much space the main pane gets
     run_command([
-        "tmux", "select-layout", "-t", f"{session}:0", "main-horizontal"
+        "tmux", "select-layout", "-t", session, "main-horizontal"
     ], timeout=5)
 
     # Set the main pane height
     run_command([
-        "tmux", "set-window-option", "-t", f"{session}:0", "main-pane-height", str(main_height)
+        "tmux", "set-window-option", "-t", session, "main-pane-height", str(main_height)
     ], timeout=5)
 
     # Re-apply layout to pick up the new height
     run_command([
-        "tmux", "select-layout", "-t", f"{session}:0", "main-horizontal"
+        "tmux", "select-layout", "-t", session, "main-horizontal"
     ], timeout=5)
 
 
@@ -222,7 +222,7 @@ def list_panes(session: str | None = None) -> list[PaneInfo]:
     result = run_command(
         [
             "tmux", "list-panes",
-            "-t", f"{session}:0",
+            "-t", session,
             "-F", "#{pane_index}:#{pane_id}:#{pane_pid}:#{pane_current_command}:#{pane_active}"
         ],
         timeout=5,
