@@ -130,25 +130,64 @@ agentwire/channels/
 
 **Base classes (`base.py`):**
 ```python
-class ServiceChannel:
-    """Bidirectional channel with long-lived service process."""
+class Channel:
+    """Base class for all channels. Provides access to primitives."""
     name: str
     enabled: bool
+    config: dict
+
+    # --- Primitives (available to all channels) ---
+
+    async def tts(self, text: str, voice: str | None = None) -> bytes:
+        """Generate audio from text via TTS server.
+        Returns WAV bytes. Channel decides what to do with them
+        (send as voice note, attach to email, play in Discord, etc.)."""
+
+    async def stt(self, audio: bytes, format: str = "wav") -> str:
+        """Transcribe audio to text via STT server.
+        Accepts audio bytes, returns transcribed text."""
+
+    def voices_available(self) -> list[str]:
+        """List available TTS voices (including cloned voices)."""
+
+    # --- Session interaction ---
+
+    def send_to_session(self, session: str, text: str) -> None:
+        """Route a message to a session. Wraps `agentwire send`."""
+
+    def get_session_output(self, session: str, lines: int = 20) -> str:
+        """Read recent output from a session. Wraps `agentwire output`."""
+
+    def list_sessions(self) -> list[dict]:
+        """List active sessions. Wraps `agentwire list --json`."""
+
+
+class ServiceChannel(Channel):
+    """Bidirectional channel with long-lived service process."""
 
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def status(self) -> dict: ...
 
-    # Outbound handled via portal WebSocket subscription (per channel)
-    # Inbound handled via platform SDK → agentwire send
+    # Outbound: subscribe to portal WebSocket for session events
+    # Inbound: platform SDK → self.send_to_session()
 
-class SendOnlyChannel:
+
+class SendOnlyChannel(Channel):
     """Stateless outbound-only channel."""
-    name: str
-    enabled: bool
 
     async def send(self, text: str, **kwargs) -> dict: ...
 ```
+
+**What primitives give channel developers:**
+- `self.tts("Hello!")` → WAV bytes ready to attach/send as voice note
+- `self.stt(voice_message_bytes)` → transcribed text ready to route to session
+- `self.voices_available()` → list of voices to offer users
+- `self.send_to_session(session, text)` → route inbound message to agent
+- `self.get_session_output(session)` → show agent output in channel
+- `self.list_sessions()` → let users pick sessions from channel UI
+
+Channel developers never need to know about TTS server URLs, STT backends, or tmux internals. The base class handles all of it.
 
 **Registry (`__init__.py`):**
 ```python
@@ -277,13 +316,14 @@ stt:
 2. Directory structure for a new channel
 3. `ServiceChannel` vs `SendOnlyChannel` — which to subclass
 4. Config section registration
-5. How to use primitives (TTS for voice notes, STT for audio transcription)
-6. Inbound message handling (routing to sessions via `agentwire send`)
-7. Outbound message handling (subscribing to portal WebSocket events)
-8. Service lifecycle (start/stop for long-running bots)
-9. MCP tool registration
-10. Testing checklist
-11. Publishing/sharing custom channels
+5. Using primitives via base class (`self.tts()`, `self.stt()`, `self.voices_available()`)
+6. Session interaction helpers (`self.send_to_session()`, `self.get_session_output()`, `self.list_sessions()`)
+7. Inbound message handling (platform SDK → `self.send_to_session()`)
+8. Outbound message handling (subscribing to portal WebSocket events)
+9. Service lifecycle (start/stop for long-running bots)
+10. MCP tool registration
+11. Testing checklist
+12. Publishing/sharing custom channels
 
 **The example channel** should be a minimal but complete service channel implementation (~100 lines) that a developer can copy and modify — something like a Matrix or IRC bridge.
 
