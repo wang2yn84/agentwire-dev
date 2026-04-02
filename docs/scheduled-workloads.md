@@ -347,6 +347,76 @@ tasks:
     exit_on_complete: true
 ```
 
+---
+
+## Overnight Session Queue
+
+For tasks that need human-in-the-loop preparation, use the **overnight session queue** instead of the scheduler. The scheduler runs predefined YAML tasks. The overnight queue dispatches dynamically prepared sessions with forked Claude conversation context.
+
+**Key difference:** Autonomous agents fail on judgment-heavy work because they lack micro-decisions humans make. The overnight system front-loads all human judgment into interactive preparation time, then dispatches the fully-prepared sessions overnight.
+
+### Workflow
+
+```
+5:00 PM — Open session, discuss project context with Claude
+5:15 PM — agentwire overnight prepare --from piinpoint --task "refactor payment module"
+           → Session context captured (Claude sessionId, git branch, HEAD commit)
+5:16 PM — Keep preparing more tasks from same or different sessions
+5:43 PM — Go home.
+
+10:00 PM — Orchestrator dispatches session 1 (forks Claude context) → works → PR
+11:00 PM — Dispatches session 2 → works → PR
+12:00 AM — All done. Voice notification sent.
+
+8:00 AM — agentwire overnight report → review draft PRs
+```
+
+### Commands
+
+```bash
+agentwire overnight prepare --from <session> --task "description"  # Queue session
+agentwire overnight list [--all]            # List queue (--all includes done/)
+agentwire overnight status                  # Orchestrator state + queue summary
+agentwire overnight cancel <id>             # Cancel queued/running item
+agentwire overnight priority <id> <n>       # Update priority (lower = higher)
+agentwire overnight start                   # Start orchestrator in tmux
+agentwire overnight serve                   # Run orchestrator in foreground
+agentwire overnight stop                    # Stop orchestrator
+agentwire overnight report                  # Morning report of completed items
+```
+
+### How Dispatch Works
+
+1. `prepare` captures: Claude sessionId (for `--resume --fork-session`), git branch, HEAD commit
+2. Orchestrator creates tmux session, launches agent with forked conversation context
+3. Agent checks out work branch (`overnight/<id>-<slug>`)
+4. Go prompt sent — agent executes with full prior context
+5. On completion: auto-commit, push, draft PR, archive to `done/`, notify
+
+### Configuration
+
+Add to `~/.agentwire/config.yaml`:
+
+```yaml
+overnight:
+  window_start: "22:00"       # Dispatch window start
+  window_end: "07:00"         # Dispatch window end
+  timezone: "America/Toronto" # Empty = local
+  check_interval: 60          # Seconds between queue checks
+  max_concurrent: 1           # Sessions to run at once
+  session_timeout: 7200       # Max seconds per session (2h)
+  session_type: "claude-auto" # Default session type
+  pr_draft: true              # Create draft PRs
+```
+
+### When to Use What
+
+| Workflow | Tool | Best For |
+|----------|------|----------|
+| Predefined recurring tasks | **Scheduler** | Nightly tests, lint, reports |
+| Human-prepared one-shot work | **Overnight queue** | Feature work, complex refactors |
+| Quick one-off tasks | **`agentwire ensure`** | Ad-hoc task execution |
+
 ```yaml
 # ~/.agentwire/scheduler.yaml
 tasks:

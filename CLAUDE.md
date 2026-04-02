@@ -160,6 +160,15 @@ agentwire scheduler enable|disable task     # enable/disable a task
 agentwire scheduler report [--since 8h] [--artifact]  # generate morning report HTML
 agentwire scheduler dashboard               # open scheduler dashboard
 
+# Overnight session queue
+agentwire overnight prepare --from <session> --task "desc"  # queue session
+agentwire overnight list [--all]            # list queue items
+agentwire overnight status                  # orchestrator state
+agentwire overnight cancel <id>             # cancel item
+agentwire overnight priority <id> <n>       # update priority
+agentwire overnight start|serve|stop        # manage orchestrator daemon
+agentwire overnight report                  # morning report
+
 # Setup & Development
 agentwire init                  # interactive setup wizard
 agentwire generate-certs        # generate SSL certificates
@@ -284,6 +293,17 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire scheduler disable task` | `scheduler_disable(task="...")` |
 | `agentwire scheduler history` | `scheduler_history(limit=20)` |
 
+### Overnight Session Queue (6 tools)
+
+| CLI Command | MCP Tool |
+|-------------|----------|
+| `agentwire overnight prepare --from s --task d` | `overnight_prepare(session="...", description="...", priority=50)` |
+| `agentwire overnight list` | `overnight_list()` |
+| `agentwire overnight status` | `overnight_status()` |
+| `agentwire overnight cancel id` | `overnight_cancel(item_id="...")` |
+| `agentwire overnight priority id n` | `overnight_priority(item_id="...", priority=N)` |
+| `agentwire overnight report` | `overnight_report()` |
+
 ### Desktop/Portal UI (10 tools)
 
 | Action | MCP Tool |
@@ -316,7 +336,7 @@ Portal API endpoints:
 - `POST /api/session/{name}/spawn` — Spawn child (`{name, path?, type?, role?, auto_kill_on_complete?}`)
 - `GET /api/session/{name}/children` — List children (`{children: [{name, busy, message_count, path}]}`)
 
-**79 tools total.** When to use CLI vs MCP:
+**85 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
@@ -444,6 +464,20 @@ telegram:
 
 scheduler:
   dispatch_cooldown: 60  # Seconds between task dispatches (default: 60)
+
+overnight:
+  window_start: "22:00"        # Start of overnight work window
+  window_end: "07:00"          # End of overnight work window
+  timezone: "America/Toronto"  # Empty = local timezone
+  check_interval: 60           # Seconds between queue checks
+  max_concurrent: 1            # Sessions to run at once
+  session_timeout: 7200        # Max seconds per session (2h)
+  branch_prefix: "overnight/"  # Git branch prefix
+  pr_draft: true               # Create draft PRs
+  session_type: "claude-auto"  # Session type for execution
+  go_prompt: |                 # Prompt sent when dispatching
+    You have been prepared with full context for this task.
+    Begin autonomous execution now. Commit frequently.
 
 zai:  # Z.AI API configuration (for claudeGLM sessions)
   api_key: ""  # Z.AI API key (or set ZAI_API_KEY env var)
@@ -805,6 +839,35 @@ tasks:
 - `max_runs: N` — auto-disables task after N successful dispatches
 - Scheduler logs a `task_disabled` event with `reason: max_runs_reached`
 - Re-enabling a disabled task via `agentwire scheduler enable <name>` resets it
+
+## Overnight Session System
+
+"Prepare once, fork many, execute overnight." Human prepares sessions interactively during the day (full back-and-forth with Claude), queues them, and the orchestrator dispatches them during off-hours with draft PR creation.
+
+**User workflow:**
+```
+5:00 PM — Open session, discuss project context with Claude
+5:15 PM — agentwire overnight prepare --from piinpoint --task "refactor payment module"
+           → Queued. Session context captured.
+5:16 PM — Repeat for more tasks
+5:43 PM — Go home.
+
+10:00 PM — Orchestrator dispatches session 1 → works → PR created
+11:00 PM — Dispatches session 2 → works → PR created
+12:00 AM — All done. Voice notification sent.
+
+8:00 AM — agentwire overnight report → review draft PRs
+```
+
+**Queue directory:** `~/.agentwire/overnight/` (active items), `~/.agentwire/overnight/done/` (archived)
+
+**How it works:**
+1. `prepare` captures: Claude sessionId (for `--resume --fork-session`), git branch, HEAD commit
+2. `dispatch` creates tmux session, launches agent with forked context, creates work branch
+3. On completion: auto-commit, push, draft PR, archive, notify
+4. Orchestrator respects work window (default 22:00-07:00)
+
+**Session type:** Uses `claude-auto` by default for classifier safety net. Override with `--type`.
 
 ## Key Patterns
 

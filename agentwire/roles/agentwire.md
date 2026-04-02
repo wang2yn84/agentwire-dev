@@ -49,6 +49,19 @@ Workers auto-exit when idle. They write summary files before exiting, and you re
 
 Sessions can have parent sessions. When you go idle, your parent is notified. Use `alert(text, to=session)` to send text notifications up the chain.
 
+## Overnight Queue
+
+Queue prepared sessions for autonomous overnight execution with full conversation context.
+
+| Tool | What it does |
+|------|-------------|
+| `overnight_prepare(session, description)` | Queue a session for overnight dispatch |
+| `overnight_list()` | List queued/running items |
+| `overnight_status()` | Orchestrator state and queue summary |
+| `overnight_cancel(item_id)` | Cancel a queued or running item |
+| `overnight_priority(item_id, priority)` | Update item priority |
+| `overnight_report()` | Morning report of completed items |
+
 ## Notifications
 
 | Tool | What it does |
