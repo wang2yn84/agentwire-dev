@@ -114,19 +114,15 @@ Stateless, fire-and-forget outbound. No process, no inbound, no service lifecycl
 **Target structure:**
 ```
 agentwire/channels/
-├── __init__.py                    # Registry, discovery, list_channels()
-├── base.py                        # ServiceChannel + SendOnlyChannel base classes
-├── telegram/
-│   ├── __init__.py                # TelegramChannel(ServiceChannel)
-│   ├── bot.py                     # Bot logic (from bridges/telegram.py)
-│   └── config.py                  # TelegramConfig dataclass
-├── email/
-│   ├── __init__.py                # EmailChannel(SendOnlyChannel)
-│   ├── sender.py                  # Send logic (refactored from notifications.py)
-│   ├── config.py                  # EmailConfig dataclass
-│   └── templates/
-│       └── notification.html      # Branded HTML template
+├── __init__.py          # Registry, discovery, auto-register built-in channels
+├── base.py              # Channel/ServiceChannel/SendOnlyChannel + primitives + CLI runners
+├── email.py             # EmailChannel(SendOnlyChannel) + all email functions from notifications.py
+├── telegram.py          # TelegramChannel(ServiceChannel) + telegram send functions from notifications.py
 ```
+
+`bridges/telegram.py` stays unchanged (complex bot logic, wrapped by `channels/telegram.py`).
+`templates/email_notification.html` stays (Jinja2 PackageLoader path stable).
+`notifications.py` is deleted (imports rewired directly).
 
 **Base classes (`base.py`):**
 ```python
@@ -229,30 +225,35 @@ stt:
   url: "http://localhost:8101"
 ```
 
-**Backwards compat:** Config loading checks both old paths (`telegram:`, `notifications.email:`) and new (`channels.telegram:`, `channels.email:`). New takes precedence. No forced migration.
+**Config migration:** Config loading checks both old paths (`telegram:`, `notifications.email:`) and new (`channels.telegram:`, `channels.email:`). New takes precedence via `{**legacy, **new}` dict merge.
 
-**New CLI:**
-- `agentwire channels list [--json]` — show all channels with type + enabled status
+**Import rewiring:** `notifications.py` is deleted. The 2 import sites in `__main__.py` are updated directly:
+- `from .notifications import check_telegram_bot` → `from .channels.telegram import check_telegram_bot`
+- `from agentwire.notifications import cmd_email` → `from agentwire.channels.email import cmd_email`
 
-**New MCP tool:**
-- `channels_list()` — agents discover available channels
+**New CLI:** `agentwire channels list [--json]`
+**New MCP tool:** `channels_list()`
+**Existing CLI preserved:** `agentwire telegram start`, `agentwire email`, etc.
 
-**Existing CLI preserved:** `agentwire telegram start`, `agentwire email`, etc. continue to work.
+**Files changed:**
 
-**Files to move/refactor:**
-
-| From | To | Notes |
-|------|----|-------|
-| `agentwire/bridges/telegram.py` | `agentwire/channels/telegram/bot.py` | Split into Channel class + bot logic |
-| `agentwire/notifications.py` | `agentwire/channels/email/sender.py` | Thorough refactor — review and clean up |
-| `agentwire/templates/email_notification.html` | `agentwire/channels/email/templates/notification.html` | Template |
-| `EmailConfig` from `config.py` | `agentwire/channels/email/config.py` | Dataclass |
-| New | `agentwire/channels/base.py` | ServiceChannel + SendOnlyChannel |
-| New | `agentwire/channels/__init__.py` | Registry + discovery |
+| Action | File | Notes |
+|--------|------|-------|
+| Create | `agentwire/channels/__init__.py` | Registry + auto-register |
+| Create | `agentwire/channels/base.py` | Base classes + primitives + CLI runners |
+| Create | `agentwire/channels/email.py` | Email functions from notifications.py + EmailChannel |
+| Create | `agentwire/channels/telegram.py` | Telegram send functions from notifications.py + TelegramChannel |
+| Modify | `agentwire/config.py` | Add TelegramConfig, ChannelsConfig, update _dict_to_config() |
+| Modify | `agentwire/__main__.py` | Rewire 2 imports, add channels list CLI |
+| Modify | `agentwire/mcp_server.py` | Add channels_list() MCP, update email_send() to call library |
+| Delete | `agentwire/notifications.py` | All code moved to channels/ |
+| Keep | `agentwire/bridges/telegram.py` | Complex bot, wrapped not moved |
+| Keep | `agentwire/templates/email_notification.html` | Jinja2 template, path stable |
 
 **Done when:**
 - [ ] All existing functionality unchanged (Telegram bot, email send, voice all work)
 - [ ] Code organized in `agentwire/channels/`
+- [ ] `notifications.py` deleted, imports rewired
 - [ ] `agentwire channels list` shows: telegram (service), email (send-only)
 - [ ] `channels_list()` MCP tool works
 - [ ] Config supports both old and new paths
