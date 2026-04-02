@@ -225,7 +225,26 @@ stt:
   url: "http://localhost:8101"
 ```
 
-**Config migration:** Config loading checks both old paths (`telegram:`, `notifications.email:`) and new (`channels.telegram:`, `channels.email:`). New takes precedence via `{**legacy, **new}` dict merge.
+**Per-channel config pattern:** Each channel defines its own config dataclass + config key in its channel file. The central config loader discovers these via the registry and builds them automatically. No config.py changes needed for new channels.
+
+```python
+# In channels/email.py — channel owns its config
+@dataclass
+class EmailConfig:
+    api_key: str = ""
+    from_address: str = ""
+    default_to: str = ""
+
+@ChannelRegistry.register("email")
+class EmailChannel(SendOnlyChannel):
+    config_class = EmailConfig
+    config_key = "email"                        # reads channels.email: from YAML
+    legacy_config_key = "notifications.email"   # BUILT-IN ONLY — old config path
+```
+
+**Security:** `legacy_config_key` is restricted to built-in channels (`BUILTIN_CHANNELS` set in base.py). Custom channels can ONLY read from `channels.{their_name}:` — prevents config key squatting.
+
+**Config migration:** Old paths (`telegram:`, `notifications.email:`) merged with new paths (`channels.telegram:`, `channels.email:`). New takes precedence via `{**legacy, **new}` dict merge.
 
 **Import rewiring:** `notifications.py` is deleted. The 2 import sites in `__main__.py` are updated directly:
 - `from .notifications import check_telegram_bot` → `from .channels.telegram import check_telegram_bot`
@@ -243,7 +262,7 @@ stt:
 | Create | `agentwire/channels/base.py` | Base classes + primitives + CLI runners |
 | Create | `agentwire/channels/email.py` | Email functions from notifications.py + EmailChannel |
 | Create | `agentwire/channels/telegram.py` | Telegram send functions from notifications.py + TelegramChannel |
-| Modify | `agentwire/config.py` | Add TelegramConfig, ChannelsConfig, update _dict_to_config() |
+| Modify | `agentwire/config.py` | Remove EmailConfig/NotificationsConfig, add `channels: dict`, registry-driven config loading |
 | Modify | `agentwire/__main__.py` | Rewire 2 imports, add channels list CLI |
 | Modify | `agentwire/mcp_server.py` | Add channels_list() MCP, update email_send() to call library |
 | Delete | `agentwire/notifications.py` | All code moved to channels/ |
