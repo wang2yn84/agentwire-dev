@@ -2,7 +2,8 @@
 
 # Mission: Channels — Pluggable Communication Integrations
 
-**Status:** Planning
+**Status:** Complete
+**Branch:** `feature/overnight-session-system`
 
 ## Summary
 
@@ -270,13 +271,13 @@ class EmailChannel(SendOnlyChannel):
 | Keep | `agentwire/templates/email_notification.html` | Jinja2 template, path stable |
 
 **Done when:**
-- [ ] All existing functionality unchanged (Telegram bot, email send, voice all work)
-- [ ] Code organized in `agentwire/channels/`
-- [ ] `notifications.py` deleted, imports rewired
-- [ ] `agentwire channels list` shows: telegram (service), email (send-only)
-- [ ] `channels_list()` MCP tool works
-- [ ] Config supports both old and new paths
-- [ ] Email code reviewed and cleaned up during move
+- [x] All existing functionality unchanged (Telegram bot, email send, voice all work)
+- [x] Code organized in `agentwire/channels/`
+- [x] `notifications.py` deleted, imports rewired
+- [x] `agentwire channels list` shows: telegram (service), email (send-only)
+- [x] `channels_list()` MCP tool works
+- [x] Config supports both old and new paths
+- [x] Email code reviewed and cleaned up during move
 
 ### Phase 2: Add SMS, webhook, Discord, and Slack
 
@@ -318,12 +319,12 @@ class EmailChannel(SendOnlyChannel):
 - CLI: `agentwire slack start|serve|stop|status`
 
 **Done when:**
-- [ ] SMS send works via Twilio
-- [ ] Webhook POST works to configured URL
-- [ ] Discord bot handles DMs to/from sessions
-- [ ] Slack bot handles DMs, mentions, slash commands
-- [ ] All show in `agentwire channels list`
-- [ ] All follow patterns from Phase 1
+- [x] SMS send works via Twilio
+- [x] Webhook POST works to configured URL
+- [x] Discord bot handles DMs to/from sessions
+- [x] Slack bot handles DMs, mentions, slash commands
+- [x] All show in `agentwire channels list`
+- [x] All follow patterns from Phase 1
 
 ### Phase 3: Channel development guide + example template
 
@@ -348,9 +349,9 @@ class EmailChannel(SendOnlyChannel):
 **The example channel** should be a minimal but complete service channel implementation (~100 lines) that a developer can copy and modify — something like a Matrix or IRC bridge.
 
 **Done when:**
-- [ ] Developer can read guide, copy example, have working custom channel
-- [ ] Custom channels in `agentwire/channels/` auto-detected by registry
-- [ ] Example demonstrates: config, inbound, outbound, service lifecycle, primitive usage
+- [x] Developer can read guide, copy example, have working custom channel
+- [x] Custom channels in `agentwire/channels/` auto-detected by registry
+- [x] Example demonstrates: config, inbound, outbound, service lifecycle, primitive usage
 
 ---
 

@@ -246,27 +246,6 @@ class OvernightConfig:
 
 
 @dataclass
-class EmailConfig:
-    """Email notification configuration (Resend)."""
-
-    api_key: str = ""  # Resend API key (or set RESEND_API_KEY env var)
-    from_address: str = ""  # Verified sender (e.g., notifications@agentwire.dev)
-    default_to: str = ""  # Default recipient
-    # Email branding images (hosted publicly, e.g., on agentwire.dev)
-    banner_image_url: str = ""  # Full banner with Echo, wires, tree
-    echo_image_url: str = ""  # Echo owl for header (~80px)
-    echo_small_url: str = ""  # Small Echo for sign-off (~24px)
-    logo_image_url: str = ""  # AgentWire text logo
-
-
-@dataclass
-class NotificationsConfig:
-    """Notification channels configuration."""
-
-    email: EmailConfig = field(default_factory=EmailConfig)
-
-
-@dataclass
 class Config:
     """Root configuration for AgentWire."""
 
@@ -283,7 +262,7 @@ class Config:
     session: SessionConfig = field(default_factory=SessionConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     overnight: OvernightConfig = field(default_factory=OvernightConfig)
-    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    channels: dict = field(default_factory=dict)
 
 
 def _merge_dict(base: dict, override: dict) -> dict:
@@ -450,21 +429,20 @@ def _dict_to_config(data: dict) -> Config:
         tts=tts_service,
     )
 
-    # Notifications
-    notifications_data = data.get("notifications", {})
-    email_data = notifications_data.get("email", {})
-    # Support RESEND_API_KEY env var as fallback
-    email_api_key = email_data.get("api_key") or os.environ.get("RESEND_API_KEY", "")
-    email_config = EmailConfig(
-        api_key=email_api_key,
-        from_address=email_data.get("from_address", ""),
-        default_to=email_data.get("default_to", ""),
-        banner_image_url=email_data.get("banner_image_url", ""),
-        echo_image_url=email_data.get("echo_image_url", ""),
-        echo_small_url=email_data.get("echo_small_url", ""),
-        logo_image_url=email_data.get("logo_image_url", ""),
-    )
-    notifications = NotificationsConfig(email=email_config)
+    # Channel configs (registry-driven)
+    channel_configs = {}
+    try:
+        from agentwire.channels import ChannelRegistry
+
+        for name, channel_cls in ChannelRegistry._channels.items():
+            if channel_cls.config_class:
+                resolved = ChannelRegistry.resolve_config(name, data)
+                if resolved:
+                    channel_configs[name] = channel_cls.config_class(**resolved)
+                else:
+                    channel_configs[name] = channel_cls.config_class()
+    except ImportError:
+        pass
 
     # Scheduler
     scheduler_data = data.get("scheduler", {})
@@ -512,7 +490,7 @@ def _dict_to_config(data: dict) -> Config:
         services=services,
         scheduler=scheduler,
         overnight=overnight,
-        notifications=notifications,
+        channels=channel_configs,
     )
 
 

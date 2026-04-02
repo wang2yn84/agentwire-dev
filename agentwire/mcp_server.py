@@ -1882,8 +1882,21 @@ def overnight_report() -> str:
 
 
 # =============================================================================
-# Notification Tools
+# Channel Tools
 # =============================================================================
+
+
+@mcp.tool()
+def channels_list() -> str:
+    """List all registered communication channels with their type and status.
+
+    Returns:
+        JSON list of channels with name, type, configured status, and builtin flag.
+    """
+    data = run_agentwire_cmd(["channels", "list"], json_output=True)
+    if data.get("success"):
+        return json.dumps(data["channels"], indent=2)
+    return data.get("error", "Failed to list channels")
 
 
 @mcp.tool()
@@ -1923,6 +1936,70 @@ def email_send(
     if data.get("success"):
         return "Email sent."
     return f"Failed to send email: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def sms_send(body: str, to: str | None = None) -> str:
+    """Send an SMS via Twilio.
+
+    Args:
+        body: Message text
+        to: Recipient phone number in +E.164 format (default: from config)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["sms", "--body", body]
+    if to:
+        args.extend(["--to", to])
+
+    data = run_agentwire_cmd(args, json_output=False)
+    if data.get("success"):
+        return "SMS sent."
+    return f"Failed to send SMS: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def webhook_send(text: str, url: str | None = None) -> str:
+    """Send a message via HTTP webhook.
+
+    Args:
+        text: Message text
+        url: Target URL (overrides config default)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["webhook", "--body", text]
+    if url:
+        args.extend(["--url", url])
+
+    data = run_agentwire_cmd(args, json_output=False)
+    if data.get("success"):
+        return "Webhook sent."
+    return f"Failed to send webhook: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def discord_status() -> str:
+    """Check Discord bridge status.
+
+    Returns:
+        JSON with running status and session info.
+    """
+    data = run_agentwire_cmd(["discord", "status"], json_output=True)
+    return json.dumps(data, indent=2)
+
+
+@mcp.tool()
+def slack_status() -> str:
+    """Check Slack bridge status.
+
+    Returns:
+        JSON with running status and session info.
+    """
+    data = run_agentwire_cmd(["slack", "status"], json_output=True)
+    return json.dumps(data, indent=2)
 
 
 @mcp.tool()

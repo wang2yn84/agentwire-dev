@@ -1724,6 +1724,43 @@ def cmd_stt_status(args) -> int:
 # === Telegram Commands ===
 
 
+def cmd_channels_list(args) -> int:
+    """List all registered communication channels."""
+    from agentwire.channels import ChannelRegistry
+    from agentwire.config import get_config
+
+    config = get_config()
+    channels = []
+    for name, cls in sorted(ChannelRegistry._channels.items()):
+        ch_config = config.channels.get(name)
+        # Check if channel has meaningful config (api key, token, or url)
+        configured = False
+        if ch_config is not None:
+            for attr in ("api_key", "bot_token", "account_sid", "url"):
+                if getattr(ch_config, attr, ""):
+                    configured = True
+                    break
+        channels.append({
+            "name": name,
+            "type": cls.channel_type,
+            "configured": configured,
+            "builtin": name in ChannelRegistry.BUILTIN_CHANNELS,
+        })
+
+    json_mode = getattr(args, "json", False)
+    if json_mode:
+        _output_json({"success": True, "channels": channels})
+    else:
+        if not channels:
+            print("No channels registered.")
+        else:
+            for ch in channels:
+                status = "configured" if ch["configured"] else "not configured"
+                builtin = "" if ch["builtin"] else " (custom)"
+                print(f"  {ch['name']:12s} {ch['type']:10s} {status}{builtin}")
+    return 0
+
+
 def get_telegram_session_name() -> str:
     """Get Telegram bridge tmux session name from config."""
     config = load_config()
@@ -1797,6 +1834,162 @@ def cmd_telegram_status(args) -> int:
         else:
             print("Telegram bridge is not running.")
             print("  Start: agentwire telegram start")
+
+    return 0 if running else 1
+
+
+# === Discord Commands ===
+
+def get_discord_session_name() -> str:
+    """Get Discord bridge tmux session name from config."""
+    config = load_config()
+    return config.get("channels", {}).get("discord", {}).get("session_name", "agentwire-discord")
+
+
+def cmd_discord_start(args) -> int:
+    """Start the Discord bridge in tmux."""
+    session_name = get_discord_session_name()
+
+    if tmux_session_exists(session_name):
+        print(f"Discord bridge already running in tmux session '{session_name}'")
+        print("Attaching... (Ctrl+B D to detach)")
+        subprocess.run(["tmux", "attach-session", "-t", session_name])
+        return 0
+
+    source_dir = get_source_dir()
+    venv_python = source_dir / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        print(f"Error: Cannot find venv at {venv_python}", file=sys.stderr)
+        return 1
+
+    cmd = f"cd {source_dir} && {venv_python} -c 'from agentwire.channels.discord import run_bridge; run_bridge()'"
+
+    subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(source_dir)])
+    subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
+
+    print(f"Discord bridge starting in tmux session '{session_name}'")
+    print(f"  Attach: tmux attach -t {session_name}")
+    return 0
+
+
+def cmd_discord_serve(args) -> int:
+    """Run the Discord bridge directly (foreground)."""
+    from .channels.discord import run_bridge
+    run_bridge()
+    return 0
+
+
+def cmd_discord_stop(args) -> int:
+    """Stop the Discord bridge."""
+    session_name = get_discord_session_name()
+
+    if not tmux_session_exists(session_name):
+        print("Discord bridge is not running.")
+        return 1
+
+    subprocess.run(["tmux", "kill-session", "-t", session_name])
+    print("Discord bridge stopped.")
+    return 0
+
+
+def cmd_discord_status(args) -> int:
+    """Check Discord bridge status."""
+    json_mode = getattr(args, 'json', False)
+    session_name = get_discord_session_name()
+
+    running = tmux_session_exists(session_name)
+
+    if json_mode:
+        _output_json({
+            "success": True,
+            "running": running,
+            "session": session_name if running else None,
+        })
+    else:
+        if running:
+            print(f"Discord bridge is running in tmux session '{session_name}'")
+            print(f"  Attach: tmux attach -t {session_name}")
+        else:
+            print("Discord bridge is not running.")
+            print("  Start: agentwire discord start")
+
+    return 0 if running else 1
+
+
+# === Slack Commands ===
+
+def get_slack_session_name() -> str:
+    """Get Slack bridge tmux session name from config."""
+    config = load_config()
+    return config.get("channels", {}).get("slack", {}).get("session_name", "agentwire-slack")
+
+
+def cmd_slack_start(args) -> int:
+    """Start the Slack bridge in tmux."""
+    session_name = get_slack_session_name()
+
+    if tmux_session_exists(session_name):
+        print(f"Slack bridge already running in tmux session '{session_name}'")
+        print("Attaching... (Ctrl+B D to detach)")
+        subprocess.run(["tmux", "attach-session", "-t", session_name])
+        return 0
+
+    source_dir = get_source_dir()
+    venv_python = source_dir / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        print(f"Error: Cannot find venv at {venv_python}", file=sys.stderr)
+        return 1
+
+    cmd = f"cd {source_dir} && {venv_python} -c 'from agentwire.channels.slack import run_bridge; run_bridge()'"
+
+    subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(source_dir)])
+    subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
+
+    print(f"Slack bridge starting in tmux session '{session_name}'")
+    print(f"  Attach: tmux attach -t {session_name}")
+    return 0
+
+
+def cmd_slack_serve(args) -> int:
+    """Run the Slack bridge directly (foreground)."""
+    from .channels.slack import run_bridge
+    run_bridge()
+    return 0
+
+
+def cmd_slack_stop(args) -> int:
+    """Stop the Slack bridge."""
+    session_name = get_slack_session_name()
+
+    if not tmux_session_exists(session_name):
+        print("Slack bridge is not running.")
+        return 1
+
+    subprocess.run(["tmux", "kill-session", "-t", session_name])
+    print("Slack bridge stopped.")
+    return 0
+
+
+def cmd_slack_status(args) -> int:
+    """Check Slack bridge status."""
+    json_mode = getattr(args, 'json', False)
+    session_name = get_slack_session_name()
+
+    running = tmux_session_exists(session_name)
+
+    if json_mode:
+        _output_json({
+            "success": True,
+            "running": running,
+            "session": session_name if running else None,
+        })
+    else:
+        if running:
+            print(f"Slack bridge is running in tmux session '{session_name}'")
+            print(f"  Attach: tmux attach -t {session_name}")
+        else:
+            print("Slack bridge is not running.")
+            print("  Start: agentwire slack start")
 
     return 0 if running else 1
 
@@ -6062,7 +6255,7 @@ def cmd_doctor(args) -> int:
     else:
         print(f"  [--] Telegram bridge: not running")
     try:
-        from .notifications import check_telegram_bot
+        from .channels.telegram import check_telegram_bot
         healthy, info = check_telegram_bot()
         if healthy:
             print(f"  [ok] Telegram bot: {info}")
@@ -9712,6 +9905,56 @@ def main() -> int:
     telegram_status.add_argument("--json", action="store_true", help="Output JSON")
     telegram_status.set_defaults(func=cmd_telegram_status)
 
+    # === discord command group ===
+    discord_parser = subparsers.add_parser("discord", help="Manage Discord bridge")
+    discord_subparsers = discord_parser.add_subparsers(dest="discord_command")
+
+    discord_start = discord_subparsers.add_parser("start", help="Start Discord bridge in tmux")
+    discord_start.set_defaults(func=cmd_discord_start)
+
+    discord_serve = discord_subparsers.add_parser("serve", help="Run Discord bridge in foreground")
+    discord_serve.set_defaults(func=cmd_discord_serve)
+
+    discord_stop = discord_subparsers.add_parser("stop", help="Stop Discord bridge")
+    discord_stop.set_defaults(func=cmd_discord_stop)
+
+    discord_status_cmd = discord_subparsers.add_parser("status", help="Check Discord bridge status")
+    discord_status_cmd.add_argument("--json", action="store_true", help="Output JSON")
+    discord_status_cmd.set_defaults(func=cmd_discord_status)
+
+    # === slack command group ===
+    slack_parser = subparsers.add_parser("slack", help="Manage Slack bridge")
+    slack_subparsers = slack_parser.add_subparsers(dest="slack_command")
+
+    slack_start = slack_subparsers.add_parser("start", help="Start Slack bridge in tmux")
+    slack_start.set_defaults(func=cmd_slack_start)
+
+    slack_serve = slack_subparsers.add_parser("serve", help="Run Slack bridge in foreground")
+    slack_serve.set_defaults(func=cmd_slack_serve)
+
+    slack_stop = slack_subparsers.add_parser("stop", help="Stop Slack bridge")
+    slack_stop.set_defaults(func=cmd_slack_stop)
+
+    slack_status_cmd = slack_subparsers.add_parser("status", help="Check Slack bridge status")
+    slack_status_cmd.add_argument("--json", action="store_true", help="Output JSON")
+    slack_status_cmd.set_defaults(func=cmd_slack_status)
+
+    # === sms command ===
+    from agentwire.channels.sms import cmd_sms
+    sms_parser = subparsers.add_parser("sms", help="Send SMS via Twilio")
+    sms_parser.add_argument("--body", "-b", type=str, help="Message body (or pipe via stdin)")
+    sms_parser.add_argument("--to", type=str, help="Recipient phone number (+E.164 format)")
+    sms_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress success output")
+    sms_parser.set_defaults(func=cmd_sms)
+
+    # === webhook command ===
+    from agentwire.channels.webhook import cmd_webhook
+    webhook_parser = subparsers.add_parser("webhook", help="Send message via HTTP webhook")
+    webhook_parser.add_argument("--body", "-b", type=str, help="Message body (or pipe via stdin)")
+    webhook_parser.add_argument("--url", type=str, help="Target URL (overrides config)")
+    webhook_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress success output")
+    webhook_parser.set_defaults(func=cmd_webhook)
+
     # === tunnels command group ===
     tunnels_parser = subparsers.add_parser("tunnels", help="Manage SSH tunnels for service routing")
     tunnels_subparsers = tunnels_parser.add_subparsers(dest="tunnels_command")
@@ -9762,8 +10005,16 @@ def main() -> int:
     open_parser.add_argument("--json", action="store_true", help="Output JSON")
     open_parser.set_defaults(func=cmd_open)
 
+    # === channels command ===
+    channels_parser = subparsers.add_parser("channels", help="Manage communication channels")
+    channels_sub = channels_parser.add_subparsers(dest="channels_cmd")
+    channels_list_parser = channels_sub.add_parser("list", help="List all registered channels")
+    channels_list_parser.add_argument("--json", action="store_true", help="Output JSON")
+    channels_list_parser.set_defaults(func=cmd_channels_list)
+    channels_parser.set_defaults(func=cmd_channels_list)
+
     # === email command ===
-    from agentwire.notifications import cmd_email
+    from agentwire.channels.email import cmd_email
     email_parser = subparsers.add_parser("email", help="Send branded email notification via Resend")
     email_parser.add_argument("--to", type=str, help="Recipient email (default: from config)")
     email_parser.add_argument("--subject", "-s", type=str, help="Email subject")

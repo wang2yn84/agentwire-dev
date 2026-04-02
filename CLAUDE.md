@@ -86,16 +86,32 @@ agentwire voiceclone delete name # delete a voice clone
 agentwire open <url> --title "T"  # open URL or local file as artifact window
 agentwire open dashboard.html     # open from ~/.agentwire/artifacts/
 
-# Email notifications
+# Channels (communication integrations)
+agentwire channels list         # list all registered channels
+agentwire channels list --json  # JSON output
+
+# Email (send-only channel)
 agentwire email --to addr --subject "Subject" --body "Body"
 agentwire email --body "msg" # uses default_to from config
 agentwire email --attach file.pdf --body "See attached"
 
-# Telegram bridge
+# SMS (send-only channel, requires Twilio)
+agentwire sms --body "msg" --to "+1234567890"
+
+# Webhook (send-only channel)
+agentwire webhook --body "msg" --url "https://hooks.example.com"
+
+# Telegram bridge (service channel)
 agentwire telegram start       # start bot in tmux
 agentwire telegram stop        # stop bot
 agentwire telegram serve       # run bot in foreground
 agentwire telegram status      # check bot status
+
+# Discord bridge (service channel, requires discord.py)
+agentwire discord start|serve|stop|status
+
+# Slack bridge (service channel, requires slack-bolt)
+agentwire slack start|serve|stop|status
 
 # Machine management
 agentwire machine list
@@ -261,6 +277,17 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire history resume id -p path` | `history_resume(session_id="...", project="...")` |
 | `agentwire email --body "..." --to addr` | `email_send(body="...", to="...", attachments=["..."], plain_text=False)` |
 
+### Channels (6 tools)
+
+| CLI Command | MCP Tool |
+|-------------|----------|
+| `agentwire channels list` | `channels_list()` |
+| `agentwire sms --body "..." --to "+1..."` | `sms_send(body="...", to="+1...")` |
+| `agentwire webhook --body "..." --url "..."` | `webhook_send(text="...", url="...")` |
+| `agentwire discord status` | `discord_status()` |
+| `agentwire slack status` | `slack_status()` |
+| `agentwire email --body "..." --to addr` | `email_send(body="...", to="...", attachments=["..."])` |
+
 ### Notifications & Network (5 tools)
 
 | CLI Command | MCP Tool |
@@ -336,7 +363,7 @@ Portal API endpoints:
 - `POST /api/session/{name}/spawn` — Spawn child (`{name, path?, type?, role?, auto_kill_on_complete?}`)
 - `GET /api/session/{name}/children` — List children (`{children: [{name, busy, message_count, path}]}`)
 
-**85 tools total.** When to use CLI vs MCP:
+**90 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
@@ -439,19 +466,43 @@ artifacts:
 portal:
   url: "https://localhost:8765"
 
-notifications:
+channels:
   email:
     api_key: ""  # Resend API key (or set RESEND_API_KEY env var)
     from_address: "Echo <echo@yourdomain.com>"
     default_to: "user@example.com"
-    # Branding images (hosted publicly)
     banner_image_url: "https://yourdomain.com/images/banner.png"
     echo_image_url: "https://yourdomain.com/images/echo.png"
     echo_small_url: "https://yourdomain.com/images/echo-small.png"
     logo_image_url: "https://yourdomain.com/images/logo.png"
+  sms:
+    account_sid: ""          # or TWILIO_ACCOUNT_SID env var
+    auth_token: ""           # or TWILIO_AUTH_TOKEN env var
+    from_number: "+1234567890"
+    default_to: "+0987654321"
+  webhook:
+    url: "https://hooks.example.com/agentwire"
+    method: "POST"
+    headers:
+      Authorization: "Bearer xxx"
+  discord:
+    bot_token: ""            # or DISCORD_BOT_TOKEN env var
+    allowed_user_ids: []     # Discord user IDs (integers)
+    default_session: "main"
+    voice_replies: true
+    session_name: "agentwire-discord"
+  slack:
+    bot_token: ""            # xoxb-... or SLACK_BOT_TOKEN env var
+    app_token: ""            # xapp-... or SLACK_APP_TOKEN env var
+    allowed_user_ids: []     # Slack user IDs (strings)
+    default_session: "main"
+    session_name: "agentwire-slack"
 
+# Legacy config paths still supported for built-in channels:
+# notifications.email: → channels.email:
+# telegram: → channels.telegram:
 telegram:
-  bot_token: ""              # from @BotFather (or TELEGRAM_BOT_TOKEN env var)
+  bot_token: ""              # from @BotFather (or TELEGRAM_AGENTWIRE_BOT_TOKEN env var)
   allowed_users: []          # Telegram user IDs (integers)
   default_session: "main"   # fallback session for messages
   voice_replies: true        # convert TTS to voice notes
@@ -918,6 +969,7 @@ desktop_open_artifact(url="https://example.com", title="External")
 ## Docs
 
 - CLI: `agentwire --help` or `agentwire <cmd> --help`
+- `docs/channels.md` - Channel developer guide (adding custom channels)
 - `docs/PORTAL.md` - Portal modes and API reference
 - `docs/security/damage-control.md` - Safety hooks documentation
 - `docs/TROUBLESHOOTING.md` - Common issues and solutions
