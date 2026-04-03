@@ -3,7 +3,7 @@
 # Mission: Channels — Pluggable Communication Integrations
 
 **Status:** Complete
-**Branch:** `feature/overnight-session-system`
+**Branch:** `main`
 
 ## Summary
 
@@ -363,14 +363,51 @@ class EmailChannel(SendOnlyChannel):
 - **Service channels follow existing patterns:** tmux sessions, `start|serve|stop|status` CLI, portal WebSocket subscription.
 - **Auto-discovery:** Registry scans `agentwire/channels/` for modules with a Channel subclass. No manual registration.
 
+## Post-Implementation: Quo Channel
+
+Added Quo (formerly OpenPhone) as a 7th built-in channel after discovering the user already has an account. Quo uses a simple REST API (stdlib only, no deps) for SMS. API key auth, $0.01/segment.
+
+- Quo API is read-only for calls (no programmable voice), but full SMS send/read
+- Cloudflare blocks Python's default urllib User-Agent — fixed with custom `User-Agent: agentwire` header
+- Inbound webhooks (`message.received`) available for future service channel upgrade
+
+## Production Testing (2026-04-03)
+
+| Channel | Test | Result |
+|---------|------|--------|
+| **Quo SMS** | Send via CLI (`agentwire quo --body ...`) | Delivered |
+| **Quo SMS** | Read messages via API | Working (full conversation history) |
+| **Quo SMS** | Receive reply from recipient | Confirmed |
+| **Email** | Send via CLI (`agentwire email --body ...`) | Delivered, HTML template renders correctly |
+| **Telegram** | Bot health check (`agentwire doctor`) | `@agentwire_bot` reachable |
+| **Telegram** | Send notification (`agentwire telegram notify --body ...`) | Delivered (message ID 141) |
+| **Telegram** | Bridge start/stop/status | All working |
+| **Telegram** | Inbound DM → session routing | Working, routed to `agentwire` session |
+| **Telegram** | Message prefix `[Telegram from Name: '...']` | Working |
+| **Channels list** | `agentwire channels list` (text + JSON) | All 7 channels shown correctly |
+| **Service status** | `agentwire discord/slack/telegram status --json` | All return valid JSON |
+
+### Automated Test Suite
+
+94 tests (79 unit + 15 integration), all passing:
+- Registry: all 7 built-ins registered, decorator, types, BUILTIN_CHANNELS set
+- Config: YAML loading, legacy paths, merge precedence, env fallbacks, security constraints
+- Per-channel: config dataclasses, env fallback, class attributes, error handling
+- CLI: channels list, service status, send-only error handling, help output
+- Security: legacy_config_key blocked for non-builtins
+- Import: old `notifications.py` imports fail, new `channels/` paths work
+
+### Not Yet Tested (Needs Credentials)
+
+| Channel | What's Needed |
+|---------|---------------|
+| SMS (Twilio) | Twilio account + phone number |
+| Webhook | Target URL to POST to |
+| Discord | Bot token from Discord Developer Portal |
+| Slack | Bot token + app token from api.slack.com |
+
 ## Open Questions
 
-- **CLI namespace:** Keep `agentwire telegram start` or add `agentwire channels telegram start`? Recommendation: keep both, top-level is shorthand.
-- **Email inbox monitoring:** Future service channel, not in this mission. Note it in the guide as an example of how one platform can have both a send-only and service channel.
-
-## Overnight Suitability
-
-- **Phase 1** — great overnight candidate. Prep session with: "here's every file, here's the target structure, consolidate without breaking anything."
-- **Phase 2 send-only** (SMS, webhook) — quick, could run overnight easily.
-- **Phase 2 service** (Discord, Slack) — needs human to provision bot tokens first, then coding overnight.
-- **Phase 3** — documentation, better done interactively.
+- **Email inbox monitoring:** Future service channel, not in this mission.
+- **Quo inbound webhooks:** Could upgrade Quo to service channel with `message.received` webhook routing to sessions.
+- **Quo AI features:** `call.summary.completed` and `call.transcript.completed` webhook events could pipe call intelligence into sessions.

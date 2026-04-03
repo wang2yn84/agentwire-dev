@@ -551,7 +551,8 @@ async def handle_text(message: Message):
     if not text:
         return
 
-    result = await run_cmd(["send", "-s", session, text])
+    prefixed = f"[Telegram from {message.from_user.first_name}: '{text}']"
+    result = await run_cmd(["send", "-s", session, prefixed])
 
     if result.get("error"):
         await message.answer(f"Error: {result['error']}")

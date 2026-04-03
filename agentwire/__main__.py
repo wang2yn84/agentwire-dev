@@ -1838,6 +1838,34 @@ def cmd_telegram_status(args) -> int:
     return 0 if running else 1
 
 
+def cmd_telegram_notify(args) -> int:
+    """Send a Telegram notification."""
+    from .channels.telegram import TelegramConfigError, send_telegram
+
+    body = args.body
+    if not body and not sys.stdin.isatty():
+        body = sys.stdin.read()
+
+    if not body:
+        print("Error: No message body. Use --body or pipe content.", file=sys.stderr)
+        return 1
+
+    chat_id = getattr(args, "chat_id", None)
+
+    try:
+        result = send_telegram(text=body, chat_id=chat_id)
+        if result.success:
+            if not getattr(args, "quiet", False):
+                print(f"Telegram message sent (id: {result.message_id})")
+            return 0
+        else:
+            print(f"Error: {result.error}", file=sys.stderr)
+            return 1
+    except TelegramConfigError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        return 1
+
+
 # === Discord Commands ===
 
 def get_discord_session_name() -> str:
@@ -9904,6 +9932,13 @@ def main() -> int:
     telegram_status = telegram_subparsers.add_parser("status", help="Check Telegram bridge status")
     telegram_status.add_argument("--json", action="store_true", help="Output JSON")
     telegram_status.set_defaults(func=cmd_telegram_status)
+
+    # telegram notify
+    telegram_notify = telegram_subparsers.add_parser("notify", help="Send a Telegram notification")
+    telegram_notify.add_argument("--body", "-b", type=str, help="Message body (or pipe via stdin)")
+    telegram_notify.add_argument("--chat-id", type=int, help="Target chat ID (default: first allowed user)")
+    telegram_notify.add_argument("-q", "--quiet", action="store_true", help="Suppress success output")
+    telegram_notify.set_defaults(func=cmd_telegram_notify)
 
     # === discord command group ===
     discord_parser = subparsers.add_parser("discord", help="Manage Discord bridge")
