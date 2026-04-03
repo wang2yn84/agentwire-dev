@@ -222,6 +222,7 @@ except ImportError:
 |---------|------|---------|------------|
 | Email | send-only | resend | `email` |
 | Telegram | service | aiogram | `telegram` |
+| Quo | send-only | stdlib | `quo` |
 | SMS | send-only | twilio | `sms` |
 | Webhook | send-only | stdlib | `webhook` |
 | Discord | service | discord.py | `discord` |

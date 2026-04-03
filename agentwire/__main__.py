@@ -9939,6 +9939,14 @@ def main() -> int:
     slack_status_cmd.add_argument("--json", action="store_true", help="Output JSON")
     slack_status_cmd.set_defaults(func=cmd_slack_status)
 
+    # === quo command ===
+    from agentwire.channels.quo import cmd_quo
+    quo_parser = subparsers.add_parser("quo", help="Send SMS via Quo (OpenPhone)")
+    quo_parser.add_argument("--body", "-b", type=str, help="Message body (or pipe via stdin)")
+    quo_parser.add_argument("--to", type=str, help="Recipient phone number (+E.164 format)")
+    quo_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress success output")
+    quo_parser.set_defaults(func=cmd_quo)
+
     # === sms command ===
     from agentwire.channels.sms import cmd_sms
     sms_parser = subparsers.add_parser("sms", help="Send SMS via Twilio")

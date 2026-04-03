@@ -36,7 +36,7 @@ class ChannelRegistry:
     """
 
     _channels: dict[str, type] = {}
-    BUILTIN_CHANNELS = {"email", "telegram", "sms", "webhook", "discord", "slack"}
+    BUILTIN_CHANNELS = {"email", "telegram", "quo", "sms", "webhook", "discord", "slack"}
 
     @classmethod
     def register(cls, name: str):

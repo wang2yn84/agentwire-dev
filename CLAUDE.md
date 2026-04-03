@@ -95,7 +95,10 @@ agentwire email --to addr --subject "Subject" --body "Body"
 agentwire email --body "msg" # uses default_to from config
 agentwire email --attach file.pdf --body "See attached"
 
-# SMS (send-only channel, requires Twilio)
+# Quo SMS (send-only channel, no deps)
+agentwire quo --body "msg" --to "+1234567890"
+
+# SMS via Twilio (send-only channel, requires twilio)
 agentwire sms --body "msg" --to "+1234567890"
 
 # Webhook (send-only channel)
@@ -277,11 +280,12 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | `agentwire history resume id -p path` | `history_resume(session_id="...", project="...")` |
 | `agentwire email --body "..." --to addr` | `email_send(body="...", to="...", attachments=["..."], plain_text=False)` |
 
-### Channels (6 tools)
+### Channels (7 tools)
 
 | CLI Command | MCP Tool |
 |-------------|----------|
 | `agentwire channels list` | `channels_list()` |
+| `agentwire quo --body "..." --to "+1..."` | `quo_send(body="...", to="+1...")` |
 | `agentwire sms --body "..." --to "+1..."` | `sms_send(body="...", to="+1...")` |
 | `agentwire webhook --body "..." --url "..."` | `webhook_send(text="...", url="...")` |
 | `agentwire discord status` | `discord_status()` |
@@ -363,7 +367,7 @@ Portal API endpoints:
 - `POST /api/session/{name}/spawn` — Spawn child (`{name, path?, type?, role?, auto_kill_on_complete?}`)
 - `GET /api/session/{name}/children` — List children (`{children: [{name, busy, message_count, path}]}`)
 
-**90 tools total.** When to use CLI vs MCP:
+**91 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
@@ -475,6 +479,10 @@ channels:
     echo_image_url: "https://yourdomain.com/images/echo.png"
     echo_small_url: "https://yourdomain.com/images/echo-small.png"
     logo_image_url: "https://yourdomain.com/images/logo.png"
+  quo:
+    api_key: ""              # or QUO_API_KEY / OPENPHONE_API_KEY env var
+    from_number: "+1234567890"  # E.164 or phone number ID (PNxxx)
+    default_to: "+0987654321"
   sms:
     account_sid: ""          # or TWILIO_ACCOUNT_SID env var
     auth_token: ""           # or TWILIO_AUTH_TOKEN env var

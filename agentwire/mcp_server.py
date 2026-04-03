@@ -1939,6 +1939,27 @@ def email_send(
 
 
 @mcp.tool()
+def quo_send(body: str, to: str | None = None) -> str:
+    """Send an SMS via Quo (OpenPhone).
+
+    Args:
+        body: Message text (max 1600 chars)
+        to: Recipient phone number in +E.164 format (default: from config)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["quo", "--body", body]
+    if to:
+        args.extend(["--to", to])
+
+    data = run_agentwire_cmd(args, json_output=False)
+    if data.get("success"):
+        return "Quo SMS sent."
+    return f"Failed to send Quo SMS: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
 def sms_send(body: str, to: str | None = None) -> str:
     """Send an SMS via Twilio.
 
