@@ -171,9 +171,11 @@ class DiscordBridge:
                 await self._handle_voice(message, attachment)
                 return
 
-        # Route text to session
+        # Route text to session with source prefix
         session = self._get_session(user_id)
-        result = _run_cmd(["send", "-s", session, text])
+        author_name = message.author.display_name or message.author.name
+        prefixed = f"[Discord from {author_name}: '{text}']"
+        result = _run_cmd(["send", "-s", session, prefixed])
         if not result.get("success", False):
             await message.reply(f"Error sending to session `{session}`: {result.get('error', 'unknown')}")
 
