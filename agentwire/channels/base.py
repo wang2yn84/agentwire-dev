@@ -117,6 +117,24 @@ def _run_cmd(args: list[str]) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def _run_cmd_no_json(args: list[str]) -> dict:
+    """Run agentwire CLI command WITHOUT --json flag. Returns success/error dict."""
+    try:
+        result = subprocess.run(
+            ["agentwire"] + args,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return {"success": True, "output": result.stdout.strip()}
+        return {"success": False, "error": result.stderr.strip() or result.stdout.strip() or "Command failed"}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Command timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def _run_cmd_raw(args: list[str]) -> str:
     """Run agentwire CLI command, return raw stdout."""
     try:
