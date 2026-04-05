@@ -410,14 +410,12 @@ class Channel:
         except Exception as e:
             raise NotificationError(f"STT failed: {e}") from e
 
-    def voices_available(self) -> list[str]:
+    async def voices_available(self) -> list[str]:
         """List available TTS voices."""
         from agentwire.config import get_config
 
         config = get_config()
-        tts_url = getattr(config.tts, "url", "http://localhost:8100")
-        if not tts_url:
-            tts_url = "http://localhost:8100"
+        tts_url = getattr(config.tts, "url", "http://localhost:8100") or "http://localhost:8100"
 
         try:
             req = urllib.request.Request(f"{tts_url}/voices")

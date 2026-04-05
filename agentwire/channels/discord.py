@@ -643,12 +643,15 @@ class DiscordBridge:
                                         client, json.loads(msg.data),
                                         target_type=target_type, target_id=target_id,
                                     )
-                except Exception:
+                except Exception as e:
+                    print(f"[discord] WS connection error for '{session_name}': {e}, reconnecting in 5s")
                     await asyncio.sleep(5)
         except asyncio.CancelledError:
             return
         except ImportError:
-            pass
+            print("[discord] aiohttp not installed — portal WebSocket listener disabled")
+        except Exception as e:
+            print(f"[discord] Portal WS listener for '{session_name}' failed: {e}")
 
     async def _handle_ws_event(self, client, event: dict, target_type: str = "dm", target_id: int = 0):
         """Handle outbound event from portal WebSocket."""
@@ -689,8 +692,8 @@ class DiscordBridge:
                         audio_bytes = base64.b64decode(audio_b64)
                         file = discord.File(fp=io.BytesIO(audio_bytes), filename="voice.wav")
                         await user.send(file=file)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[discord] WS event handling error ({target_type}/{target_id}): {e}")
 
 
 def run_bridge():

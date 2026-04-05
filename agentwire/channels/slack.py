@@ -312,10 +312,13 @@ class SlackBridge:
                                             reply_func(f"*Question from agent:*\n{question}")
                                         except Exception as e:
                                             print(f"[slack] Reply error: {e}")
-                except Exception:
+                except Exception as e:
+                    print(f"[slack] WS connection error for '{session_name}': {e}, reconnecting in 5s")
                     await asyncio.sleep(5)
-        except Exception:
-            pass
+        except ImportError:
+            print("[slack] aiohttp not installed — portal WebSocket listener disabled")
+        except Exception as e:
+            print(f"[slack] Portal WS listener for '{session_name}' failed: {e}")
 
     def _init_queue_manager(self, client):
         """Initialize the async message queue manager with Slack reaction callbacks.

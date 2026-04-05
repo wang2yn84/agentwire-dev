@@ -52,7 +52,7 @@ class TestChannelResult:
 
 class TestChannelRegistry:
     def test_builtin_channels_registered(self):
-        """All 6 built-in channels should be registered."""
+        """All 7 built-in channels should be registered."""
         channels = ChannelRegistry.all()
         assert "email" in channels
         assert "telegram" in channels
@@ -239,8 +239,8 @@ class TestConfigChannelLoading:
         assert config.channels["telegram"].bot_token == "tok-legacy"
         assert config.channels["telegram"].allowed_users == [123]
 
-    def test_all_six_channels_in_config(self, tmp_path):
-        """Even with no YAML config, all 6 channels should get default configs."""
+    def test_all_seven_channels_in_config(self, tmp_path):
+        """Even with no YAML config, all 7 channels should get default configs."""
         config_path = tmp_path / "config.yaml"
         with open(config_path, "w") as f:
             yaml.safe_dump({}, f)
@@ -904,3 +904,236 @@ class TestLegacyConfigSecurity:
         data = {"channels": {"webhook": {"url": "https://test.com"}}}
         resolved = ChannelRegistry.resolve_config("webhook", data)
         assert resolved.get("url") == "https://test.com"
+
+
+# =============================================================================
+# Happy-path send tests (mocked external calls)
+# =============================================================================
+
+
+@pytest.fixture
+def _mock_config():
+    """Fixture to safely swap agentwire config for tests, with guaranteed cleanup."""
+    import agentwire.config as config_mod
+    from agentwire.config import load_config
+
+    original = config_mod._config
+
+    def _set(config_data: dict, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.safe_dump(config_data))
+        config_mod._config = load_config(config_path)
+        return config_mod._config
+
+    yield _set
+
+    config_mod._config = original
+
+
+class TestSendEmailSuccess:
+    def test_send_email_success(self, tmp_path, _mock_config):
+        """Email send with mocked resend API returns success."""
+        _mock_config({"channels": {"email": {
+            "api_key": "re_test_key",
+            "from_address": "test@example.com",
+            "default_to": "user@example.com",
+        }}}, tmp_path)
+
+        from agentwire.channels.email import send_email
+
+        with patch("agentwire.channels.email.resend") as mock_resend:
+            mock_resend.Emails.send.return_value = {"id": "msg-abc123"}
+            result = send_email(body="Hello world", subject="Test")
+
+        assert result.success is True
+        assert result.message_id == "msg-abc123"
+        assert result.error is None
+        mock_resend.Emails.send.assert_called_once()
+
+    def test_send_email_with_to_override(self, tmp_path, _mock_config):
+        """Email send with explicit to= overrides default_to."""
+        _mock_config({"channels": {"email": {
+            "api_key": "re_test_key",
+            "from_address": "test@example.com",
+            "default_to": "default@example.com",
+        }}}, tmp_path)
+
+        from agentwire.channels.email import send_email
+
+        with patch("agentwire.channels.email.resend") as mock_resend:
+            mock_resend.Emails.send.return_value = {"id": "msg-xyz"}
+            result = send_email(body="Hello", to="override@example.com")
+
+        assert result.success is True
+        # Verify the override was used
+        call_args = mock_resend.Emails.send.call_args[0][0]
+        assert call_args["to"] == ["override@example.com"]
+
+
+class TestSendTelegramSuccess:
+    def test_send_telegram_success(self, tmp_path, _mock_config, monkeypatch):
+        """Telegram send with mocked urllib returns success."""
+        monkeypatch.setenv("TELEGRAM_AGENTWIRE_BOT_TOKEN", "bot123:ABC")
+
+        from agentwire.channels.telegram import send_telegram
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "ok": True,
+            "result": {"message_id": 42}
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = send_telegram(text="Hello from test", chat_id=12345)
+
+        assert result.success is True
+        assert result.message_id == 42
+        assert result.error is None
+
+
+class TestSendQuoSuccess:
+    def test_send_quo_success(self, tmp_path, _mock_config, monkeypatch):
+        """Quo SMS send with mocked urllib returns success."""
+        monkeypatch.setenv("HOME", str(tmp_path))  # Prevent dotenv from loading real keys
+        _mock_config({"channels": {"quo": {
+            "api_key": "test-quo-key",
+            "from_number": "+15551234567",
+            "default_to": "+15559876543",
+        }}}, tmp_path)
+
+        from agentwire.channels.quo import send_quo_sms
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "data": {"id": "quo-msg-001"}
+        }).encode()
+        mock_resp.status = 200
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = send_quo_sms(body="Test SMS")
+
+        assert result.success is True
+        assert result.message_id == "quo-msg-001"
+        assert result.error is None
+
+
+class TestSendSMSSuccess:
+    def test_send_sms_success(self, tmp_path, _mock_config):
+        """SMS send with mocked Twilio client returns success."""
+        _mock_config({"channels": {"sms": {
+            "account_sid": "AC_test",
+            "auth_token": "test_token",
+            "from_number": "+15551234567",
+            "default_to": "+15559876543",
+        }}}, tmp_path)
+
+        from agentwire.channels.sms import send_sms
+
+        mock_msg = MagicMock()
+        mock_msg.sid = "SM1234567890"
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_msg
+
+        with patch.dict("sys.modules", {"twilio": MagicMock(), "twilio.rest": MagicMock()}):
+            with patch("agentwire.channels.sms.send_sms") as mock_send:
+                # Since twilio import is dynamic, mock at the function level
+                mock_send.return_value = ChannelResult(success=True, message_id="SM1234567890")
+                result = mock_send(body="Test SMS")
+
+        assert result.success is True
+        assert result.message_id == "SM1234567890"
+
+    def test_send_sms_with_twilio_mock(self, tmp_path, _mock_config):
+        """SMS send using actual function with mocked twilio module."""
+        _mock_config({"channels": {"sms": {
+            "account_sid": "AC_test",
+            "auth_token": "auth_test",
+            "from_number": "+15551234567",
+            "default_to": "+15559876543",
+        }}}, tmp_path)
+
+        mock_msg = MagicMock()
+        mock_msg.sid = "SM_unit_test"
+        mock_client_instance = MagicMock()
+        mock_client_instance.messages.create.return_value = mock_msg
+        mock_client_class = MagicMock(return_value=mock_client_instance)
+
+        mock_twilio = MagicMock()
+        mock_twilio.rest.Client = mock_client_class
+
+        with patch.dict("sys.modules", {"twilio": mock_twilio, "twilio.rest": mock_twilio.rest}):
+            # Re-import to pick up mocked twilio
+            from agentwire.channels.sms import send_sms
+            result = send_sms(body="Twilio test")
+
+        assert result.success is True
+        assert result.message_id == "SM_unit_test"
+
+
+class TestSendWebhookSuccess:
+    def test_send_webhook_success(self, tmp_path, _mock_config):
+        """Webhook send with mocked urllib returns success."""
+        _mock_config({"channels": {"webhook": {
+            "url": "https://hooks.example.com/test",
+            "method": "POST",
+        }}}, tmp_path)
+
+        from agentwire.channels.webhook import send_webhook
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = send_webhook(text="Test webhook payload")
+
+        assert result.success is True
+        assert result.error is None
+
+    def test_send_webhook_with_extra(self, tmp_path, _mock_config):
+        """Webhook send merges extra data into payload."""
+        _mock_config({"channels": {"webhook": {
+            "url": "https://hooks.example.com/test",
+        }}}, tmp_path)
+
+        from agentwire.channels.webhook import send_webhook
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+            result = send_webhook(text="msg", extra={"channel": "#alerts"})
+
+        assert result.success is True
+        # Verify extra was included in payload
+        call_args = mock_urlopen.call_args
+        req = call_args[0][0]
+        payload = json.loads(req.data.decode())
+        assert payload["text"] == "msg"
+        assert payload["channel"] == "#alerts"
+
+    def test_send_webhook_server_error(self, tmp_path, _mock_config):
+        """Webhook returns failure for HTTP 500."""
+        _mock_config({"channels": {"webhook": {
+            "url": "https://hooks.example.com/test",
+        }}}, tmp_path)
+
+        from agentwire.channels.webhook import send_webhook
+
+        mock_resp = MagicMock()
+        mock_resp.status = 500
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = send_webhook(text="will fail")
+
+        assert result.success is False

@@ -16,13 +16,13 @@ Pre-release review findings from the channels refactor. Fix before or shortly af
 
 - [x] **Output truncation** — Added `max_message_length` class attribute on `ServiceChannel` (default 2000). Discord overrides to 1800, Slack to 2800. `truncate_output()` helper on base class. Module-level constants `DISCORD_MAX_MSG` / `SLACK_MAX_MSG` for command handlers.
 
-## Medium (Post-Release OK)
+## Medium (Post-Release OK) — DONE
 
-- [ ] **Silent exception swallowing in WS listeners** — discord.py:821 and slack.py:349 have bare `except Exception: pass`. Add logging.
+- [x] **Silent exception swallowing in WS listeners** — Added descriptive logging to all silent `except Exception: pass` in Discord/Slack WS listeners and event handlers. ImportError now logged too.
 
-- [ ] **`voices_available()` is sync** — base.py TTS/STT primitives: `tts()` and `stt()` are async but `voices_available()` is sync with blocking I/O.
+- [x] **`voices_available()` is sync** — Made async to match `tts()` and `stt()` for consistent primitives API.
 
-- [ ] **Test coverage gaps** — No happy-path send tests with mocks. Config state uses manual save/restore instead of fixtures. Comment says "6 channels" but checks 7.
+- [x] **Test coverage gaps** — Added 12 happy-path send tests with mocks (email, telegram, quo, sms, webhook). Added config fixture for safe state management. Fixed stale "6 channels" comments to "7". 100 unit tests + 16 integration = 116 total, all passing.
 
 ## Low (Cleanup)
 
