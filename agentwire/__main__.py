@@ -2569,7 +2569,7 @@ def cmd_reply(args) -> int:
         return 1
 
 
-def cmd_notify(args) -> int:
+def cmd_notify_parent(args) -> int:
     """Notify parent session (worker→orchestrator communication).
 
     Sends a prefixed text message to the parent session via tmux.
@@ -10115,7 +10115,7 @@ def main() -> int:
     notify_cmd_parser.add_argument("text", nargs="*", help="Notification message")
     notify_cmd_parser.add_argument("--to", type=str, metavar="SESSION", help="Target session (default: parent from .agentwire.yml)")
     notify_cmd_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
-    notify_cmd_parser.set_defaults(func=cmd_notify)
+    notify_cmd_parser.set_defaults(func=cmd_notify_parent)
 
     # === open command (artifact windows) ===
     open_parser = subparsers.add_parser("open", help="Open a URL or local file as an artifact window in the portal")

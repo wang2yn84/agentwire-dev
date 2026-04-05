@@ -6,11 +6,15 @@ Three-layer architecture:
 - SendOnlyChannel — stateless outbound (email, SMS, webhook)
 """
 
+import asyncio
 import json
 import subprocess
+import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
 
 
 class NotificationError(Exception):
@@ -149,6 +153,192 @@ def _run_cmd_raw(args: list[str]) -> str:
         return f"Error: {e}"
 
 
+# === Shared session helpers ===
+# Used by service channels to check/create sessions before routing messages.
+
+
+def session_exists(session: str) -> bool:
+    """Check if an agentwire session is running."""
+    result = _run_cmd(["info", "-s", session])
+    return result.get("success", False)
+
+
+def ensure_session(session: str, project: str = "") -> bool:
+    """Ensure a session exists, creating it if needed. Returns True if ready."""
+    if session_exists(session):
+        return True
+
+    args = ["new", "-s", session]
+    if project:
+        expanded = str(Path(project).expanduser())
+        args.extend(["-p", expanded])
+
+    result = _run_cmd(args)
+    return result.get("success", False)
+
+
+def wait_for_session_ready(session: str, timeout: int = 30) -> bool:
+    """Wait for a session's agent to be ready (prompt loaded, trust accepted).
+
+    Uses agentwire's core _wait_for_agent_ready which handles Claude Code's
+    first-time folder trust prompt and polls for the agent prompt indicator.
+    Falls back to a simple delay if the import fails.
+    """
+    try:
+        from agentwire.__main__ import _wait_for_agent_ready
+        return _wait_for_agent_ready(session, timeout=timeout)
+    except ImportError:
+        time.sleep(8)
+        return True
+
+
+# === Message queue for service channels ===
+
+
+@dataclass
+class QueuedMessage:
+    """A message waiting to be processed by a service channel.
+
+    Platform-specific message objects are stored as `platform_msg` so the
+    queue manager can pass them to reaction callbacks without knowing the type.
+    """
+
+    platform_msg: Any  # discord.Message, Slack event dict, etc.
+    text: str
+    session: str
+    project: str  # Empty string if no project needed
+    prefix: str  # Pre-formatted prefix string (e.g., "[Discord DM from User: 'text']")
+
+
+class MessageQueueManager:
+    """Per-session message queue with async workers.
+
+    Each session gets its own queue and worker task. Messages are processed
+    in order, one at a time per session. Different sessions run concurrently.
+
+    Platform-specific behavior (emoji reactions, error replies) is injected
+    via callbacks so the queue logic stays reusable across Discord, Slack, etc.
+    """
+
+    def __init__(
+        self,
+        channel_name: str,
+        on_queued: Callable | None = None,
+        on_starting: Callable | None = None,
+        on_sent: Callable | None = None,
+        on_error: Callable | None = None,
+        worker_idle_timeout: int = 300,
+    ):
+        self.channel_name = channel_name
+        self._queues: dict[str, asyncio.Queue] = {}
+        self._workers: dict[str, asyncio.Task] = {}
+        # Reaction callbacks — called with (platform_msg,). Must be async.
+        self._on_queued = on_queued
+        self._on_starting = on_starting
+        self._on_sent = on_sent
+        self._on_error = on_error
+        self._worker_idle_timeout = worker_idle_timeout
+
+    async def enqueue(self, msg: QueuedMessage):
+        """Add a message to the session's queue. Starts worker if needed."""
+        session = msg.session
+        print(f"[{self.channel_name}] Enqueuing message for session '{session}': {msg.text[:50]}")
+
+        if self._on_queued:
+            try:
+                await self._on_queued(msg.platform_msg)
+            except Exception as e:
+                print(f"[{self.channel_name}] Failed to mark queued: {e}")
+
+        if session not in self._queues:
+            print(f"[{self.channel_name}] Starting new queue worker for session '{session}'")
+            self._queues[session] = asyncio.Queue()
+            self._workers[session] = asyncio.create_task(self._worker(session))
+
+        await self._queues[session].put(msg)
+
+    async def _worker(self, session: str):
+        """Process messages for a session, one at a time, in order."""
+        queue = self._queues[session]
+
+        while True:
+            try:
+                msg: QueuedMessage = await asyncio.wait_for(
+                    queue.get(), timeout=self._worker_idle_timeout
+                )
+            except asyncio.TimeoutError:
+                # No messages within timeout — shut down worker
+                del self._queues[session]
+                del self._workers[session]
+                return
+
+            try:
+                await self._process_message(msg)
+            except Exception as e:
+                print(f"[{self.channel_name}] Queue error for {msg.session}: {e}")
+                import traceback
+                traceback.print_exc()
+                if self._on_error:
+                    try:
+                        await self._on_error(msg.platform_msg)
+                    except Exception:
+                        pass
+
+            queue.task_done()
+
+    async def _process_message(self, msg: QueuedMessage):
+        """Process a single queued message: ensure session, wait for ready, send."""
+        loop = asyncio.get_event_loop()
+        print(f"[{self.channel_name}] Processing message for session '{msg.session}'")
+
+        # Check if session exists, create if needed
+        exists = await loop.run_in_executor(None, session_exists, msg.session)
+        if not exists:
+            print(f"[{self.channel_name}] Session '{msg.session}' not found, creating...")
+            if self._on_starting:
+                try:
+                    await self._on_starting(msg.platform_msg)
+                except Exception:
+                    pass
+
+            created = await loop.run_in_executor(None, ensure_session, msg.session, msg.project)
+            if not created:
+                print(f"[{self.channel_name}] Failed to create session '{msg.session}'")
+                if self._on_error:
+                    try:
+                        await self._on_error(msg.platform_msg)
+                    except Exception:
+                        pass
+                return
+
+        # Wait for agent to finish loading if we just created the session
+        if not exists:
+            print(f"[{self.channel_name}] Waiting for session '{msg.session}' to load...")
+            ready = await loop.run_in_executor(None, wait_for_session_ready, msg.session, 30)
+            if ready:
+                print(f"[{self.channel_name}] Session '{msg.session}' ready")
+            else:
+                print(f"[{self.channel_name}] Session '{msg.session}' may not be fully loaded, sending anyway")
+
+        # Send to session (send doesn't support --json)
+        print(f"[{self.channel_name}] Sending to session '{msg.session}': {msg.text[:50]}")
+        result = await loop.run_in_executor(None, _run_cmd_no_json, ["send", "-s", msg.session, msg.prefix])
+        print(f"[{self.channel_name}] Send result: {result}")
+
+        if result.get("success", False):
+            if self._on_sent:
+                try:
+                    await self._on_sent(msg.platform_msg)
+                except Exception:
+                    pass
+        else:
+            if self._on_error:
+                try:
+                    await self._on_error(msg.platform_msg)
+                except Exception:
+                    pass
+
+
 # === Base Channel Classes ===
 
 
@@ -260,9 +450,19 @@ class ServiceChannel(Channel):
 
     Service channels run in their own tmux session and handle both
     inbound (platform → session) and outbound (session → platform).
+
+    Subclasses should set max_message_length to their platform's limit.
     """
 
     channel_type = "service"
+    max_message_length: int = 2000  # Override per-platform (Discord=1800, Slack=2800, etc.)
+
+    def truncate_output(self, text: str) -> str:
+        """Truncate text to platform's max message length, keeping the tail."""
+        limit = self.max_message_length
+        if len(text) <= limit:
+            return text
+        return text[-limit:]
 
     async def start(self) -> None:
         """Start the service channel."""

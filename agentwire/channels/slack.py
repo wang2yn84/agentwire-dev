@@ -21,19 +21,18 @@ import ssl
 import subprocess
 import sys
 import threading
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from .base import (
     ChannelRegistry,
-    ChannelResult,
+    MessageQueueManager,
     NotificationError,
+    QueuedMessage,
     ServiceChannel,
     _run_cmd,
-    _run_cmd_no_json,
     _run_cmd_raw,
+    session_exists,
 )
 
 
@@ -208,41 +207,10 @@ def _setup_channel_project(project_dir: str, channel_id: str, channel_name: str,
         )
 
 
-def _session_exists(session: str) -> bool:
-    """Check if an agentwire session is running."""
-    result = _run_cmd(["info", "-s", session])
-    return result.get("success", False)
+# Slack limits — 4000 char API max, leave room for markdown formatting
+SLACK_MAX_MSG = 2800
 
-
-def _ensure_session(session: str, project: str = "") -> bool:
-    """Ensure a session exists, creating it if needed."""
-    if _session_exists(session):
-        return True
-
-    args = ["new", "-s", session]
-    if project:
-        expanded = str(Path(project).expanduser())
-        args.extend(["-p", expanded])
-
-    result = _run_cmd(args)
-    return result.get("success", False)
-
-
-def _wait_for_session_ready(session: str, max_wait: int = 30):
-    """Wait for session to be ready. Uses agentwire's core _wait_for_agent_ready."""
-    try:
-        from agentwire.__main__ import _wait_for_agent_ready
-        ready = _wait_for_agent_ready(session, timeout=max_wait)
-        if ready:
-            print(f"[slack] Session '{session}' ready")
-        else:
-            print(f"[slack] Session '{session}' may not be fully loaded after {max_wait}s, sending anyway")
-    except ImportError:
-        # Fallback if import fails
-        time.sleep(8)
-
-
-# Emoji status indicators (Slack reaction names, no colons)
+# Slack emoji status indicators (reaction names, no colons)
 EMOJI_QUEUED = "hourglass_flowing_sand"
 EMOJI_STARTING = "rocket"
 EMOJI_SENT = "white_check_mark"
@@ -349,59 +317,89 @@ class SlackBridge:
         except Exception:
             pass
 
-    def _process_message(self, session: str, project: str, text: str, prefix: str,
-                         message: dict, say, client, is_new_session: bool):
-        """Process a message synchronously (called from slack-bolt handler thread)."""
-        channel = message.get("channel", "")
-        ts = message.get("ts", "")
+    def _init_queue_manager(self, client):
+        """Initialize the async message queue manager with Slack reaction callbacks.
 
-        # Add queued reaction
-        try:
-            client.reactions_add(channel=channel, timestamp=ts, name=EMOJI_QUEUED)
-        except Exception:
-            pass
+        Runs the queue's event loop in a background thread so slack-bolt's
+        sync handlers can enqueue messages without blocking.
+        """
+        def _slack_reaction_callbacks(client):
+            """Build async reaction callbacks for Slack's message queue."""
+            async def _clear_and_react(msg, emoji_name):
+                """Remove previous status reactions, add new one."""
+                channel = msg.get("channel", "")
+                ts = msg.get("ts", "")
+                for old in (EMOJI_QUEUED, EMOJI_STARTING):
+                    try:
+                        client.reactions_remove(channel=channel, timestamp=ts, name=old)
+                    except Exception:
+                        pass
+                try:
+                    client.reactions_add(channel=channel, timestamp=ts, name=emoji_name)
+                except Exception:
+                    pass
 
-        # Wait for session if just created
-        if is_new_session:
-            # Swap to rocket
-            try:
-                client.reactions_remove(channel=channel, timestamp=ts, name=EMOJI_QUEUED)
-                client.reactions_add(channel=channel, timestamp=ts, name=EMOJI_STARTING)
-            except Exception:
-                pass
+            async def on_queued(msg):
+                try:
+                    client.reactions_add(
+                        channel=msg.get("channel", ""), timestamp=msg.get("ts", ""), name=EMOJI_QUEUED
+                    )
+                except Exception:
+                    pass
 
-            _wait_for_session_ready(session)
-
-            try:
-                client.reactions_remove(channel=channel, timestamp=ts, name=EMOJI_STARTING)
-            except Exception:
-                pass
-
-        # Send to session
-        print(f"[slack] Sending to session '{session}': {text[:50]}")
-        result = _run_cmd_no_json(["send", "-s", session, prefix])
-        print(f"[slack] Send result: {result}")
-
-        if result.get("success", False):
-            try:
-                # Remove queued if still there
+            async def on_starting(msg):
+                channel = msg.get("channel", "")
+                ts = msg.get("ts", "")
                 try:
                     client.reactions_remove(channel=channel, timestamp=ts, name=EMOJI_QUEUED)
                 except Exception:
                     pass
-                client.reactions_add(channel=channel, timestamp=ts, name=EMOJI_SENT)
-            except Exception:
-                pass
-        else:
-            try:
                 try:
-                    client.reactions_remove(channel=channel, timestamp=ts, name=EMOJI_QUEUED)
+                    client.reactions_add(channel=channel, timestamp=ts, name=EMOJI_STARTING)
                 except Exception:
                     pass
-                client.reactions_add(channel=channel, timestamp=ts, name=EMOJI_ERROR)
-            except Exception:
-                pass
-            say(f"Error sending to `{session}`: {result.get('error', 'unknown')}")
+
+            async def on_sent(msg):
+                await _clear_and_react(msg, EMOJI_SENT)
+
+            async def on_error(msg):
+                await _clear_and_react(msg, EMOJI_ERROR)
+
+            return on_queued, on_starting, on_sent, on_error
+
+        on_queued, on_starting, on_sent, on_error = _slack_reaction_callbacks(client)
+        self._queue_manager = MessageQueueManager(
+            channel_name="slack",
+            on_queued=on_queued,
+            on_starting=on_starting,
+            on_sent=on_sent,
+            on_error=on_error,
+        )
+
+        # Run queue event loop in background thread
+        self._queue_loop = asyncio.new_event_loop()
+
+        def _run_loop():
+            asyncio.set_event_loop(self._queue_loop)
+            self._queue_loop.run_forever()
+
+        t = threading.Thread(target=_run_loop, daemon=True)
+        t.start()
+
+    def _enqueue_message(self, session: str, project: str, text: str, prefix: str, message: dict):
+        """Enqueue a message for async processing via the shared queue manager.
+
+        Called from slack-bolt's sync handler threads. Submits to the queue's
+        async event loop running in a background thread.
+        """
+        msg = QueuedMessage(
+            platform_msg=message,
+            text=text,
+            session=session,
+            project=project,
+            prefix=prefix,
+        )
+        asyncio.run_coroutine_threadsafe(self._queue_manager.enqueue(msg), self._queue_loop)
 
     def run(self):
         """Run the Slack bot with Socket Mode."""
@@ -414,6 +412,9 @@ class SlackBridge:
 
         app = App(token=self.config.bot_token)
         self._app = app
+
+        # Initialize async message queue with Slack's web client for reactions
+        self._init_queue_manager(app.client)
         bridge = self
 
         @app.event("app_mention")
@@ -453,20 +454,13 @@ class SlackBridge:
 
             _setup_channel_project(project, channel_id, f"ch-{channel_id}", workspace_name)
 
-            # Ensure session
-            is_new = not _session_exists(session)
-            if is_new:
-                if not _ensure_session(session, project):
-                    say(f"Failed to start session `{session}`")
-                    return
-
             # Start portal listener for replies
             def reply_to_channel(reply_text):
                 client.chat_postMessage(channel=channel_id, text=reply_text)
 
             bridge._ensure_portal_listener(session, reply_to_channel)
 
-            # Build prefix and process
+            # Build prefix and enqueue for async processing
             channel_name = channel_id
             try:
                 ch_info = client.conversations_info(channel=channel_id)
@@ -477,9 +471,8 @@ class SlackBridge:
             prefix = f"[Slack #{channel_name} from {display_name}: '{text}']"
             print(f"[slack] Channel message in #{channel_name} from {display_name}")
 
-            bridge._process_message(
-                session=session, project=project, text=text, prefix=prefix,
-                message=event, say=say, client=client, is_new_session=is_new,
+            bridge._enqueue_message(
+                session=session, project=project, text=text, prefix=prefix, message=event,
             )
 
         @app.event("message")
@@ -519,13 +512,6 @@ class SlackBridge:
             project = bridge._get_dm_project(user_id)
             _setup_dm_project(project, user_id, display_name)
 
-            # Ensure session
-            is_new = not _session_exists(session)
-            if is_new:
-                if not _ensure_session(session, project):
-                    say(f"Failed to start session `{session}`")
-                    return
-
             # Start portal listener for DM replies
             channel_id = event.get("channel", "")
 
@@ -537,9 +523,8 @@ class SlackBridge:
             prefix = f"[Slack DM from {display_name}: '{text}']"
             print(f"[slack] DM from {display_name} ({user_id})")
 
-            bridge._process_message(
-                session=session, project=project, text=text, prefix=prefix,
-                message=event, say=say, client=client, is_new_session=is_new,
+            bridge._enqueue_message(
+                session=session, project=project, text=text, prefix=prefix, message=event,
             )
 
         print("Slack bot starting with Socket Mode...")
@@ -586,11 +571,11 @@ class SlackBridge:
 
         elif cmd == "/output":
             session = arg or self._get_dm_session(user_id)
-            if not _session_exists(session):
+            if not session_exists(session):
                 say(f"Session `{session}` is not running.")
                 return
             output = _run_cmd_raw(["output", "-s", session])
-            truncated = output[-2800:] if len(output) > 2800 else output
+            truncated = output[-SLACK_MAX_MSG:] if len(output) > SLACK_MAX_MSG else output
             say(f"*Output from `{session}`:*\n```\n{truncated}\n```")
 
         elif cmd == "/new":
@@ -660,3 +645,4 @@ class SlackChannel(ServiceChannel):
     name = "slack"
     config_class = SlackConfig
     config_key = "slack"
+    max_message_length = 2800  # Slack limit is ~4000, leave room for formatting

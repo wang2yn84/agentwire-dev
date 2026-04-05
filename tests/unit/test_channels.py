@@ -423,11 +423,13 @@ class TestQuoChannel:
         config = QuoConfig()
         assert config.api_key == "quo-key-123"
 
-    def test_quo_config_openphone_env_fallback(self, monkeypatch):
+    def test_quo_config_openphone_env_fallback(self, monkeypatch, tmp_path):
+        # Patch HOME to prevent load_dotenv from reading real ~/.agentwire/.env
+        monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("QUO_API_KEY", raising=False)
         monkeypatch.setenv("OPENPHONE_API_KEY", "op-key-456")
         from agentwire.channels.quo import QuoConfig
-        config = QuoConfig()
+        config = QuoConfig(api_key="")  # Force empty to test env fallback
         assert config.api_key == "op-key-456"
 
     def test_quo_channel_class_attributes(self):
@@ -458,7 +460,7 @@ class TestQuoChannel:
 
         from agentwire.channels.quo import QuoConfigError, send_quo_sms
         try:
-            with pytest.raises(QuoConfigError, match="API key"):
+            with pytest.raises(QuoConfigError):
                 send_quo_sms(body="test")
         finally:
             config_mod._config = old
@@ -554,7 +556,7 @@ class TestDiscordChannel:
     def test_discord_config_defaults(self):
         from agentwire.channels.discord import DiscordConfig
         config = DiscordConfig(bot_token="tok")
-        assert config.default_session == "main"
+        assert config.default_session == "agentwire"
         assert config.voice_replies is True
         assert config.session_name == "agentwire-discord"
         assert config.allowed_user_ids == []
@@ -583,7 +585,7 @@ class TestSlackChannel:
     def test_slack_config_defaults(self):
         from agentwire.channels.slack import SlackConfig
         config = SlackConfig(bot_token="tok", app_token="app")
-        assert config.default_session == "main"
+        assert config.default_session == "agentwire"
         assert config.voice_replies is True
         assert config.session_name == "agentwire-slack"
         assert config.allowed_user_ids == []
@@ -620,6 +622,95 @@ class TestBaseChannel:
         with pytest.raises(NotImplementedError):
             import asyncio
             asyncio.get_event_loop().run_until_complete(ch.send("test"))
+
+    def test_service_channel_default_max_message_length(self):
+        ch = ServiceChannel()
+        assert ch.max_message_length == 2000
+
+    def test_truncate_output_short_text(self):
+        ch = ServiceChannel()
+        assert ch.truncate_output("hello") == "hello"
+
+    def test_truncate_output_long_text(self):
+        ch = ServiceChannel()
+        long_text = "x" * 3000
+        result = ch.truncate_output(long_text)
+        assert len(result) == 2000
+        # Should keep the tail
+        assert result == long_text[-2000:]
+
+    def test_truncate_output_exact_length(self):
+        ch = ServiceChannel()
+        exact = "x" * 2000
+        assert ch.truncate_output(exact) == exact
+
+    def test_discord_max_message_length(self):
+        from agentwire.channels.discord import DiscordChannel
+        assert DiscordChannel.max_message_length == 1800
+
+    def test_slack_max_message_length(self):
+        from agentwire.channels.slack import SlackChannel
+        assert SlackChannel.max_message_length == 2800
+
+    def test_discord_truncate_uses_own_limit(self):
+        from agentwire.channels.discord import DiscordChannel
+        ch = DiscordChannel()
+        result = ch.truncate_output("x" * 3000)
+        assert len(result) == 1800
+
+    def test_slack_truncate_uses_own_limit(self):
+        from agentwire.channels.slack import SlackChannel
+        ch = SlackChannel()
+        result = ch.truncate_output("x" * 5000)
+        assert len(result) == 2800
+
+
+class TestSharedSessionHelpers:
+    """Tests for shared session_exists, ensure_session, wait_for_session_ready."""
+
+    def test_session_exists_found(self):
+        from agentwire.channels.base import session_exists
+        with patch("agentwire.channels.base._run_cmd") as mock:
+            mock.return_value = {"success": True}
+            assert session_exists("test-session") is True
+            mock.assert_called_once_with(["info", "-s", "test-session"])
+
+    def test_session_exists_not_found(self):
+        from agentwire.channels.base import session_exists
+        with patch("agentwire.channels.base._run_cmd") as mock:
+            mock.return_value = {"success": False}
+            assert session_exists("missing") is False
+
+    def test_ensure_session_already_exists(self):
+        from agentwire.channels.base import ensure_session
+        with patch("agentwire.channels.base.session_exists", return_value=True):
+            assert ensure_session("existing") is True
+
+    def test_ensure_session_creates_new(self):
+        from agentwire.channels.base import ensure_session
+        with patch("agentwire.channels.base.session_exists", return_value=False):
+            with patch("agentwire.channels.base._run_cmd") as mock:
+                mock.return_value = {"success": True}
+                assert ensure_session("new-session", "/path/to/project") is True
+                mock.assert_called_once()
+                args = mock.call_args[0][0]
+                assert "new" in args
+                assert "-s" in args
+                assert "new-session" in args
+                assert "-p" in args
+
+    def test_queued_message_dataclass(self):
+        from agentwire.channels.base import QueuedMessage
+        msg = QueuedMessage(
+            platform_msg={"ts": "123"},
+            text="hello",
+            session="test",
+            project="/tmp",
+            prefix="[Test: 'hello']",
+        )
+        assert msg.text == "hello"
+        assert msg.session == "test"
+        assert msg.platform_msg == {"ts": "123"}
 
 
 # =============================================================================

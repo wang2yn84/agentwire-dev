@@ -15,20 +15,22 @@ Features:
 import asyncio
 import json
 import os
+import re
 import ssl
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from .base import (
     ChannelRegistry,
-    ChannelResult,
+    MessageQueueManager,
     NotificationError,
+    QueuedMessage,
     ServiceChannel,
     _run_cmd,
-    _run_cmd_no_json,
     _run_cmd_raw,
+    ensure_session,
+    session_exists,
 )
 
 
@@ -59,6 +61,7 @@ class DiscordConfig:
     session_name: str = "agentwire-discord"
     channels_dir: str = "~/.agentwire/channels/discord"  # Base dir for all Discord sessions
     channel_map: dict = field(default_factory=dict)  # discord_channel_id → {label} or just channel_id list
+    dm_session_prefix: str = "discord-dm"  # Session naming prefix for DM sessions
 
     def __post_init__(self):
         if not self.bot_token:
@@ -226,191 +229,52 @@ def _setup_channel_project(project_dir: str, channel_id: int, channel_name: str,
         )
 
 
-def _session_exists(session: str) -> bool:
-    """Check if an agentwire session is running."""
-    # Use info command to check specific session
-    result = _run_cmd(["info", "-s", session])
-    return result.get("success", False)
+# Discord limits — 2000 char API max, leave room for markdown formatting
+DISCORD_MAX_MSG = 1800
+
+# Discord emoji status indicators (Unicode emoji for reactions)
+EMOJI_QUEUED = "\u23f3"     # ⏳
+EMOJI_STARTING = "\U0001f680"  # 🚀
+EMOJI_SENT = "\u2705"       # ✅
+EMOJI_ERROR = "\u274c"      # ❌
 
 
-def _ensure_session(session: str, project: str = "") -> bool:
-    """Ensure a session exists, creating it if needed. Returns True if ready."""
-    if _session_exists(session):
-        return True
+def _discord_reaction_callbacks():
+    """Build async reaction callbacks for Discord's MessageQueueManager.
 
-    args = ["new", "-s", session]
-    if project:
-        expanded = str(Path(project).expanduser())
-        args.extend(["-p", expanded])
-
-    result = _run_cmd(args)
-    return result.get("success", False)
-
-
-# Emoji status indicators
-EMOJI_QUEUED = "⏳"
-EMOJI_STARTING = "🚀"
-EMOJI_SENT = "✅"
-EMOJI_ERROR = "❌"
-
-
-@dataclass
-class QueuedMessage:
-    """A message waiting to be processed."""
-
-    message: object  # discord.Message
-    text: str
-    session: str
-    project: str  # Empty string if no project needed
-    prefix: str  # Pre-formatted prefix string
-
-
-class SessionQueueManager:
-    """Manages per-session message queues with async workers.
-
-    Each session gets its own queue and worker task. Messages are
-    processed in order, one at a time per session. Different sessions
-    process concurrently.
+    Discord reactions use emoji objects and require the bot user reference
+    for removal. These callbacks handle that platform-specific logic.
     """
+    async def _clear_and_react(msg, emoji):
+        """Remove previous status reactions, add new one."""
+        for old in (EMOJI_QUEUED, EMOJI_STARTING):
+            try:
+                bot_user = msg.guild.me if msg.guild else None
+                if bot_user:
+                    await msg.remove_reaction(old, bot_user)
+            except Exception:
+                pass
+        await msg.add_reaction(emoji)
 
-    def __init__(self):
-        self._queues: dict[str, asyncio.Queue] = {}
-        self._workers: dict[str, asyncio.Task] = {}
+    async def on_queued(msg):
+        await msg.add_reaction(EMOJI_QUEUED)
 
-    async def enqueue(self, msg: QueuedMessage):
-        """Add a message to the session's queue. Starts worker if needed."""
-        session = msg.session
-        print(f"[discord] Enqueuing message for session '{session}': {msg.text[:50]}")
-
-        # React with queued emoji immediately
+    async def on_starting(msg):
         try:
-            await msg.message.add_reaction(EMOJI_QUEUED)
-        except Exception as e:
-            print(f"[discord] Failed to add reaction: {e}")
-
-        # Create queue and worker if this is a new session
-        if session not in self._queues:
-            print(f"[discord] Starting new queue worker for session '{session}'")
-            self._queues[session] = asyncio.Queue()
-            self._workers[session] = asyncio.create_task(self._worker(session))
-
-        await self._queues[session].put(msg)
-
-    async def _worker(self, session: str):
-        """Process messages for a session, one at a time, in order."""
-        queue = self._queues[session]
-
-        while True:
-            try:
-                msg: QueuedMessage = await asyncio.wait_for(queue.get(), timeout=300)
-            except asyncio.TimeoutError:
-                # No messages for 5 min — shut down worker
-                del self._queues[session]
-                del self._workers[session]
-                return
-
-            try:
-                await self._process_message(msg)
-            except Exception as e:
-                print(f"[discord] Queue error for {msg.session}: {e}")
-                import traceback
-                traceback.print_exc()
-                try:
-                    await msg.message.remove_reaction(EMOJI_QUEUED, msg.message.guild.me if msg.message.guild else msg.message.channel.me)
-                    await msg.message.add_reaction(EMOJI_ERROR)
-                except Exception:
-                    pass
-
-            queue.task_done()
-
-    async def _process_message(self, msg: QueuedMessage):
-        """Process a single queued message."""
-        discord_msg = msg.message
-        loop = asyncio.get_event_loop()
-
-        # Run blocking subprocess calls in thread executor
-        print(f"[discord] Processing message for session '{msg.session}'")
-
-        # Swap queued → starting if session needs creation
-        exists = await loop.run_in_executor(None, _session_exists, msg.session)
-        if not exists:
-            print(f"[discord] Session '{msg.session}' not found, creating...")
-            try:
-                await self._swap_reaction(discord_msg, EMOJI_QUEUED, EMOJI_STARTING)
-            except Exception:
-                pass
-
-            created = await loop.run_in_executor(None, _ensure_session, msg.session, msg.project)
-            if not created:
-                print(f"[discord] Failed to create session '{msg.session}'")
-                try:
-                    await self._swap_reaction(discord_msg, EMOJI_STARTING, EMOJI_ERROR)
-                    await discord_msg.reply(f"Failed to start session `{msg.session}`")
-                except Exception:
-                    pass
-                return
-
-        # Wait for Claude Code to finish loading if we just created the session
-        if not exists:
-            print(f"[discord] Waiting for session '{msg.session}' to load...")
-
-            def _wait_ready():
-                try:
-                    from agentwire.__main__ import _wait_for_agent_ready
-                    return _wait_for_agent_ready(msg.session, timeout=30)
-                except ImportError:
-                    import time
-                    time.sleep(8)
-                    return True
-
-            ready = await loop.run_in_executor(None, _wait_ready)
-            if ready:
-                print(f"[discord] Session '{msg.session}' ready")
-            else:
-                print(f"[discord] Session '{msg.session}' may not be fully loaded, sending anyway")
-
-        # Send to session (no --json flag — send doesn't support it)
-        print(f"[discord] Sending to session '{msg.session}': {msg.text[:50]}")
-        result = await loop.run_in_executor(None, _run_cmd_no_json, ["send", "-s", msg.session, msg.prefix])
-        print(f"[discord] Send result: {result}")
-
-        if result.get("success", False):
-            # Swap to checkmark
-            try:
-                # Remove whichever emoji is current
-                for emoji in (EMOJI_QUEUED, EMOJI_STARTING):
-                    try:
-                        bot_user = discord_msg.guild.me if discord_msg.guild else None
-                        if bot_user:
-                            await discord_msg.remove_reaction(emoji, bot_user)
-                    except Exception:
-                        pass
-                await discord_msg.add_reaction(EMOJI_SENT)
-            except Exception:
-                pass
-        else:
-            try:
-                for emoji in (EMOJI_QUEUED, EMOJI_STARTING):
-                    try:
-                        bot_user = discord_msg.guild.me if discord_msg.guild else None
-                        if bot_user:
-                            await discord_msg.remove_reaction(emoji, bot_user)
-                    except Exception:
-                        pass
-                await discord_msg.add_reaction(EMOJI_ERROR)
-                await discord_msg.reply(f"Error: {result.get('error', 'unknown')}")
-            except Exception:
-                pass
-
-    async def _swap_reaction(self, message, old_emoji: str, new_emoji: str):
-        """Swap one reaction for another."""
-        try:
-            bot_user = message.guild.me if message.guild else None
+            bot_user = msg.guild.me if msg.guild else None
             if bot_user:
-                await message.remove_reaction(old_emoji, bot_user)
+                await msg.remove_reaction(EMOJI_QUEUED, bot_user)
         except Exception:
             pass
-        await message.add_reaction(new_emoji)
+        await msg.add_reaction(EMOJI_STARTING)
+
+    async def on_sent(msg):
+        await _clear_and_react(msg, EMOJI_SENT)
+
+    async def on_error(msg):
+        await _clear_and_react(msg, EMOJI_ERROR)
+
+    return on_queued, on_starting, on_sent, on_error
 
 
 class DiscordBridge:
@@ -419,7 +283,14 @@ class DiscordBridge:
     def __init__(self, config: DiscordConfig):
         self.config = config
         self.user_sessions: dict[int, str] = {}  # user_id → session_name (DMs only)
-        self.queue_manager = SessionQueueManager()
+        on_queued, on_starting, on_sent, on_error = _discord_reaction_callbacks()
+        self.queue_manager = MessageQueueManager(
+            channel_name="discord",
+            on_queued=on_queued,
+            on_starting=on_starting,
+            on_sent=on_sent,
+            on_error=on_error,
+        )
         self._ws_tasks: dict[str, asyncio.Task] = {}  # session → ws listener task
         self._dm_user_map: dict[str, int] = {}  # session_name → discord user_id (for DM replies)
         self._client = None  # Set when bot connects
@@ -569,7 +440,7 @@ class DiscordBridge:
         author_name = message.author.display_name or message.author.name
         prefixed = f"[Discord #{channel_name} from {author_name}: '{text}']"
         await self.queue_manager.enqueue(QueuedMessage(
-            message=message,
+            platform_msg=message,
             text=text,
             session=session,
             project=project,
@@ -583,15 +454,15 @@ class DiscordBridge:
         session = mapping.session
 
         if cmd == "/output":
-            if not _session_exists(session):
+            if not session_exists(session):
                 await message.reply(f"Session `{session}` is not running.")
                 return
             output = _run_cmd_raw(["output", "-s", session])
-            truncated = output[-1800:] if len(output) > 1800 else output
+            truncated = output[-DISCORD_MAX_MSG:] if len(output) > DISCORD_MAX_MSG else output
             await message.reply(f"**Output from `{session}`:**\n```\n{truncated}\n```")
 
         elif cmd == "/status":
-            running = _session_exists(session)
+            running = session_exists(session)
             status = "running" if running else "not running"
             await message.reply(f"Session `{session}`: **{status}**")
 
@@ -642,7 +513,7 @@ class DiscordBridge:
 
         prefixed = f"[Discord DM from {author_name}: '{text}']"
         await self.queue_manager.enqueue(QueuedMessage(
-            message=message,
+            platform_msg=message,
             text=text,
             session=session,
             project=project,
@@ -689,11 +560,11 @@ class DiscordBridge:
 
         elif cmd == "/output":
             session = arg or self._get_dm_session(user_id)
-            if not _session_exists(session):
+            if not session_exists(session):
                 await message.reply(f"Session `{session}` is not running.")
                 return
             output = _run_cmd_raw(["output", "-s", session])
-            truncated = output[-1800:] if len(output) > 1800 else output
+            truncated = output[-DISCORD_MAX_MSG:] if len(output) > DISCORD_MAX_MSG else output
             await message.reply(f"**Output from `{session}`:**\n```\n{truncated}\n```")
 
         elif cmd == "/new":
@@ -732,7 +603,7 @@ class DiscordBridge:
                 author_name = message.author.display_name or message.author.name
                 username = str(message.author)
                 _setup_dm_project(project, message.author.id, author_name, username)
-                if not _ensure_session(session, project):
+                if not ensure_session(session, project):
                     await message.reply(f"Failed to start session `{session}`")
                     return
                 author_name = message.author.display_name or message.author.name
@@ -857,6 +728,8 @@ class DiscordChannel(ServiceChannel):
                 project: "~/projects/website"
               "0987654321": "api/main"              # Shorthand: just session name
     """
+
+    max_message_length = 1800  # Discord limit is 2000, leave room for formatting
 
     name = "discord"
     config_class = DiscordConfig

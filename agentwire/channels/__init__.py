@@ -4,9 +4,14 @@ from .base import (
     Channel,
     ChannelRegistry,
     ChannelResult,
+    MessageQueueManager,
     NotificationError,
+    QueuedMessage,
     SendOnlyChannel,
     ServiceChannel,
+    ensure_session,
+    session_exists,
+    wait_for_session_ready,
 )
 
 # Auto-register built-in channels
@@ -22,7 +27,12 @@ __all__ = [
     "Channel",
     "ChannelRegistry",
     "ChannelResult",
+    "MessageQueueManager",
     "NotificationError",
+    "QueuedMessage",
     "SendOnlyChannel",
     "ServiceChannel",
+    "ensure_session",
+    "session_exists",
+    "wait_for_session_ready",
 ]
