@@ -72,8 +72,9 @@ agentwire stt start|stop|status # STT server management
 # Voice
 agentwire say "text"            # speak (auto-routes to browser or local)
 agentwire say -s name "text"    # speak to specific session
-agentwire alert "text"          # text notification to parent (no audio)
-agentwire alert --to name "text" # text notification to specific session
+agentwire reply "text"           # reply to channel user (Discord/Slack/Telegram)
+agentwire notify-parent "text"   # notify parent session (worker→orchestrator)
+agentwire notify-parent --to name "text" # notify specific session
 agentwire listen start|stop|cancel  # voice recording
 
 # Voice cloning
@@ -241,7 +242,8 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | CLI Command | MCP Tool |
 |-------------|----------|
 | `agentwire say "text"` | `say(text="...")` |
-| `agentwire alert "text"` | `alert(text="...")` |
+| `agentwire reply "text"` | `reply(text="...")` |
+| `agentwire notify-parent "text"` | `notify(text="...", to="...")` |
 | `agentwire listen start` | `listen_start()` |
 | `agentwire listen stop` | `listen_stop()` |
 | `agentwire listen cancel` | `listen_cancel()` |
@@ -367,7 +369,7 @@ Portal API endpoints:
 - `POST /api/session/{name}/spawn` — Spawn child (`{name, path?, type?, role?, auto_kill_on_complete?}`)
 - `GET /api/session/{name}/children` — List children (`{children: [{name, busy, message_count, path}]}`)
 
-**91 tools total.** When to use CLI vs MCP:
+**92 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
@@ -643,11 +645,11 @@ tasks:
 
 ### Hierarchical Idle Notifications
 
-When a session goes idle, it notifies up the hierarchy via `agentwire alert` (text-only, no audio):
+When a session goes idle, it notifies up the hierarchy via `agentwire notify-parent` (text-only, no audio):
 
 ```
 parent session ← receives "[ALERT from child] ..."
-    ↑ alert --to parent
+    ↑ notify-parent --to parent
 child session   ← receives "[ALERT from pane N] ..."
     ↑ auto-notify pane 0
 worker panes
