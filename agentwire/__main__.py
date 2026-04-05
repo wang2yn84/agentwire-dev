@@ -4157,10 +4157,11 @@ def cmd_kill(args) -> int:
 def _wait_for_agent_ready(session: str, timeout: int = 30, pane_index: int = 0) -> bool:
     """Wait for an agent to be ready to accept input.
 
+    Handles the first-time folder trust prompt by auto-accepting it.
     Returns True if agent became ready, False if timeout.
     """
     start = time.time()
-    all_indicators = ['❯', 'Claude Code']
+    trust_accepted = False
 
     while (time.time() - start) < timeout:
         try:
@@ -4170,10 +4171,21 @@ def _wait_for_agent_ready(session: str, timeout: int = 30, pane_index: int = 0) 
             )
             if result.returncode == 0:
                 output = result.stdout
-                for indicator in all_indicators:
-                    if indicator in output:
-                        time.sleep(0.3)
-                        return True
+
+                # Handle first-time bypass trust prompt
+                if not trust_accepted and ("trust this folder" in output.lower() or "enter to confirm" in output.lower()):
+                    subprocess.run(
+                        ["tmux", "send-keys", "-t", f"{session}.{pane_index}", "Enter"],
+                        capture_output=True,
+                    )
+                    trust_accepted = True
+                    time.sleep(2)
+                    continue
+
+                # Check for ready prompt
+                if "❯" in output and "bypass" in output.lower():
+                    time.sleep(0.3)
+                    return True
         except Exception:
             pass
         time.sleep(0.5)

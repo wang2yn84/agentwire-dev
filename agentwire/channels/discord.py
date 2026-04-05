@@ -353,25 +353,21 @@ class SessionQueueManager:
         # Wait for Claude Code to finish loading if we just created the session
         if not exists:
             print(f"[discord] Waiting for session '{msg.session}' to load...")
-            for i in range(20):  # Up to 20 seconds
-                await asyncio.sleep(1)
-                # Check if session has the Claude Code prompt ready
-                output = await loop.run_in_executor(
-                    None, _run_cmd_raw, ["output", "-s", msg.session, "-n", "10"]
-                )
-                # Handle first-time bypass trust prompt
-                if "trust this folder" in output.lower() or "enter to confirm" in output.lower():
-                    print(f"[discord] Accepting bypass trust prompt for session '{msg.session}'")
-                    await loop.run_in_executor(
-                        None, _run_cmd_no_json, ["send-keys", "-s", msg.session, "Enter"]
-                    )
-                    await asyncio.sleep(3)
-                    continue
-                if "❯" in output and "bypass" in output.lower():
-                    print(f"[discord] Session '{msg.session}' ready after {i+1}s")
-                    break
+
+            def _wait_ready():
+                try:
+                    from agentwire.__main__ import _wait_for_agent_ready
+                    return _wait_for_agent_ready(msg.session, timeout=30)
+                except ImportError:
+                    import time
+                    time.sleep(8)
+                    return True
+
+            ready = await loop.run_in_executor(None, _wait_ready)
+            if ready:
+                print(f"[discord] Session '{msg.session}' ready")
             else:
-                print(f"[discord] Session '{msg.session}' may not be fully loaded after 20s, sending anyway")
+                print(f"[discord] Session '{msg.session}' may not be fully loaded, sending anyway")
 
         # Send to session (no --json flag — send doesn't support it)
         print(f"[discord] Sending to session '{msg.session}': {msg.text[:50]}")

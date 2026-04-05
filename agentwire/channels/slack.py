@@ -228,27 +228,18 @@ def _ensure_session(session: str, project: str = "") -> bool:
     return result.get("success", False)
 
 
-def _wait_for_session_ready(session: str, max_wait: int = 20):
-    """Poll until the session has Claude Code ready (prompt visible).
-
-    Also handles the first-time bypass trust prompt by sending "1" to accept.
-    """
-    for i in range(max_wait):
-        time.sleep(1)
-        output = _run_cmd_raw(["output", "-s", session, "-n", "10"])
-
-        # Handle first-time bypass trust prompt ("Yes, I trust this folder")
-        if "trust this folder" in output.lower() or "enter to confirm" in output.lower():
-            print(f"[slack] Accepting bypass trust prompt for session '{session}'")
-            _run_cmd_no_json(["send-keys", "-s", session, "Enter"])
-            time.sleep(3)
-            continue
-
-        # Look for the Claude Code input prompt
-        if "❯" in output and "bypass" in output.lower():
-            print(f"[slack] Session '{session}' ready after {i+1}s")
-            return
-    print(f"[slack] Session '{session}' may not be fully loaded after {max_wait}s, sending anyway")
+def _wait_for_session_ready(session: str, max_wait: int = 30):
+    """Wait for session to be ready. Uses agentwire's core _wait_for_agent_ready."""
+    try:
+        from agentwire.__main__ import _wait_for_agent_ready
+        ready = _wait_for_agent_ready(session, timeout=max_wait)
+        if ready:
+            print(f"[slack] Session '{session}' ready")
+        else:
+            print(f"[slack] Session '{session}' may not be fully loaded after {max_wait}s, sending anyway")
+    except ImportError:
+        # Fallback if import fails
+        time.sleep(8)
 
 
 # Emoji status indicators (Slack reaction names, no colons)
