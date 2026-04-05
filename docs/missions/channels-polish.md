@@ -24,8 +24,8 @@ Pre-release review findings from the channels refactor. Fix before or shortly af
 
 - [x] **Test coverage gaps** — Added 12 happy-path send tests with mocks (email, telegram, quo, sms, webhook). Added config fixture for safe state management. Fixed stale "6 channels" comments to "7". 100 unit tests + 16 integration = 116 total, all passing.
 
-## Low (Cleanup)
+## Low (Cleanup) — DONE
 
-- [ ] Telegram `_get_telegram_config()` does manual YAML parsing instead of using registry config
-- [ ] Quo `__post_init__` loads dotenv unnecessarily
-- [ ] Email `import resend`/`import jinja2` at module level without guard (differs from SMS pattern)
+- [x] Telegram `_get_telegram_config()` — Replaced manual YAML/env parsing with `get_config().channels.get("telegram")`, matching all other channels.
+- [x] Quo `__post_init__` — Removed `load_dotenv()` call, now uses `os.environ.get()` like every other channel.
+- [x] Email imports — `import resend` guarded with `try/except` at module level (sets `resend = None` on failure). `jinja2` guarded inside `_render_email_template()` with HTML fallback.

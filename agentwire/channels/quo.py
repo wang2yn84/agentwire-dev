@@ -36,13 +36,6 @@ class QuoConfig:
 
     def __post_init__(self):
         if not self.api_key:
-            try:
-                from dotenv import load_dotenv
-                from pathlib import Path
-                load_dotenv()
-                load_dotenv(Path.home() / ".agentwire" / ".env")
-            except ImportError:
-                pass
             self.api_key = os.environ.get("QUO_API_KEY", "") or os.environ.get("OPENPHONE_API_KEY", "")
 
 

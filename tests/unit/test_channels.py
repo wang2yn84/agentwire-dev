@@ -973,7 +973,10 @@ class TestSendEmailSuccess:
 class TestSendTelegramSuccess:
     def test_send_telegram_success(self, tmp_path, _mock_config, monkeypatch):
         """Telegram send with mocked urllib returns success."""
-        monkeypatch.setenv("TELEGRAM_AGENTWIRE_BOT_TOKEN", "bot123:ABC")
+        _mock_config({"channels": {"telegram": {
+            "bot_token": "bot123:ABC",
+            "allowed_users": [12345],
+        }}}, tmp_path)
 
         from agentwire.channels.telegram import send_telegram
 

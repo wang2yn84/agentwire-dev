@@ -9,7 +9,6 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
 from .base import (
@@ -53,7 +52,7 @@ class TelegramResult:
 
 
 def _get_telegram_config() -> tuple[str, list[int]]:
-    """Get Telegram bot token and user IDs from env/config.
+    """Get Telegram bot token and user IDs from the channel registry config.
 
     Returns:
         (bot_token, user_ids) tuple.
@@ -61,52 +60,26 @@ def _get_telegram_config() -> tuple[str, list[int]]:
     Raises:
         TelegramConfigError if not configured.
     """
-    from dotenv import load_dotenv
+    from agentwire.config import get_config
 
-    load_dotenv()
-    load_dotenv(Path.home() / ".agentwire" / ".env")
+    config = get_config()
+    tg_config = config.channels.get("telegram")
+    if not tg_config:
+        tg_config = TelegramConfig()
 
-    bot_token = os.environ.get("TELEGRAM_AGENTWIRE_BOT_TOKEN", "")
-    if not bot_token:
-        try:
-            import yaml
-
-            config_path = Path.home() / ".agentwire" / "config.yaml"
-            if config_path.exists():
-                with open(config_path) as f:
-                    cfg = yaml.safe_load(f) or {}
-                    bot_token = cfg.get("telegram", {}).get("bot_token", "")
-        except Exception:
-            pass
-
-    if not bot_token:
+    if not tg_config.bot_token:
         raise TelegramConfigError(
             "No Telegram bot token. Set TELEGRAM_AGENTWIRE_BOT_TOKEN or "
-            "telegram.bot_token in ~/.agentwire/config.yaml"
+            "channels.telegram.bot_token in ~/.agentwire/config.yaml"
         )
 
-    user_ids_env = os.environ.get("TELEGRAM_USER_ID", "")
-    if user_ids_env:
-        user_ids = [int(uid.strip()) for uid in user_ids_env.split(",") if uid.strip()]
-    else:
-        try:
-            import yaml
-
-            config_path = Path.home() / ".agentwire" / "config.yaml"
-            if config_path.exists():
-                with open(config_path) as f:
-                    cfg = yaml.safe_load(f) or {}
-                    user_ids = cfg.get("telegram", {}).get("allowed_users", [])
-        except Exception:
-            user_ids = []
-
-    if not user_ids:
+    if not tg_config.allowed_users:
         raise TelegramConfigError(
-            "No Telegram user IDs. Set TELEGRAM_USER_ID or "
-            "telegram.allowed_users in ~/.agentwire/config.yaml"
+            "No Telegram user IDs. Set telegram.allowed_users "
+            "in ~/.agentwire/config.yaml"
         )
 
-    return bot_token, user_ids
+    return tg_config.bot_token, tg_config.allowed_users
 
 
 def send_telegram(

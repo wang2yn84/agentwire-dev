@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import resend
-from jinja2 import Environment, PackageLoader, select_autoescape
+try:
+    import resend
+except ImportError:
+    resend = None
 
 from .base import (
     ChannelRegistry,
@@ -124,6 +126,11 @@ def _render_email_template(
     logo_image_url: Optional[str] = None,
 ) -> str:
     """Render the branded email HTML template."""
+    try:
+        from jinja2 import Environment, PackageLoader, select_autoescape
+    except ImportError:
+        return f"<p>{body}</p>"  # Fallback if jinja2 not installed
+
     env = Environment(
         loader=PackageLoader("agentwire", "templates"),
         autoescape=select_autoescape(["html", "xml"]),
@@ -212,6 +219,9 @@ def send_email(
         )
 
     # Configure Resend
+    if resend is None:
+        return EmailResult(success=False, error="resend package not installed. Install: pip install resend")
+
     resend.api_key = email_config.api_key
 
     # Process attachments
