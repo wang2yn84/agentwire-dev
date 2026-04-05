@@ -57,22 +57,25 @@ class DiscordConfig:
     forward_questions: bool = True
     forward_alerts: bool = True
     session_name: str = "agentwire-discord"
-    dm_project: str = "~/projects/discord-dms"  # Base dir for per-user DM sessions
-    dm_session_prefix: str = "discord-dm"  # Session naming prefix
-    channel_map: dict = field(default_factory=dict)  # discord_channel_id → {session, project}
+    channels_dir: str = "~/.agentwire/channels/discord"  # Base dir for all Discord sessions
+    channel_map: dict = field(default_factory=dict)  # discord_channel_id → {label} or just channel_id list
 
     def __post_init__(self):
         if not self.bot_token:
             self.bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
-        # Normalize channel_map: accept both string and dict values
+        self.channels_dir = str(Path(self.channels_dir).expanduser())
+        # Normalize channel_map: accept string labels or dict values
         normalized = {}
         for channel_id, value in self.channel_map.items():
             channel_id = str(channel_id)
             if isinstance(value, str):
-                normalized[channel_id] = ChannelMapping(session=value)
+                # Simple label: "general" → session discord-ch-general, project auto
+                normalized[channel_id] = ChannelMapping(session=f"discord-ch-{value}")
             elif isinstance(value, dict):
+                label = value.get("label", channel_id)
+                session = value.get("session", f"discord-ch-{label}")
                 normalized[channel_id] = ChannelMapping(
-                    session=value.get("session", ""),
+                    session=session,
                     project=value.get("project", ""),
                 )
             elif isinstance(value, ChannelMapping):
@@ -139,7 +142,6 @@ def _setup_dm_project(project_dir: str, user_id: int, display_name: str, usernam
             "roles:\n"
             "  - agentwire\n"
             "  - discord-dm\n"
-            "parent: agentwire\n"
         )
 
     # Write CLAUDE.md if it doesn't exist
@@ -166,6 +168,60 @@ def _setup_dm_project(project_dir: str, user_id: int, display_name: str, usernam
         subprocess.run(["git", "add", "-A"], cwd=str(project), capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", f"init: discord DM project for {display_name} ({user_id})"],
+            cwd=str(project), capture_output=True,
+        )
+
+
+def _setup_channel_project(project_dir: str, channel_id: int, channel_name: str, guild_name: str):
+    """Set up a server channel's project folder with config and CLAUDE.md."""
+    import subprocess
+
+    project = Path(project_dir)
+    project.mkdir(parents=True, exist_ok=True)
+
+    git_dir = project / ".git"
+    if not git_dir.exists():
+        subprocess.run(["git", "init"], cwd=str(project), capture_output=True)
+        gitignore = project / ".gitignore"
+        gitignore.write_text(
+            "# AgentWire discord channel project\n"
+            ".agentwire/\n"
+            "__pycache__/\n"
+            "*.pyc\n"
+        )
+
+    config_file = project / ".agentwire.yml"
+    if not config_file.exists():
+        config_file.write_text(
+            "type: claude-bypass\n"
+            "roles:\n"
+            "  - agentwire\n"
+            "  - discord-dm\n"
+        )
+
+    claude_file = project / "CLAUDE.md"
+    if not claude_file.exists():
+        from datetime import datetime
+        claude_file.write_text(
+            f"# Discord Channel — #{channel_name}\n\n"
+            f"**Server:** {guild_name}\n"
+            f"**Channel:** #{channel_name}\n"
+            f"**Channel ID:** {channel_id}\n"
+            f"**Created:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"## Purpose\n\n"
+            f"<!-- Describe what this channel is for. The agent reads this on every message. -->\n\n"
+            f"## Instructions\n\n"
+            f"<!-- Add channel-specific instructions here. -->\n"
+        )
+
+    result = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        cwd=str(project), capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        subprocess.run(["git", "add", "-A"], cwd=str(project), capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", f"init: discord channel project for #{channel_name} ({channel_id})"],
             cwd=str(project), capture_output=True,
         )
 
@@ -294,9 +350,25 @@ class SessionQueueManager:
                     pass
                 return
 
+        # Wait for Claude Code to finish loading if we just created the session
+        if not exists:
+            print(f"[discord] Waiting for session '{msg.session}' to load...")
+            for i in range(20):  # Up to 20 seconds
+                await asyncio.sleep(1)
+                # Check if session has the Claude Code prompt ready
+                output = await loop.run_in_executor(
+                    None, _run_cmd_raw, ["output", "-s", msg.session, "-n", "5"]
+                )
+                if "❯" in output or ">" in output:
+                    print(f"[discord] Session '{msg.session}' ready after {i+1}s")
+                    break
+            else:
+                print(f"[discord] Session '{msg.session}' may not be fully loaded after 20s, sending anyway")
+
         # Send to session (no --json flag — send doesn't support it)
-        print(f"[discord] Sending to session '{msg.session}'")
+        print(f"[discord] Sending to session '{msg.session}': {msg.text[:50]}")
         result = await loop.run_in_executor(None, _run_cmd_no_json, ["send", "-s", msg.session, msg.prefix])
+        print(f"[discord] Send result: {result}")
 
         if result.get("success", False):
             # Swap to checkmark
@@ -344,6 +416,9 @@ class DiscordBridge:
         self.config = config
         self.user_sessions: dict[int, str] = {}  # user_id → session_name (DMs only)
         self.queue_manager = SessionQueueManager()
+        self._ws_tasks: dict[str, asyncio.Task] = {}  # session → ws listener task
+        self._dm_user_map: dict[str, int] = {}  # session_name → discord user_id (for DM replies)
+        self._client = None  # Set when bot connects
         self._load_state()
 
     def _load_state(self):
@@ -364,12 +439,15 @@ class DiscordBridge:
         """Get session for a DM user. Auto-generates per-user session name."""
         if user_id in self.user_sessions:
             return self.user_sessions[user_id]
-        return f"{self.config.dm_session_prefix}-{user_id}"
+        return f"discord-dm-{user_id}"
 
     def _get_dm_project(self, user_id: int) -> str:
         """Get project dir for a DM user's session."""
-        base = str(Path(self.config.dm_project).expanduser())
-        return f"{base}/{user_id}"
+        return f"{self.config.channels_dir}/dm-{user_id}"
+
+    def _get_channel_project(self, channel_id: int) -> str:
+        """Get project dir for a server channel's session."""
+        return f"{self.config.channels_dir}/ch-{channel_id}"
 
     def _set_dm_session(self, user_id: int, session: str):
         self.user_sessions[user_id] = session
@@ -378,6 +456,16 @@ class DiscordBridge:
     def _get_channel_mapping(self, channel_id: int) -> ChannelMapping | None:
         """Get the agentwire session mapping for a Discord channel."""
         return self.config.channel_map.get(str(channel_id))
+
+    def _ensure_ws_listener(self, session: str, target_type: str, target_id: int):
+        """Start a WebSocket listener for a session if one isn't running."""
+        if session in self._ws_tasks:
+            return
+        if self._client:
+            self._ws_tasks[session] = asyncio.create_task(
+                self._listen_portal_ws(self._client, session, target_type=target_type, target_id=target_id)
+            )
+            print(f"[discord] Started WS listener for session '{session}' (target: {target_type})")
 
     def _is_allowed(self, user_id: int) -> bool:
         if not self.config.allowed_user_ids:
@@ -401,6 +489,7 @@ class DiscordBridge:
 
         @client.event
         async def on_ready():
+            bridge._client = client
             print(f"Discord bot connected as {client.user}")
             if bridge.config.channel_map:
                 print(f"  Channel mappings: {len(bridge.config.channel_map)}")
@@ -412,14 +501,15 @@ class DiscordBridge:
             if message.author == client.user:
                 return
 
-            if not bridge._is_allowed(message.author.id):
-                print(f"[discord] Blocked user {message.author.id} ({message.author.display_name}) — not in allowed_user_ids")
-                return
-
             if message.guild:
+                # Server channels — allow everyone (access controlled by Discord server permissions)
                 print(f"[discord] Channel message in #{message.channel.name} ({message.channel.id}) from {message.author.display_name}")
                 await bridge._handle_channel_message(message)
             else:
+                # DMs — check whitelist (private agent access)
+                if not bridge._is_allowed(message.author.id):
+                    print(f"[discord] Blocked DM from {message.author.id} ({message.author.display_name}) — not in allowed_user_ids")
+                    return
                 print(f"[discord] DM from {message.author.display_name} ({message.author.id})")
                 await bridge._handle_dm(message)
 
@@ -465,16 +555,20 @@ class DiscordBridge:
             await self._handle_channel_command(message, text, mapping)
             return
 
-        # Enqueue for processing
+        # Set up channel project and enqueue
         session = mapping.session
-        author_name = message.author.display_name or message.author.name
+        project = mapping.project or self._get_channel_project(message.channel.id)
         channel_name = message.channel.name
+        guild_name = message.guild.name if message.guild else "Unknown"
+        _setup_channel_project(project, message.channel.id, channel_name, guild_name)
+
+        author_name = message.author.display_name or message.author.name
         prefixed = f"[Discord #{channel_name} from {author_name}: '{text}']"
         await self.queue_manager.enqueue(QueuedMessage(
             message=message,
             text=text,
             session=session,
-            project=mapping.project,
+            project=project,
             prefix=prefixed,
         ))
 
@@ -500,6 +594,7 @@ class DiscordBridge:
         else:
             # Not a recognized channel command — treat as regular message
             text_clean = text.strip()
+            project = mapping.project or self._get_channel_project(message.channel.id)
             author_name = message.author.display_name or message.author.name
             channel_name = message.channel.name
             prefixed = f"[Discord #{channel_name} from {author_name}: '{text_clean}']"
@@ -507,7 +602,7 @@ class DiscordBridge:
                 message=message,
                 text=text_clean,
                 session=session,
-                project=mapping.project,
+                project=project,
                 prefix=prefixed,
             ))
 
@@ -536,6 +631,10 @@ class DiscordBridge:
         author_name = message.author.display_name or message.author.name
         username = str(message.author)
         _setup_dm_project(project, user_id, author_name, username)
+
+        # Track DM user mapping and start WS listener for replies
+        self._dm_user_map[session] = user_id
+        self._ensure_ws_listener(session, target_type="dm", target_id=user_id)
 
         prefixed = f"[Discord DM from {author_name}: '{text}']"
         await self.queue_manager.enqueue(QueuedMessage(
@@ -683,21 +782,22 @@ class DiscordBridge:
         try:
             if target_type == "channel" and target_id:
                 # Send to Discord channel
-                channel = client.get_channel(target_id)
+                channel = client.get_channel(target_id) or await client.fetch_channel(target_id)
                 if not channel:
+                    print(f"[discord] Channel {target_id} not found for outbound event")
                     return
 
                 if event_type == "question" and self.config.forward_questions:
+                    print(f"[discord] Forwarding question to #{channel.name}")
                     await channel.send(f"**Question from agent:**\n{event.get('question', '')}")
                 elif event_type == "alert" and self.config.forward_alerts:
-                    await channel.send(f"**Alert:**\n{event.get('text', '')}")
+                    text = event.get("text", "")
+                    print(f"[discord] Forwarding alert to #{channel.name}: {text[:50]}")
+                    await channel.send(text)
 
-            else:
-                # Send to DM users
-                if not self.user_sessions:
-                    return
-                target_user_id = next(iter(self.user_sessions.keys()))
-                user = await client.fetch_user(target_user_id)
+            elif target_type == "dm" and target_id:
+                # Send to specific DM user
+                user = await client.fetch_user(target_id)
                 if not user:
                     return
 

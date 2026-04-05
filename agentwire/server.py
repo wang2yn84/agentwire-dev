@@ -186,6 +186,7 @@ class AgentWireServer:
         self.app.router.add_post("/api/session/{name:.+}/spawn-sibling", self.api_spawn_sibling)
         self.app.router.add_post("/api/session/{name:.+}/fork", self.api_fork_session)
         self.app.router.add_post("/api/session/{name:.+}/restart-service", self.api_restart_service)
+        self.app.router.add_post("/api/session/{name:.+}/broadcast", self.api_session_broadcast)
         self.app.router.add_get("/api/voices", self.api_voices)
         self.app.router.add_delete("/api/sessions/{name:.+}", self.api_close_session)
         self.app.router.add_get("/api/machines", self.api_machines)
@@ -3965,6 +3966,29 @@ projects:
         except Exception as e:
             logger.error(f"Fork session API failed: {e}")
             return web.json_response({"error": str(e)}, status=500)
+
+    async def api_session_broadcast(self, request: web.Request) -> web.Response:
+        """POST /api/session/{name}/broadcast - Broadcast event to session WebSocket clients.
+
+        Used by channels (Discord, Slack) to receive outbound events from sessions.
+
+        Request body: JSON with at least a "type" field.
+        Common types: "alert" (text), "question" (question, options), "audio" (audio base64).
+        """
+        name = request.match_info["name"]
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        # Find or create a session object to broadcast through
+        session = self.active_sessions.get(name)
+        if not session:
+            session = Session(name=name, config=self._get_session_config(name))
+            self.active_sessions[name] = session
+
+        await self._broadcast(session, data)
+        return web.json_response({"success": True})
 
     async def api_restart_service(self, request: web.Request) -> web.Response:
         """POST /api/session/{name}/restart-service - Restart a system service.

@@ -2550,27 +2550,63 @@ def cmd_alert(args) -> int:
     else:
         notification = f"[ALERT from {source}] {text}"
 
+    # Broadcast via portal WebSocket FIRST — channel bridges (Discord, Slack) pick this up
+    broadcast_sent = False
+    if current_session:
+        try:
+            import ssl
+            import urllib.request
+            portal_url = _get_portal_url()
+            data = json.dumps({
+                "type": "alert",
+                "text": text,
+                "session": current_session,
+                "source": source,
+            }).encode()
+            req = urllib.request.Request(
+                f"{portal_url}/api/session/{current_session}/broadcast",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+            urllib.request.urlopen(req, timeout=3, context=ssl_ctx)
+            broadcast_sent = True
+        except Exception:
+            pass  # Best-effort — don't fail the alert if portal is down
+
     # Send to target session's pane 0 (but not to yourself)
+    tmux_sent = False
     try:
         if target_session:
             # Don't alert yourself (pane 0 alerting to its own session's pane 0)
             if target_session == current_session and current_pane == 0:
-                print("Cannot alert to own pane", file=sys.stderr)
-                return 1
-            pane_manager.send_to_pane(target_session, 0, notification)
-            if not getattr(args, 'quiet', False):
-                print(f"Notified {target_session}")
+                if not broadcast_sent:
+                    print("Cannot alert to own pane", file=sys.stderr)
+                    return 1
+            else:
+                pane_manager.send_to_pane(target_session, 0, notification)
+                tmux_sent = True
+                if not getattr(args, 'quiet', False):
+                    print(f"Notified {target_session}")
         elif current_pane is not None and current_pane > 0 and current_session:
             # Worker pane - notify pane 0 (orchestrator)
             pane_manager.send_to_pane(current_session, 0, notification)
+            tmux_sent = True
             if not getattr(args, 'quiet', False):
                 print(f"Notified {current_session} pane 0")
-        else:
-            print("No target session (set 'parent' in .agentwire.yml or use --to)", file=sys.stderr)
-            return 1
     except Exception as e:
-        print(f"Failed to send notification: {e}", file=sys.stderr)
+        if not broadcast_sent:
+            print(f"Failed to send notification: {e}", file=sys.stderr)
+            return 1
+
+    if not tmux_sent and not broadcast_sent:
+        print("No target session (set 'parent' in .agentwire.yml or use --to)", file=sys.stderr)
         return 1
+
+    if broadcast_sent and not tmux_sent and not getattr(args, 'quiet', False):
+        print(f"Broadcast from {source}")
 
     return 0
 
