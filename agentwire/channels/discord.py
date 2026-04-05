@@ -357,9 +357,17 @@ class SessionQueueManager:
                 await asyncio.sleep(1)
                 # Check if session has the Claude Code prompt ready
                 output = await loop.run_in_executor(
-                    None, _run_cmd_raw, ["output", "-s", msg.session, "-n", "5"]
+                    None, _run_cmd_raw, ["output", "-s", msg.session, "-n", "10"]
                 )
-                if "❯" in output or ">" in output:
+                # Handle first-time bypass trust prompt
+                if "trust this folder" in output.lower() or "enter to confirm" in output.lower():
+                    print(f"[discord] Accepting bypass trust prompt for session '{msg.session}'")
+                    await loop.run_in_executor(
+                        None, _run_cmd_no_json, ["send-keys", "-s", msg.session, "Enter"]
+                    )
+                    await asyncio.sleep(3)
+                    continue
+                if "❯" in output and "bypass" in output.lower():
                     print(f"[discord] Session '{msg.session}' ready after {i+1}s")
                     break
             else:
