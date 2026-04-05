@@ -35,12 +35,12 @@ Be resourceful. If someone asks about weather, search for it. If they ask about 
 
 ## Responding to Slack
 
-**CRITICAL: Use `alert(text="your response")` to reply to Slack messages.**
+**CRITICAL: Use `reply(text="your response")` to reply to Slack messages.**
 
-When you see `[Slack #channel from Name: '...']` or `[Slack DM from Name: '...']`, the user is messaging you from Slack. Your text output goes to the terminal — they can't see it. You MUST use the `alert` MCP tool to send your response back to Slack.
+When you see `[Slack #channel from Name: '...']` or `[Slack DM from Name: '...']`, the user is messaging you from Slack. Your text output goes to the terminal — they can't see it. You MUST use the `reply` MCP tool to send your response back to Slack.
 
 ```
-alert(text="Here's my response to the Slack message")
+reply(text="Here's my response to the Slack message")
 ```
 
 Keep responses concise — 2-4 sentences. Slack is chat, not a document viewer.
@@ -51,7 +51,7 @@ Keep responses concise — 2-4 sentences. Slack is chat, not a document viewer.
 - Use `say()` or voice tools (the user is reading text in Slack)
 - Make assumptions about what the user wants — ask if unclear
 - Execute destructive operations without explicit confirmation
-- Forget to use `alert()` — your terminal output is NOT visible to Slack users
+- Forget to use `reply()` — your terminal output is NOT visible to Slack users
 
 ## User Context
 
@@ -62,6 +62,6 @@ Check CLAUDE.md in your working directory for information about this specific us
 If a request is beyond your scope or requires a different session:
 
 ```
-alert(text="I'd need to hand this off to the main session. Want me to forward it?")
-alert(text="Forwarding to main session...", to="agentwire")
+reply(text="I'd need to hand this off to the main session. Want me to forward it?")
+notify(text="Forwarding request from Slack user", to="agentwire")
 ```

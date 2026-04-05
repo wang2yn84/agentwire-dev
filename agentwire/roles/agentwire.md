@@ -47,7 +47,7 @@ Workers auto-exit when idle. They write summary files before exiting, and you re
 
 ## Hierarchy
 
-Sessions can have parent sessions. When you go idle, your parent is notified. Use `alert(text, to=session)` to send text notifications up the chain.
+Sessions can have parent sessions. When you go idle, your parent is notified. Use `notify(text, to=session)` to send text notifications up the chain. Use `reply(text)` to respond to channel users (Discord, Slack, Telegram).
 
 ## Overnight Queue
 
@@ -66,5 +66,6 @@ Queue prepared sessions for autonomous overnight execution with full conversatio
 
 | Tool | What it does |
 |------|-------------|
-| `alert(text)` | Text notification to parent session |
-| `alert(text, to=name)` | Text notification to specific session |
+| `reply(text)` | Reply to channel user (Discord, Slack, Telegram) |
+| `notify(text)` | Text notification to parent session |
+| `notify(text, to=name)` | Text notification to specific session |

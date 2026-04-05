@@ -665,27 +665,48 @@ def say(text: str, session: str | None = None, voice: str | None = None) -> str:
 
 
 @mcp.tool()
-def alert(text: str, to: str | None = None) -> str:
-    """Send a text notification (no audio).
+def reply(text: str) -> str:
+    """Reply to the channel user who messaged this session.
 
-    Notifications appear in the target session/portal without voice.
+    Use this to respond to Discord, Slack, or Telegram messages.
+    The message is delivered back to the originating platform.
 
     Args:
-        text: Notification text
-        to: Target session name (optional)
+        text: Reply message text
 
     Returns:
         Success message or error description.
     """
-    args = ["alert"]
+    data = run_agentwire_cmd(["reply", text], json_output=False)
+    if data.get("success"):
+        return "Reply sent."
+    return f"Failed to send reply: {data.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def notify(text: str, to: str | None = None) -> str:
+    """Notify parent session (worker→orchestrator communication).
+
+    Use this to report status, completion, or escalate to a parent session.
+
+    Args:
+        text: Notification message
+        to: Target session name (optional, defaults to parent from .agentwire.yml)
+
+    Returns:
+        Success message or error description.
+    """
+    args = ["notify-parent"]
     if to:
         args.extend(["--to", to])
     args.append(text)
 
     data = run_agentwire_cmd(args, json_output=False)
     if data.get("success"):
-        return "Alert sent."
-    return f"Failed to send alert: {data.get('error', 'Unknown error')}"
+        return "Notification sent."
+    return f"Failed to send notification: {data.get('error', 'Unknown error')}"
+
+
 
 
 @mcp.tool()

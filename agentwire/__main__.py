@@ -2511,11 +2511,72 @@ def cmd_say(args) -> int:
     return 0
 
 
-def cmd_alert(args) -> int:
-    """Send a text notification to parent session (no audio).
+def _portal_broadcast(text: str, session: str, source: str) -> bool:
+    """Broadcast a message via portal WebSocket. Returns True if sent."""
+    try:
+        import ssl
+        import urllib.request
+        portal_url = _get_portal_url()
+        data = json.dumps({
+            "type": "alert",
+            "text": text,
+            "session": session,
+            "source": source,
+        }).encode()
+        req = urllib.request.Request(
+            f"{portal_url}/api/session/{session}/broadcast",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        urllib.request.urlopen(req, timeout=3, context=ssl_ctx)
+        return True
+    except Exception:
+        return False
 
-    Used by idle hooks and workers to notify orchestrators without playing audio.
-    Unlike 'say', this only sends text - no TTS generation.
+
+def cmd_reply(args) -> int:
+    """Reply to the channel user (Discord, Slack, Telegram) who messaged this session.
+
+    Broadcasts via portal WebSocket — channel bridges pick it up and deliver
+    the message back to the originating platform (Discord channel, Slack DM, etc.).
+
+    This is for channel sessions only. For worker→parent communication, use notify.
+
+    Examples:
+        agentwire reply "Here's what I found..."
+        agentwire reply "The weather tomorrow is sunny and 22°C"
+    """
+    text = " ".join(args.text) if args.text else ""
+
+    if not text:
+        print("Usage: agentwire reply <message>", file=sys.stderr)
+        return 1
+
+    current_session = pane_manager.get_current_session()
+    if not current_session:
+        print("Cannot determine current session", file=sys.stderr)
+        return 1
+
+    if _portal_broadcast(text, current_session, current_session):
+        if not getattr(args, 'quiet', False):
+            print(f"Reply sent.")
+        return 0
+    else:
+        print("Failed to send reply (portal not reachable?)", file=sys.stderr)
+        return 1
+
+
+def cmd_notify(args) -> int:
+    """Notify parent session (worker→orchestrator communication).
+
+    Sends a prefixed text message to the parent session via tmux.
+    The parent is determined from .agentwire.yml or --to flag.
+
+    This is for session hierarchy communication. For replying to channel
+    users (Discord, Slack, etc.), use reply.
 
     Notification targets (in priority order):
     1. --to SESSION if specified
@@ -2523,16 +2584,15 @@ def cmd_alert(args) -> int:
     3. pane 0 of current session (if in worker pane)
 
     Examples:
-        agentwire alert "Worker 1 completed task"
-        agentwire alert --to agentwire "Build finished"
+        agentwire notify "Worker 1 completed task"
+        agentwire notify --to agentwire "Build finished"
     """
     text = " ".join(args.text) if args.text else ""
 
     if not text:
-        print("Usage: agentwire alert <message>", file=sys.stderr)
+        print("Usage: agentwire notify <message>", file=sys.stderr)
         return 1
 
-    # Determine target session
     target_session = getattr(args, 'to', None)
     current_session = pane_manager.get_current_session()
     current_pane = pane_manager.get_current_pane_index()
@@ -2546,69 +2606,32 @@ def cmd_alert(args) -> int:
     # Build notification message
     source = current_session or "unknown"
     if current_pane is not None and current_pane > 0:
-        notification = f"[ALERT from {source} pane {current_pane}] {text}"
+        notification = f"[NOTIFY from {source} pane {current_pane}] {text}"
     else:
-        notification = f"[ALERT from {source}] {text}"
+        notification = f"[NOTIFY from {source}] {text}"
 
-    # Broadcast via portal WebSocket FIRST — channel bridges (Discord, Slack) pick this up
-    broadcast_sent = False
-    if current_session:
-        try:
-            import ssl
-            import urllib.request
-            portal_url = _get_portal_url()
-            data = json.dumps({
-                "type": "alert",
-                "text": text,
-                "session": current_session,
-                "source": source,
-            }).encode()
-            req = urllib.request.Request(
-                f"{portal_url}/api/session/{current_session}/broadcast",
-                data=data,
-                headers={"Content-Type": "application/json"},
-            )
-            ssl_ctx = ssl.create_default_context()
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
-            urllib.request.urlopen(req, timeout=3, context=ssl_ctx)
-            broadcast_sent = True
-        except Exception:
-            pass  # Best-effort — don't fail the alert if portal is down
-
-    # Send to target session's pane 0 (but not to yourself)
-    tmux_sent = False
     try:
         if target_session:
-            # Don't alert yourself (pane 0 alerting to its own session's pane 0)
             if target_session == current_session and current_pane == 0:
-                if not broadcast_sent:
-                    print("Cannot alert to own pane", file=sys.stderr)
-                    return 1
-            else:
-                pane_manager.send_to_pane(target_session, 0, notification)
-                tmux_sent = True
-                if not getattr(args, 'quiet', False):
-                    print(f"Notified {target_session}")
+                print("Cannot notify own pane", file=sys.stderr)
+                return 1
+            pane_manager.send_to_pane(target_session, 0, notification)
+            if not getattr(args, 'quiet', False):
+                print(f"Notified {target_session}")
         elif current_pane is not None and current_pane > 0 and current_session:
-            # Worker pane - notify pane 0 (orchestrator)
             pane_manager.send_to_pane(current_session, 0, notification)
-            tmux_sent = True
             if not getattr(args, 'quiet', False):
                 print(f"Notified {current_session} pane 0")
-    except Exception as e:
-        if not broadcast_sent:
-            print(f"Failed to send notification: {e}", file=sys.stderr)
+        else:
+            print("No target session (set 'parent' in .agentwire.yml or use --to)", file=sys.stderr)
             return 1
-
-    if not tmux_sent and not broadcast_sent:
-        print("No target session (set 'parent' in .agentwire.yml or use --to)", file=sys.stderr)
+    except Exception as e:
+        print(f"Failed to send notification: {e}", file=sys.stderr)
         return 1
 
-    if broadcast_sent and not tmux_sent and not getattr(args, 'quiet', False):
-        print(f"Broadcast from {source}")
-
     return 0
+
+
 
 
 def cmd_open(args) -> int:
@@ -8375,11 +8398,11 @@ def _handle_task_notification(notify_config: str, ctx, session: str, json_mode: 
         subprocess.run(["agentwire", "say", "-s", session, message], capture_output=True)
 
     elif notify_config == "alert":
-        # Send text alert
+        # Send text notification to parent
         message = f"Task {ctx.task} {ctx.status}"
         if ctx.summary:
             message += f": {ctx.summary}"
-        subprocess.run(["agentwire", "alert", "--to", session, message], capture_output=True)
+        subprocess.run(["agentwire", "notify-parent", "--to", session, message], capture_output=True)
 
     elif notify_config.startswith("webhook "):
         # POST to webhook URL
@@ -10081,12 +10104,18 @@ def main() -> int:
     say_parser.add_argument("--no-auto-notify", action="store_true", help="Disable auto-notify to pane 0 when in worker pane")
     say_parser.set_defaults(func=cmd_say)
 
-    # === alert command ===
-    alert_parser = subparsers.add_parser("alert", help="Send text notification to parent (no audio)")
-    alert_parser.add_argument("text", nargs="*", help="Message to send")
-    alert_parser.add_argument("--to", type=str, metavar="SESSION", help="Target session (default: parent from .agentwire.yml)")
-    alert_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
-    alert_parser.set_defaults(func=cmd_alert)
+    # === reply command ===
+    reply_parser = subparsers.add_parser("reply", help="Reply to channel user (Discord, Slack, Telegram)")
+    reply_parser.add_argument("text", nargs="*", help="Reply message")
+    reply_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
+    reply_parser.set_defaults(func=cmd_reply)
+
+    # === notify command (worker→parent) ===
+    notify_cmd_parser = subparsers.add_parser("notify-parent", help="Notify parent session (worker→orchestrator)")
+    notify_cmd_parser.add_argument("text", nargs="*", help="Notification message")
+    notify_cmd_parser.add_argument("--to", type=str, metavar="SESSION", help="Target session (default: parent from .agentwire.yml)")
+    notify_cmd_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
+    notify_cmd_parser.set_defaults(func=cmd_notify)
 
     # === open command (artifact windows) ===
     open_parser = subparsers.add_parser("open", help="Open a URL or local file as an artifact window in the portal")
