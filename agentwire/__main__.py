@@ -1740,11 +1740,13 @@ def cmd_channels_list(args) -> int:
                 if getattr(ch_config, attr, ""):
                     configured = True
                     break
+        # Built-in channels live under agentwire.channels.*; anything else is external.
+        builtin = cls.__module__.startswith("agentwire.channels.")
         channels.append({
             "name": name,
             "type": cls.channel_type,
             "configured": configured,
-            "builtin": name in ChannelRegistry.BUILTIN_CHANNELS,
+            "builtin": builtin,
         })
 
     json_mode = getattr(args, "json", False)

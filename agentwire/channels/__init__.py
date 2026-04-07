@@ -9,7 +9,9 @@ from .base import (
     QueuedMessage,
     SendOnlyChannel,
     ServiceChannel,
+    compose_session_config,
     ensure_session,
+    inject_instructions,
     session_exists,
     wait_for_session_ready,
 )
@@ -32,7 +34,9 @@ __all__ = [
     "QueuedMessage",
     "SendOnlyChannel",
     "ServiceChannel",
+    "compose_session_config",
     "ensure_session",
+    "inject_instructions",
     "session_exists",
     "wait_for_session_ready",
 ]

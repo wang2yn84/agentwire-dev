@@ -329,7 +329,6 @@ class EmailChannel(SendOnlyChannel):
     name = "email"
     config_class = EmailConfig
     config_key = "email"
-    legacy_config_key = "notifications.email"
 
     async def send(self, text: str, **kwargs) -> ChannelResult:
         result = send_email(

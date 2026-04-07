@@ -74,11 +74,6 @@ class TestChannelRegistry:
     def test_get_nonexistent(self):
         assert ChannelRegistry.get("nonexistent_channel") is None
 
-    def test_builtin_set_matches_registered(self):
-        """BUILTIN_CHANNELS set should match what's actually registered."""
-        for name in ChannelRegistry.BUILTIN_CHANNELS:
-            assert name in ChannelRegistry._channels, f"{name} in BUILTIN_CHANNELS but not registered"
-
     def test_register_decorator(self):
         """@register decorator should add class to registry."""
         # Temporarily register, then clean up
@@ -113,36 +108,12 @@ class TestChannelRegistry:
 
 
 class TestResolveConfig:
-    def test_new_path_only(self):
+    def test_channels_path(self):
         """channels.email: in YAML should be found."""
         data = {"channels": {"email": {"api_key": "new-key", "from_address": "a@b.com"}}}
         resolved = ChannelRegistry.resolve_config("email", data)
         assert resolved["api_key"] == "new-key"
         assert resolved["from_address"] == "a@b.com"
-
-    def test_legacy_path_only(self):
-        """notifications.email: (legacy) should be found for built-in."""
-        data = {"notifications": {"email": {"api_key": "legacy-key"}}}
-        resolved = ChannelRegistry.resolve_config("email", data)
-        assert resolved["api_key"] == "legacy-key"
-
-    def test_new_overrides_legacy(self):
-        """New path takes precedence over legacy."""
-        data = {
-            "notifications": {"email": {"api_key": "legacy", "from_address": "old@a.com"}},
-            "channels": {"email": {"api_key": "new"}},
-        }
-        resolved = ChannelRegistry.resolve_config("email", data)
-        assert resolved["api_key"] == "new"
-        # Legacy field preserved if not overridden
-        assert resolved["from_address"] == "old@a.com"
-
-    def test_telegram_legacy_path(self):
-        """telegram: top-level (legacy) should resolve."""
-        data = {"telegram": {"bot_token": "tok123", "allowed_users": [111]}}
-        resolved = ChannelRegistry.resolve_config("telegram", data)
-        assert resolved["bot_token"] == "tok123"
-        assert resolved["allowed_users"] == [111]
 
     def test_empty_data(self):
         resolved = ChannelRegistry.resolve_config("email", {})
@@ -152,20 +123,11 @@ class TestResolveConfig:
         resolved = ChannelRegistry.resolve_config("nonexistent", {"channels": {"email": {}}})
         assert resolved == {}
 
-    def test_custom_channel_no_legacy(self):
-        """Custom channels should NOT get legacy_config_key access."""
-        @ChannelRegistry.register("_custom_test")
-        class _CustomChannel(SendOnlyChannel):
-            name = "_custom_test"
-            config_key = "_custom_test"
-            legacy_config_key = "steal.from.email"  # Should be ignored!
-
-        data = {"steal": {"from": {"email": {"api_key": "stolen"}}}}
-        resolved = ChannelRegistry.resolve_config("_custom_test", data)
-        assert resolved == {}  # Legacy path blocked for non-builtins
-
-        # Clean up
-        del ChannelRegistry._channels["_custom_test"]
+    def test_channel_with_no_config_section(self):
+        """Registered channel with no channels.{name}: entry returns empty dict."""
+        data = {"channels": {"other": {"x": "y"}}}
+        resolved = ChannelRegistry.resolve_config("email", data)
+        assert resolved == {}
 
 
 # =============================================================================
@@ -199,46 +161,6 @@ class TestConfigChannelLoading:
         assert email_config.from_address == "test@test.com"
         assert email_config.default_to == "user@test.com"
 
-    def test_legacy_email_config_loaded(self, tmp_path):
-        """Old notifications.email: path should still work."""
-        config_data = {
-            "notifications": {
-                "email": {
-                    "api_key": "legacy-key",
-                    "from_address": "legacy@test.com",
-                },
-            },
-        }
-        config_path = tmp_path / "config.yaml"
-        with open(config_path, "w") as f:
-            yaml.safe_dump(config_data, f)
-
-        from agentwire.config import load_config
-        config = load_config(config_path)
-
-        assert "email" in config.channels
-        assert config.channels["email"].api_key == "legacy-key"
-
-    def test_legacy_telegram_config_loaded(self, tmp_path):
-        """Old telegram: top-level path should still work."""
-        config_data = {
-            "telegram": {
-                "bot_token": "tok-legacy",
-                "allowed_users": [123],
-                "default_session": "main",
-            },
-        }
-        config_path = tmp_path / "config.yaml"
-        with open(config_path, "w") as f:
-            yaml.safe_dump(config_data, f)
-
-        from agentwire.config import load_config
-        config = load_config(config_path)
-
-        assert "telegram" in config.channels
-        assert config.channels["telegram"].bot_token == "tok-legacy"
-        assert config.channels["telegram"].allowed_users == [123]
-
     def test_all_seven_channels_in_config(self, tmp_path):
         """Even with no YAML config, all 7 channels should get default configs."""
         config_path = tmp_path / "config.yaml"
@@ -260,23 +182,6 @@ class TestConfigChannelLoading:
         from agentwire.config import load_config
         config = load_config(config_path)
         assert isinstance(config.channels, dict)
-
-    def test_new_path_overrides_legacy(self, tmp_path):
-        """channels.email: should override notifications.email:"""
-        config_data = {
-            "notifications": {"email": {"api_key": "old", "from_address": "old@x.com"}},
-            "channels": {"email": {"api_key": "new"}},
-        }
-        config_path = tmp_path / "config.yaml"
-        with open(config_path, "w") as f:
-            yaml.safe_dump(config_data, f)
-
-        from agentwire.config import load_config
-        config = load_config(config_path)
-
-        assert config.channels["email"].api_key == "new"
-        assert config.channels["email"].from_address == "old@x.com"
-
 
 # =============================================================================
 # Email channel
@@ -302,7 +207,6 @@ class TestEmailChannel:
         assert EmailChannel.name == "email"
         assert EmailChannel.channel_type == "send_only"
         assert EmailChannel.config_key == "email"
-        assert EmailChannel.legacy_config_key == "notifications.email"
 
     def test_is_html_content(self):
         from agentwire.channels.email import _is_html_content
@@ -378,7 +282,6 @@ class TestTelegramChannel:
         assert TelegramChannel.name == "telegram"
         assert TelegramChannel.channel_type == "service"
         assert TelegramChannel.config_key == "telegram"
-        assert TelegramChannel.legacy_config_key == "telegram"
 
     def test_telegram_config_defaults(self):
         from agentwire.channels.telegram import TelegramConfig
@@ -869,44 +772,6 @@ class TestConfigDataclasses:
 
 
 # =============================================================================
-# Security: legacy_config_key restriction
-# =============================================================================
-
-
-class TestLegacyConfigSecurity:
-    def test_builtin_gets_legacy(self):
-        """Built-in channel with legacy_config_key should resolve legacy path."""
-        data = {"notifications": {"email": {"api_key": "from-legacy"}}}
-        resolved = ChannelRegistry.resolve_config("email", data)
-        assert resolved.get("api_key") == "from-legacy"
-
-    def test_non_builtin_blocked(self):
-        """Non-builtin channel should NOT resolve legacy_config_key."""
-        @ChannelRegistry.register("_sec_test")
-        class _SecTest(SendOnlyChannel):
-            name = "_sec_test"
-            config_key = "_sec_test"
-            legacy_config_key = "notifications.email"
-
-        # Even though legacy_config_key points to a real path, it should be blocked
-        data = {"notifications": {"email": {"api_key": "stolen!"}}}
-        resolved = ChannelRegistry.resolve_config("_sec_test", data)
-        assert "api_key" not in resolved
-
-        del ChannelRegistry._channels["_sec_test"]
-
-    def test_builtin_no_legacy_key(self):
-        """Built-in channel without legacy_config_key should work fine."""
-        # webhook has no legacy_config_key
-        from agentwire.channels.webhook import WebhookChannel
-        assert WebhookChannel.legacy_config_key is None
-
-        data = {"channels": {"webhook": {"url": "https://test.com"}}}
-        resolved = ChannelRegistry.resolve_config("webhook", data)
-        assert resolved.get("url") == "https://test.com"
-
-
-# =============================================================================
 # Happy-path send tests (mocked external calls)
 # =============================================================================
 
@@ -1140,3 +1005,296 @@ class TestSendWebhookSuccess:
             result = send_webhook(text="will fail")
 
         assert result.success is False
+
+
+# =============================================================================
+# Composable session config hierarchy
+# =============================================================================
+
+
+class TestComposeSessionConfig:
+    """Tests for compose_session_config — platform → scope → specific."""
+
+    def test_platform_only(self):
+        from agentwire.channels.base import compose_session_config
+        t, r, i = compose_session_config(
+            platform={"type": "claude-bypass", "roles": ["agentwire"], "instructions": "Top level"},
+            scope={},
+            specific={},
+        )
+        assert t == "claude-bypass"
+        assert r == ["agentwire"]
+        assert i == "Top level"
+
+    def test_three_levels_append_instructions(self):
+        from agentwire.channels.base import compose_session_config
+        _, _, i = compose_session_config(
+            platform={"instructions": "Platform rule"},
+            scope={"instructions": "Scope rule"},
+            specific={"instructions": "Specific rule"},
+        )
+        # Joined with blank lines, in order
+        assert i == "Platform rule\n\nScope rule\n\nSpecific rule"
+
+    def test_three_levels_append_roles_deduped(self):
+        from agentwire.channels.base import compose_session_config
+        _, r, _ = compose_session_config(
+            platform={"roles": ["agentwire", "common"]},
+            scope={"roles": ["slack-dm", "common"]},      # "common" is dup
+            specific={"roles": ["expert", "agentwire"]},  # "agentwire" is dup
+        )
+        # Order preserved, dups removed
+        assert r == ["agentwire", "common", "slack-dm", "expert"]
+
+    def test_type_precedence_specific_wins(self):
+        from agentwire.channels.base import compose_session_config
+        t, _, _ = compose_session_config(
+            platform={"type": "claude-bypass"},
+            scope={"type": "claude-auto"},
+            specific={"type": "sdk-bypass"},
+        )
+        assert t == "sdk-bypass"
+
+    def test_type_precedence_scope_over_platform(self):
+        from agentwire.channels.base import compose_session_config
+        t, _, _ = compose_session_config(
+            platform={"type": "claude-bypass"},
+            scope={"type": "claude-auto"},
+            specific={},
+        )
+        assert t == "claude-auto"
+
+    def test_type_fallback_when_all_empty(self):
+        from agentwire.channels.base import compose_session_config
+        t, _, _ = compose_session_config(platform={}, scope={}, specific={})
+        assert t == "claude-bypass"
+
+    def test_type_custom_fallback(self):
+        from agentwire.channels.base import compose_session_config
+        t, _, _ = compose_session_config(
+            platform={}, scope={}, specific={}, fallback_type="sdk-prompted",
+        )
+        assert t == "sdk-prompted"
+
+    def test_empty_instructions_skipped(self):
+        from agentwire.channels.base import compose_session_config
+        _, _, i = compose_session_config(
+            platform={"instructions": "Only platform"},
+            scope={"instructions": ""},
+            specific={"instructions": "   "},  # whitespace only
+        )
+        assert i == "Only platform"
+
+    def test_missing_keys_tolerated(self):
+        from agentwire.channels.base import compose_session_config
+        # All three levels with no relevant keys
+        t, r, i = compose_session_config(
+            platform={"unrelated": "x"},
+            scope={"unrelated": "y"},
+            specific={},
+        )
+        assert t == "claude-bypass"
+        assert r == []
+        assert i == ""
+
+
+class TestInjectInstructions:
+    """Tests for inject_instructions — marker-block CLAUDE.md injection."""
+
+    def test_create_new_file(self, tmp_path):
+        from agentwire.channels.base import inject_instructions, INSTRUCTIONS_MARKER_BEGIN
+        claude = tmp_path / "CLAUDE.md"
+        inject_instructions(claude, "Be helpful.")
+        content = claude.read_text()
+        assert INSTRUCTIONS_MARKER_BEGIN in content
+        assert "Be helpful." in content
+
+    def test_empty_instructions_no_file(self, tmp_path):
+        from agentwire.channels.base import inject_instructions
+        claude = tmp_path / "CLAUDE.md"
+        inject_instructions(claude, "")
+        assert not claude.exists()
+
+    def test_prepend_to_existing_file(self, tmp_path):
+        from agentwire.channels.base import inject_instructions, INSTRUCTIONS_MARKER_BEGIN
+        claude = tmp_path / "CLAUDE.md"
+        claude.write_text("# My Project\n\nHuman notes here.\n")
+        inject_instructions(claude, "Auto instruction")
+        content = claude.read_text()
+        assert content.startswith(INSTRUCTIONS_MARKER_BEGIN)
+        assert "# My Project" in content
+        assert "Human notes here." in content
+        assert "Auto instruction" in content
+
+    def test_replace_existing_block(self, tmp_path):
+        from agentwire.channels.base import inject_instructions
+        claude = tmp_path / "CLAUDE.md"
+        inject_instructions(claude, "Original rules")
+        inject_instructions(claude, "Updated rules")
+        content = claude.read_text()
+        assert "Updated rules" in content
+        assert "Original rules" not in content
+
+    def test_remove_block_when_empty(self, tmp_path):
+        from agentwire.channels.base import inject_instructions, INSTRUCTIONS_MARKER_BEGIN
+        claude = tmp_path / "CLAUDE.md"
+        claude.write_text("# Header\n\nHuman stuff.\n")
+        inject_instructions(claude, "To be removed")
+        assert INSTRUCTIONS_MARKER_BEGIN in claude.read_text()
+        inject_instructions(claude, "")
+        content = claude.read_text()
+        assert INSTRUCTIONS_MARKER_BEGIN not in content
+        # Human content preserved
+        assert "# Header" in content
+        assert "Human stuff." in content
+
+    def test_preserves_human_edits_outside_block(self, tmp_path):
+        """Human edits above AND below the block must survive regeneration."""
+        from agentwire.channels.base import inject_instructions
+        claude = tmp_path / "CLAUDE.md"
+        claude.write_text("# Header\n\nBefore block.\n")
+        inject_instructions(claude, "Agent rules v1")
+        # Human adds text after the block
+        content = claude.read_text()
+        claude.write_text(content + "\n## After\n\nHuman footer.\n")
+        # Regenerate with new rules
+        inject_instructions(claude, "Agent rules v2")
+        final = claude.read_text()
+        assert "# Header" in final
+        assert "Before block." in final
+        assert "Agent rules v2" in final
+        assert "Agent rules v1" not in final
+        assert "## After" in final
+        assert "Human footer." in final
+
+    def test_empty_noop_when_no_file(self, tmp_path):
+        from agentwire.channels.base import inject_instructions
+        claude = tmp_path / "CLAUDE.md"
+        inject_instructions(claude, "")  # no file, no instructions
+        assert not claude.exists()
+
+
+class TestSlackComposeHierarchy:
+    """Tests for SlackBridge.compose_dm_config and compose_channel_config."""
+
+    def test_dm_uses_platform_and_dm_scope_defaults(self):
+        from agentwire.channels.slack import SlackBridge, SlackConfig
+        cfg = SlackConfig(
+            bot_token="x", app_token="y",
+            default_instructions="Slack-wide rule",
+            dm_instructions="DM-specific rule",
+        )
+        bridge = SlackBridge(cfg)
+        t, r, i = bridge.compose_dm_config("U_new_user")
+        assert t == "claude-bypass"
+        assert "agentwire" in r
+        assert "slack-dm" in r
+        assert "Slack-wide rule" in i
+        assert "DM-specific rule" in i
+
+    def test_channel_uses_platform_and_channel_scope_defaults(self):
+        from agentwire.channels.slack import SlackBridge, SlackConfig
+        cfg = SlackConfig(
+            bot_token="x", app_token="y",
+            default_instructions="Slack-wide rule",
+            channel_instructions="Channel-specific rule",
+        )
+        bridge = SlackBridge(cfg)
+        t, r, i = bridge.compose_channel_config("C_nomap")
+        assert "Slack-wide rule" in i
+        assert "Channel-specific rule" in i
+
+    def test_user_map_adds_specific_dm_instructions(self):
+        from agentwire.channels.slack import SlackBridge, SlackConfig
+        cfg = SlackConfig(
+            bot_token="x", app_token="y",
+            default_instructions="Platform",
+            dm_instructions="DM",
+            user_map={"U123": {
+                "roles": ["admin"],
+                "instructions": "This user is the team lead.",
+            }},
+        )
+        bridge = SlackBridge(cfg)
+        t, r, i = bridge.compose_dm_config("U123")
+        assert "Platform" in i
+        assert "DM" in i
+        assert "team lead" in i
+        assert "admin" in r
+
+    def test_channel_map_adds_specific_channel_override(self):
+        from agentwire.channels.slack import SlackBridge, SlackConfig
+        cfg = SlackConfig(
+            bot_token="x", app_token="y",
+            channel_map={"C456": {
+                "session": "backend",
+                "type": "claude-auto",
+                "roles": ["python-expert"],
+                "instructions": "Backend channel: Python focus.",
+            }},
+        )
+        bridge = SlackBridge(cfg)
+        t, r, i = bridge.compose_channel_config("C456")
+        assert t == "claude-auto"
+        assert "python-expert" in r
+        assert "Backend channel" in i
+
+    def test_user_map_does_not_affect_channel_compose(self):
+        """user_map is DM-only — channel compose must ignore it."""
+        from agentwire.channels.slack import SlackBridge, SlackConfig
+        cfg = SlackConfig(
+            bot_token="x", app_token="y",
+            user_map={"U123": {"instructions": "User-level rule"}},
+            channel_map={"C456": {"session": "s"}},
+        )
+        bridge = SlackBridge(cfg)
+        _, _, i = bridge.compose_channel_config("C456")
+        assert "User-level rule" not in i
+
+
+class TestDiscordComposeHierarchy:
+    """Tests for DiscordBridge.compose_dm_config and compose_channel_config."""
+
+    def test_dm_with_user_map_override(self):
+        from agentwire.channels.discord import DiscordBridge, DiscordConfig
+        cfg = DiscordConfig(
+            bot_token="x",
+            default_instructions="Discord-wide",
+            dm_instructions="DM scope",
+            user_map={"999": {"instructions": "Known admin"}},
+        )
+        bridge = DiscordBridge(cfg)
+        t, r, i = bridge.compose_dm_config(999)
+        assert "Discord-wide" in i
+        assert "DM scope" in i
+        assert "Known admin" in i
+
+    def test_channel_with_channel_map_override(self):
+        from agentwire.channels.discord import DiscordBridge, DiscordConfig
+        cfg = DiscordConfig(
+            bot_token="x",
+            channel_map={"1234": {
+                "session": "core",
+                "roles": ["reviewer"],
+                "instructions": "Review PRs here",
+            }},
+        )
+        bridge = DiscordBridge(cfg)
+        _, r, i = bridge.compose_channel_config(1234)
+        assert "reviewer" in r
+        assert "Review PRs here" in i
+
+    def test_default_behavior_empty_config(self):
+        """With no custom config, bridge produces sensible defaults: claude-bypass + core roles."""
+        from agentwire.channels.discord import DiscordBridge, DiscordConfig
+        cfg = DiscordConfig(bot_token="x")
+        bridge = DiscordBridge(cfg)
+        dm_t, dm_r, dm_i = bridge.compose_dm_config(123)
+        assert dm_t == "claude-bypass"
+        assert dm_r == ["agentwire", "discord-dm"]
+        assert dm_i == ""
+
+        ch_t, ch_r, ch_i = bridge.compose_channel_config(456)
+        assert ch_t == "claude-bypass"
+        assert ch_r == ["agentwire", "discord-dm"]
+        assert ch_i == ""

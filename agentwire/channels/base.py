@@ -33,14 +33,13 @@ class ChannelResult:
 
 
 class ChannelRegistry:
-    """Registry for channel classes with security constraints.
+    """Registry for channel classes.
 
-    Built-in channels can use legacy_config_key to read from old config paths.
-    Custom channels are restricted to channels.{their_name}: in YAML.
+    Channels register themselves via the @ChannelRegistry.register("name")
+    decorator and expose their config under channels.{config_key}: in YAML.
     """
 
     _channels: dict[str, type] = {}
-    BUILTIN_CHANNELS = {"email", "telegram", "quo", "sms", "webhook", "discord", "slack"}
 
     @classmethod
     def register(cls, name: str):
@@ -66,38 +65,15 @@ class ChannelRegistry:
     def resolve_config(cls, name: str, data: dict) -> dict:
         """Resolve config for a channel from YAML data dict.
 
-        Checks channels.{config_key} first (new path), then legacy_config_key
-        if the channel is a built-in. Returns merged dict: {**legacy, **new}.
+        Reads channels.{config_key} for the given channel. Returns an empty
+        dict if the channel is not registered or has no config section.
         """
         channel_cls = cls._channels.get(name)
         if not channel_cls:
             return {}
 
         config_key = getattr(channel_cls, "config_key", name)
-        legacy_key = getattr(channel_cls, "legacy_config_key", None)
-
-        # New path: channels.{config_key}
-        new_config = data.get("channels", {}).get(config_key, {})
-
-        # Legacy path: only for built-in channels
-        legacy_config = {}
-        if legacy_key and name in cls.BUILTIN_CHANNELS:
-            # Support dotted keys like "notifications.email"
-            parts = legacy_key.split(".")
-            node = data
-            for part in parts:
-                if isinstance(node, dict):
-                    node = node.get(part, {})
-                else:
-                    node = {}
-                    break
-            if isinstance(node, dict):
-                legacy_config = node
-
-        # Merge: new takes precedence over legacy
-        if legacy_config or new_config:
-            return {**legacy_config, **new_config}
-        return {}
+        return data.get("channels", {}).get(config_key, {}) or {}
 
 
 # === Shared CLI runners ===
@@ -190,6 +166,129 @@ def wait_for_session_ready(session: str, timeout: int = 30) -> bool:
     except ImportError:
         time.sleep(8)
         return True
+
+
+# === Composable session config hierarchy ===
+# Channels compose session type/roles/instructions across 3 levels:
+#   1. Platform defaults (e.g. channels.slack.default_*)
+#   2. Scope defaults (e.g. channels.slack.dm_* or channels.slack.channel_*)
+#   3. Specific overrides (per-channel in channel_map, per-user in user_map)
+#
+# Roles and instructions APPEND across levels (roles deduped preserving order,
+# instructions joined with blank lines). Session type uses first-non-empty
+# precedence: specific → scope → platform → fallback.
+
+
+def compose_session_config(
+    platform: dict,
+    scope: dict,
+    specific: dict,
+    fallback_type: str = "claude-bypass",
+) -> tuple[str, list[str], str]:
+    """Compose session config across platform → scope → specific levels.
+
+    Each level is a dict with optional keys: type (str), roles (list[str]),
+    instructions (str). All keys are optional — missing keys are skipped.
+
+    Returns:
+        (session_type, roles, instructions) tuple.
+    """
+    # Type: first non-empty from most specific to least specific
+    session_type = (
+        specific.get("type")
+        or scope.get("type")
+        or platform.get("type")
+        or fallback_type
+    )
+
+    # Roles: append platform → scope → specific, dedupe preserving order
+    seen: set[str] = set()
+    roles: list[str] = []
+    for source in (platform, scope, specific):
+        for role in source.get("roles") or []:
+            if role and role not in seen:
+                seen.add(role)
+                roles.append(role)
+
+    # Instructions: append with blank line separator
+    parts: list[str] = []
+    for source in (platform, scope, specific):
+        text = (source.get("instructions") or "").strip()
+        if text:
+            parts.append(text)
+    instructions = "\n\n".join(parts)
+
+    return session_type, roles, instructions
+
+
+# === CLAUDE.md instruction block injection ===
+# Agent-managed instructions live between these markers so that human edits
+# to CLAUDE.md outside the block are always preserved across regenerations.
+
+INSTRUCTIONS_MARKER_BEGIN = "<!-- BEGIN agentwire-instructions -->"
+INSTRUCTIONS_MARKER_END = "<!-- END agentwire-instructions -->"
+
+
+def _build_instructions_block(instructions: str) -> str:
+    """Build the full marker-wrapped instructions block."""
+    return (
+        f"{INSTRUCTIONS_MARKER_BEGIN}\n"
+        f"## Agent Instructions\n\n"
+        f"_Auto-managed from channels config — edits inside this block will be "
+        f"overwritten on next session spawn._\n\n"
+        f"{instructions.strip()}\n"
+        f"{INSTRUCTIONS_MARKER_END}"
+    )
+
+
+def inject_instructions(claude_md_path: Path, instructions: str) -> None:
+    """Inject composed instructions into CLAUDE.md between auto-managed markers.
+
+    Regeneration is always safe: only content between the begin/end markers
+    is touched. Human edits above/below the block are preserved verbatim.
+
+    - If the file doesn't exist and instructions is non-empty: creates the file
+      with just the block.
+    - If the block exists: replaces its content in place.
+    - If the block doesn't exist and instructions is non-empty: prepends the
+      block (followed by existing content).
+    - If instructions is empty and the block exists: removes the block.
+    - If instructions is empty and the block doesn't exist: no-op.
+    """
+    import re
+
+    instructions = instructions.strip()
+    has_content = bool(instructions)
+    block = _build_instructions_block(instructions) if has_content else ""
+
+    marker_pattern = re.compile(
+        re.escape(INSTRUCTIONS_MARKER_BEGIN) + r".*?" + re.escape(INSTRUCTIONS_MARKER_END),
+        re.DOTALL,
+    )
+
+    if not claude_md_path.exists():
+        if has_content:
+            claude_md_path.parent.mkdir(parents=True, exist_ok=True)
+            claude_md_path.write_text(block + "\n")
+        return
+
+    content = claude_md_path.read_text()
+
+    if marker_pattern.search(content):
+        # Existing block — replace (or remove if empty)
+        if has_content:
+            new_content = marker_pattern.sub(block, content)
+        else:
+            new_content = marker_pattern.sub("", content)
+    else:
+        # No existing block — prepend if we have content, else leave alone
+        if not has_content:
+            return
+        new_content = f"{block}\n\n{content}"
+
+    # Collapse runs of 3+ blank lines that can appear after removals
+    new_content = re.sub(r"\n{3,}", "\n\n", new_content).rstrip() + "\n"
+    claude_md_path.write_text(new_content)
 
 
 # === Message queue for service channels ===
@@ -349,7 +448,6 @@ class Channel:
     channel_type: str = ""
     config_class = None
     config_key: str = ""
-    legacy_config_key: str | None = None  # BUILT-IN ONLY
 
     def __init__(self, config=None):
         self.config = config

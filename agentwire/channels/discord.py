@@ -29,7 +29,9 @@ from .base import (
     ServiceChannel,
     _run_cmd,
     _run_cmd_raw,
+    compose_session_config,
     ensure_session,
+    inject_instructions,
     session_exists,
 )
 
@@ -42,15 +44,47 @@ class DiscordConfigError(NotificationError):
 
 @dataclass
 class ChannelMapping:
-    """Maps a Discord channel to an agentwire session."""
+    """Maps a Discord channel to an agentwire session.
+
+    Fields beyond session/project are per-channel overrides for the composable
+    session config hierarchy (type/roles/instructions).
+    """
 
     session: str = ""
     project: str = ""  # Project path for auto-creation
+    type: str = ""                               # override session type
+    roles: list[str] = field(default_factory=list)  # appended to scope+platform roles
+    instructions: str = ""                       # appended to scope+platform instructions
+
+
+@dataclass
+class DiscordUserMapping:
+    """Per-user overrides for DM sessions (DM scope only).
+
+    Channel messages from this user still use the channel's config — user_map
+    only applies when the user sends a DM.
+    """
+
+    type: str = ""
+    roles: list[str] = field(default_factory=list)
+    instructions: str = ""
 
 
 @dataclass
 class DiscordConfig:
-    """Discord bot configuration."""
+    """Discord bot configuration with composable session config hierarchy.
+
+    Session type/roles/instructions compose across 3 levels:
+      1. Platform defaults — default_type / default_roles / default_instructions
+         (apply to all Discord sessions)
+      2. Scope defaults — dm_roles+dm_instructions (for DMs) OR
+         channel_roles+channel_instructions (for channel sessions)
+      3. Specific overrides — per-channel in channel_map, per-user in user_map
+
+    Roles are appended and deduped (preserving order). Instructions are
+    joined with blank lines. Session type uses first-non-empty precedence:
+    specific → scope → platform → "claude-bypass".
+    """
 
     bot_token: str = ""
     allowed_user_ids: list[int] = field(default_factory=list)
@@ -60,30 +94,62 @@ class DiscordConfig:
     forward_alerts: bool = True
     session_name: str = "agentwire-discord"
     channels_dir: str = "~/.agentwire/channels/discord"  # Base dir for all Discord sessions
-    channel_map: dict = field(default_factory=dict)  # discord_channel_id → {label} or just channel_id list
+    channel_map: dict = field(default_factory=dict)  # discord_channel_id → {label} or dict with overrides
+    user_map: dict = field(default_factory=dict)  # DM-only: discord_user_id → DiscordUserMapping
     dm_session_prefix: str = "discord-dm"  # Session naming prefix for DM sessions
+
+    # --- Composable session config (platform level) ---
+    default_type: str = "claude-bypass"
+    default_roles: list[str] = field(default_factory=lambda: ["agentwire"])
+    default_instructions: str = ""
+
+    # --- Scope: DM ---
+    dm_roles: list[str] = field(default_factory=lambda: ["discord-dm"])
+    dm_instructions: str = ""
+
+    # --- Scope: channel (non-DM) ---
+    channel_roles: list[str] = field(default_factory=lambda: ["discord-dm"])
+    channel_instructions: str = ""
 
     def __post_init__(self):
         if not self.bot_token:
             self.bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
         self.channels_dir = str(Path(self.channels_dir).expanduser())
-        # Normalize channel_map: accept string labels or dict values
-        normalized = {}
+
+        # Normalize channel_map
+        normalized_ch = {}
         for channel_id, value in self.channel_map.items():
             channel_id = str(channel_id)
             if isinstance(value, str):
-                # Simple label: "general" → session discord-ch-general, project auto
-                normalized[channel_id] = ChannelMapping(session=f"discord-ch-{value}")
+                # Shorthand: "label" → discord-ch-label with no overrides
+                normalized_ch[channel_id] = ChannelMapping(session=f"discord-ch-{value}")
             elif isinstance(value, dict):
                 label = value.get("label", channel_id)
                 session = value.get("session", f"discord-ch-{label}")
-                normalized[channel_id] = ChannelMapping(
+                normalized_ch[channel_id] = ChannelMapping(
                     session=session,
                     project=value.get("project", ""),
+                    type=value.get("type", ""),
+                    roles=list(value.get("roles", [])),
+                    instructions=value.get("instructions", ""),
                 )
             elif isinstance(value, ChannelMapping):
-                normalized[channel_id] = value
-        self.channel_map = normalized
+                normalized_ch[channel_id] = value
+        self.channel_map = normalized_ch
+
+        # Normalize user_map (DM-only overrides)
+        normalized_users = {}
+        for user_id, value in self.user_map.items():
+            user_id = str(user_id)
+            if isinstance(value, dict):
+                normalized_users[user_id] = DiscordUserMapping(
+                    type=value.get("type", ""),
+                    roles=list(value.get("roles", [])),
+                    instructions=value.get("instructions", ""),
+                )
+            elif isinstance(value, DiscordUserMapping):
+                normalized_users[user_id] = value
+        self.user_map = normalized_users
 
 
 def _get_discord_config() -> DiscordConfig:
@@ -117,18 +183,42 @@ Send any text to route it to your session.
 """
 
 
-def _setup_dm_project(project_dir: str, user_id: int, display_name: str, username: str):
-    """Set up a DM user's project folder with config, CLAUDE.md, and git repo on first contact."""
+def _write_agentwire_yml(project: Path, session_type: str, roles: list[str]) -> None:
+    """Write .agentwire.yml from composed config, overwriting any previous version.
+
+    Overwriting is safe because the file is entirely agent-managed (type + roles)
+    and is expected to reflect current channel config on every session spawn.
+    """
+    lines = [f"type: {session_type}", "roles:"]
+    for role in roles:
+        lines.append(f"  - {role}")
+    (project / ".agentwire.yml").write_text("\n".join(lines) + "\n")
+
+
+def _setup_dm_project(
+    project_dir: str,
+    user_id: int,
+    display_name: str,
+    username: str,
+    session_type: str,
+    roles: list[str],
+    instructions: str,
+):
+    """Set up (or refresh) a DM user's project folder.
+
+    Creates git repo + .gitignore + CLAUDE.md on first contact. Always rewrites
+    .agentwire.yml from the composed config and refreshes the instructions block
+    inside CLAUDE.md. Human edits to CLAUDE.md outside the marker block are
+    preserved.
+    """
     import subprocess
 
     project = Path(project_dir)
     project.mkdir(parents=True, exist_ok=True)
 
-    # Init git repo if not already one
     git_dir = project / ".git"
     if not git_dir.exists():
         subprocess.run(["git", "init"], cwd=str(project), capture_output=True)
-        # .gitignore
         gitignore = project / ".gitignore"
         gitignore.write_text(
             "# AgentWire discord DM project\n"
@@ -137,17 +227,9 @@ def _setup_dm_project(project_dir: str, user_id: int, display_name: str, usernam
             "*.pyc\n"
         )
 
-    # Write .agentwire.yml if it doesn't exist
-    config_file = project / ".agentwire.yml"
-    if not config_file.exists():
-        config_file.write_text(
-            "type: claude-bypass\n"
-            "roles:\n"
-            "  - agentwire\n"
-            "  - discord-dm\n"
-        )
+    # Always rewrite .agentwire.yml from current config
+    _write_agentwire_yml(project, session_type, roles)
 
-    # Write CLAUDE.md if it doesn't exist
     claude_file = project / "CLAUDE.md"
     if not claude_file.exists():
         from datetime import datetime
@@ -157,12 +239,12 @@ def _setup_dm_project(project_dir: str, user_id: int, display_name: str, usernam
             f"**User ID:** {user_id}\n"
             f"**First contact:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
             f"## About This User\n\n"
-            f"<!-- Add notes about this user here. The agent reads this on every message. -->\n\n"
-            f"## Instructions\n\n"
-            f"<!-- Add user-specific instructions here. -->\n"
+            f"<!-- Add notes about this user here. The agent reads this on every message. -->\n"
         )
 
-    # Initial commit if repo is empty (no commits yet)
+    # Refresh the auto-managed instructions block (human edits outside preserved)
+    inject_instructions(claude_file, instructions)
+
     result = subprocess.run(
         ["git", "log", "--oneline", "-1"],
         cwd=str(project), capture_output=True, text=True,
@@ -175,8 +257,21 @@ def _setup_dm_project(project_dir: str, user_id: int, display_name: str, usernam
         )
 
 
-def _setup_channel_project(project_dir: str, channel_id: int, channel_name: str, guild_name: str):
-    """Set up a server channel's project folder with config and CLAUDE.md."""
+def _setup_channel_project(
+    project_dir: str,
+    channel_id: int,
+    channel_name: str,
+    guild_name: str,
+    session_type: str,
+    roles: list[str],
+    instructions: str,
+):
+    """Set up (or refresh) a server channel's project folder.
+
+    Same regeneration semantics as _setup_dm_project: .agentwire.yml is
+    rewritten from config on every call; the instructions block in CLAUDE.md
+    is refreshed while human edits elsewhere in CLAUDE.md are preserved.
+    """
     import subprocess
 
     project = Path(project_dir)
@@ -193,14 +288,8 @@ def _setup_channel_project(project_dir: str, channel_id: int, channel_name: str,
             "*.pyc\n"
         )
 
-    config_file = project / ".agentwire.yml"
-    if not config_file.exists():
-        config_file.write_text(
-            "type: claude-bypass\n"
-            "roles:\n"
-            "  - agentwire\n"
-            "  - discord-dm\n"
-        )
+    # Always rewrite .agentwire.yml from current config
+    _write_agentwire_yml(project, session_type, roles)
 
     claude_file = project / "CLAUDE.md"
     if not claude_file.exists():
@@ -212,10 +301,11 @@ def _setup_channel_project(project_dir: str, channel_id: int, channel_name: str,
             f"**Channel ID:** {channel_id}\n"
             f"**Created:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
             f"## Purpose\n\n"
-            f"<!-- Describe what this channel is for. The agent reads this on every message. -->\n\n"
-            f"## Instructions\n\n"
-            f"<!-- Add channel-specific instructions here. -->\n"
+            f"<!-- Describe what this channel is for. The agent reads this on every message. -->\n"
         )
+
+    # Refresh the auto-managed instructions block (human edits outside preserved)
+    inject_instructions(claude_file, instructions)
 
     result = subprocess.run(
         ["git", "log", "--oneline", "-1"],
@@ -332,6 +422,72 @@ class DiscordBridge:
         """Get the agentwire session mapping for a Discord channel."""
         return self.config.channel_map.get(str(channel_id))
 
+    def _get_user_mapping(self, user_id: int) -> DiscordUserMapping | None:
+        """Get per-user DM overrides from user_map. DM scope only."""
+        return self.config.user_map.get(str(user_id))
+
+    def _platform_config(self) -> dict:
+        """Level 1 config: applies to all Discord sessions."""
+        return {
+            "type": self.config.default_type,
+            "roles": self.config.default_roles,
+            "instructions": self.config.default_instructions,
+        }
+
+    def _dm_scope_config(self) -> dict:
+        """Level 2a config: applies to all DM sessions."""
+        return {
+            "roles": self.config.dm_roles,
+            "instructions": self.config.dm_instructions,
+        }
+
+    def _channel_scope_config(self) -> dict:
+        """Level 2b config: applies to all channel (non-DM) sessions."""
+        return {
+            "roles": self.config.channel_roles,
+            "instructions": self.config.channel_instructions,
+        }
+
+    def compose_dm_config(self, user_id: int) -> tuple[str, list[str], str]:
+        """Compose session config for a DM with a specific user.
+
+        Hierarchy: platform → dm_scope → user_map[user_id] (if present).
+        Returns (type, roles, instructions).
+        """
+        user_mapping = self._get_user_mapping(user_id)
+        specific: dict = {}
+        if user_mapping:
+            specific = {
+                "type": user_mapping.type,
+                "roles": user_mapping.roles,
+                "instructions": user_mapping.instructions,
+            }
+        return compose_session_config(
+            platform=self._platform_config(),
+            scope=self._dm_scope_config(),
+            specific=specific,
+        )
+
+    def compose_channel_config(self, channel_id: int) -> tuple[str, list[str], str]:
+        """Compose session config for a Discord channel.
+
+        Hierarchy: platform → channel_scope → channel_map[channel_id] (if present).
+        Returns (type, roles, instructions).
+        """
+        ch_mapping = self._get_channel_mapping(channel_id)
+        specific: dict = {}
+        if ch_mapping:
+            specific = {
+                "type": ch_mapping.type,
+                "roles": ch_mapping.roles,
+                "instructions": ch_mapping.instructions,
+            }
+        return compose_session_config(
+            platform=self._platform_config(),
+            scope=self._channel_scope_config(),
+            specific=specific,
+        )
+
     def _ensure_ws_listener(self, session: str, target_type: str, target_id: int):
         """Start a WebSocket listener for a session if one isn't running."""
         if session in self._ws_tasks:
@@ -435,7 +591,11 @@ class DiscordBridge:
         project = mapping.project or self._get_channel_project(message.channel.id)
         channel_name = message.channel.name
         guild_name = message.guild.name if message.guild else "Unknown"
-        _setup_channel_project(project, message.channel.id, channel_name, guild_name)
+        ch_type, ch_roles, ch_instructions = self.compose_channel_config(message.channel.id)
+        _setup_channel_project(
+            project, message.channel.id, channel_name, guild_name,
+            session_type=ch_type, roles=ch_roles, instructions=ch_instructions,
+        )
 
         author_name = message.author.display_name or message.author.name
         prefixed = f"[Discord #{channel_name} from {author_name}: '{text}']"
@@ -505,7 +665,11 @@ class DiscordBridge:
         project = self._get_dm_project(user_id)
         author_name = message.author.display_name or message.author.name
         username = str(message.author)
-        _setup_dm_project(project, user_id, author_name, username)
+        dm_type, dm_roles, dm_instructions = self.compose_dm_config(user_id)
+        _setup_dm_project(
+            project, user_id, author_name, username,
+            session_type=dm_type, roles=dm_roles, instructions=dm_instructions,
+        )
 
         # Track DM user mapping and start WS listener for replies
         self._dm_user_map[session] = user_id
@@ -602,7 +766,11 @@ class DiscordBridge:
                 project = self._get_dm_project(message.author.id)
                 author_name = message.author.display_name or message.author.name
                 username = str(message.author)
-                _setup_dm_project(project, message.author.id, author_name, username)
+                dm_type, dm_roles, dm_instructions = self.compose_dm_config(message.author.id)
+                _setup_dm_project(
+                    project, message.author.id, author_name, username,
+                    session_type=dm_type, roles=dm_roles, instructions=dm_instructions,
+                )
                 if not ensure_session(session, project):
                     await message.reply(f"Failed to start session `{session}`")
                     return

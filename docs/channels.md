@@ -87,10 +87,6 @@ channels:
 
 The channel registry automatically loads config from YAML and builds the dataclass. No changes to `config.py` needed.
 
-### Legacy Config (Built-in Only)
-
-Built-in channels can read from old config paths via `legacy_config_key`. Custom channels **cannot** use this — they're restricted to `channels.{name}:` to prevent config key squatting.
-
 ## Primitives
 
 The base class provides TTS/STT as infrastructure:
@@ -99,7 +95,7 @@ The base class provides TTS/STT as infrastructure:
 # In your channel code:
 audio = await self.tts("Hello!", voice="my_voice")  # → WAV bytes
 text = await self.stt(audio_bytes, format="ogg")     # → transcribed text
-voices = self.voices_available()                       # → ["default", "custom1", ...]
+voices = await self.voices_available()              # → ["default", "custom1", ...]
 ```
 
 These call the TTS/STT HTTP servers. Channel developers never need to know about server URLs or backends.
@@ -144,6 +140,74 @@ Subscribe to `wss://localhost:{port}/ws/{session}` for outbound events:
 ### Inbound Messages
 
 Platform SDK → your handler → `self.send_to_session(session, text)`
+
+## Composable Session Config (Discord / Slack)
+
+Discord and Slack bridges compose session **type**, **roles**, and **instructions** across 3 levels so you can set defaults centrally and override per channel or per user — all via YAML, no code.
+
+### Hierarchy
+
+1. **Platform** — `default_type`, `default_roles`, `default_instructions` apply to every session on that platform.
+2. **Scope** — either `dm_roles`+`dm_instructions` (for DMs) OR `channel_roles`+`channel_instructions` (for channel sessions).
+3. **Specific** — per-channel overrides live in `channel_map[id]`, per-user DM overrides live in `user_map[id]`.
+
+### Composition rules
+
+- **Roles** — appended across all 3 levels and deduplicated, preserving order.
+- **Instructions** — joined with blank lines across all 3 levels.
+- **Session type** — first non-empty from specific → scope → platform → `"claude-bypass"` fallback.
+- **`user_map` is DM-only** — a user sending a channel message gets the channel's config, not the user's.
+
+### Example
+
+```yaml
+channels:
+  slack:
+    bot_token: "xoxb-..."
+    app_token: "xapp-..."
+
+    # Level 1: All Slack sessions
+    default_type: claude-bypass
+    default_roles: [agentwire]
+    default_instructions: |
+      You're running inside a Slack integration.
+
+    # Level 2a: All Slack DMs
+    dm_roles: [slack-dm]
+    dm_instructions: |
+      The user is messaging you in a Slack DM. Keep replies concise.
+
+    # Level 2b: All Slack channel sessions
+    channel_roles: [slack-dm]
+    channel_instructions: |
+      You're posting in a Slack channel — be professional.
+
+    # Level 3a: Specific channel
+    channel_map:
+      "C12345":
+        session: "backend"
+        project: "~/projects/api"
+        type: claude-auto
+        roles: [python-expert]
+        instructions: |
+          This is the backend team channel. Focus on Python.
+
+    # Level 3b: Specific user (DM only)
+    user_map:
+      "U67890":
+        roles: [admin]
+        instructions: |
+          This user is the team lead — be direct and concise.
+```
+
+### What gets written where
+
+On every session spawn, the bridge writes:
+
+- **`.agentwire.yml`** — composed `type` and `roles` in the session's project folder (overwritten every time).
+- **`CLAUDE.md`** — composed `instructions` injected between `<!-- BEGIN agentwire-instructions -->` / `<!-- END agentwire-instructions -->` markers. Human edits to the rest of the file are preserved verbatim across regenerations.
+
+Discord uses the identical structure under `channels.discord:`. Custom service channels can opt in by calling `compose_session_config()` and `inject_instructions()` from `agentwire.channels.base`.
 
 ## CLI Integration
 
@@ -199,8 +263,7 @@ except ImportError:
 
 ## Security
 
-- `legacy_config_key` is restricted to `BUILTIN_CHANNELS` set
-- Custom channels can only read from `channels.{their_name}:` in YAML
+- Every channel — built-in or custom — can only read from `channels.{config_key}:` in YAML
 - This prevents a custom channel from reading another channel's config
 
 ## Testing Checklist

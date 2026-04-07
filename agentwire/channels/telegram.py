@@ -164,4 +164,3 @@ class TelegramChannel(ServiceChannel):
     name = "telegram"
     config_class = TelegramConfig
     config_key = "telegram"
-    legacy_config_key = "telegram"

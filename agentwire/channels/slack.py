@@ -32,6 +32,8 @@ from .base import (
     ServiceChannel,
     _run_cmd,
     _run_cmd_raw,
+    compose_session_config,
+    inject_instructions,
     session_exists,
 )
 
@@ -44,15 +46,47 @@ class SlackConfigError(NotificationError):
 
 @dataclass
 class SlackChannelMapping:
-    """Maps a Slack channel to an agentwire session."""
+    """Maps a Slack channel to an agentwire session.
+
+    Fields beyond session/project are per-channel overrides for the composable
+    session config hierarchy (type/roles/instructions).
+    """
 
     session: str = ""
     project: str = ""
+    type: str = ""                               # override session type
+    roles: list[str] = field(default_factory=list)  # appended to scope+platform roles
+    instructions: str = ""                       # appended to scope+platform instructions
+
+
+@dataclass
+class SlackUserMapping:
+    """Per-user overrides for DM sessions (DM scope only).
+
+    Channel messages from this user still use the channel's config — user_map
+    only applies when the user sends a DM.
+    """
+
+    type: str = ""
+    roles: list[str] = field(default_factory=list)
+    instructions: str = ""
 
 
 @dataclass
 class SlackConfig:
-    """Slack bot configuration."""
+    """Slack bot configuration with composable session config hierarchy.
+
+    Session type/roles/instructions compose across 3 levels:
+      1. Platform defaults — default_type / default_roles / default_instructions
+         (apply to all Slack sessions)
+      2. Scope defaults — dm_roles+dm_instructions (for DMs) OR
+         channel_roles+channel_instructions (for channel sessions)
+      3. Specific overrides — per-channel in channel_map, per-user in user_map
+
+    Roles are appended and deduped (preserving order). Instructions are
+    joined with blank lines. Session type uses first-non-empty precedence:
+    specific → scope → platform → "claude-bypass".
+    """
 
     bot_token: str = ""  # xoxb-...
     app_token: str = ""  # xapp-... (for Socket Mode)
@@ -64,6 +98,20 @@ class SlackConfig:
     session_name: str = "agentwire-slack"
     channels_dir: str = "~/.agentwire/channels/slack"
     channel_map: dict = field(default_factory=dict)
+    user_map: dict = field(default_factory=dict)  # DM-only: slack_user_id → SlackUserMapping
+
+    # --- Composable session config (platform level) ---
+    default_type: str = "claude-bypass"
+    default_roles: list[str] = field(default_factory=lambda: ["agentwire"])
+    default_instructions: str = ""
+
+    # --- Scope: DM ---
+    dm_roles: list[str] = field(default_factory=lambda: ["slack-dm"])
+    dm_instructions: str = ""
+
+    # --- Scope: channel (non-DM) ---
+    channel_roles: list[str] = field(default_factory=lambda: ["slack-dm"])
+    channel_instructions: str = ""
 
     def __post_init__(self):
         if not self.bot_token:
@@ -71,22 +119,41 @@ class SlackConfig:
         if not self.app_token:
             self.app_token = os.environ.get("SLACK_APP_TOKEN", "")
         self.channels_dir = str(Path(self.channels_dir).expanduser())
+
         # Normalize channel_map
-        normalized = {}
+        normalized_ch = {}
         for channel_id, value in self.channel_map.items():
             channel_id = str(channel_id)
             if isinstance(value, str):
-                normalized[channel_id] = SlackChannelMapping(session=f"slack-ch-{value}")
+                # Shorthand: "label" → slack-ch-label with no overrides
+                normalized_ch[channel_id] = SlackChannelMapping(session=f"slack-ch-{value}")
             elif isinstance(value, dict):
                 label = value.get("label", channel_id)
                 session = value.get("session", f"slack-ch-{label}")
-                normalized[channel_id] = SlackChannelMapping(
+                normalized_ch[channel_id] = SlackChannelMapping(
                     session=session,
                     project=value.get("project", ""),
+                    type=value.get("type", ""),
+                    roles=list(value.get("roles", [])),
+                    instructions=value.get("instructions", ""),
                 )
             elif isinstance(value, SlackChannelMapping):
-                normalized[channel_id] = value
-        self.channel_map = normalized
+                normalized_ch[channel_id] = value
+        self.channel_map = normalized_ch
+
+        # Normalize user_map (DM-only overrides)
+        normalized_users = {}
+        for user_id, value in self.user_map.items():
+            user_id = str(user_id)
+            if isinstance(value, dict):
+                normalized_users[user_id] = SlackUserMapping(
+                    type=value.get("type", ""),
+                    roles=list(value.get("roles", [])),
+                    instructions=value.get("instructions", ""),
+                )
+            elif isinstance(value, SlackUserMapping):
+                normalized_users[user_id] = value
+        self.user_map = normalized_users
 
 
 def _get_slack_config() -> SlackConfig:
@@ -104,8 +171,33 @@ def _get_slack_config() -> SlackConfig:
 STATE_FILE = Path.home() / ".agentwire" / "slack-state.json"
 
 
-def _setup_dm_project(project_dir: str, user_id: str, display_name: str):
-    """Set up a DM user's project folder with config, CLAUDE.md, and git repo."""
+def _write_agentwire_yml(project: Path, session_type: str, roles: list[str]) -> None:
+    """Write .agentwire.yml from composed config, overwriting any previous version.
+
+    Overwriting is safe because the file is entirely agent-managed (type + roles)
+    and is expected to reflect current channel config on every session spawn.
+    """
+    lines = [f"type: {session_type}", "roles:"]
+    for role in roles:
+        lines.append(f"  - {role}")
+    (project / ".agentwire.yml").write_text("\n".join(lines) + "\n")
+
+
+def _setup_dm_project(
+    project_dir: str,
+    user_id: str,
+    display_name: str,
+    session_type: str,
+    roles: list[str],
+    instructions: str,
+):
+    """Set up (or refresh) a DM user's project folder.
+
+    Creates git repo + .gitignore + CLAUDE.md on first contact. Always rewrites
+    .agentwire.yml from the composed config and refreshes the instructions block
+    inside CLAUDE.md. Human edits to CLAUDE.md outside the marker block are
+    preserved.
+    """
     project = Path(project_dir)
     project.mkdir(parents=True, exist_ok=True)
 
@@ -120,14 +212,8 @@ def _setup_dm_project(project_dir: str, user_id: str, display_name: str):
             "*.pyc\n"
         )
 
-    config_file = project / ".agentwire.yml"
-    if not config_file.exists():
-        config_file.write_text(
-            "type: claude-bypass\n"
-            "roles:\n"
-            "  - agentwire\n"
-            "  - slack-dm\n"
-        )
+    # Always rewrite .agentwire.yml from current config
+    _write_agentwire_yml(project, session_type, roles)
 
     claude_file = project / "CLAUDE.md"
     if not claude_file.exists():
@@ -138,10 +224,11 @@ def _setup_dm_project(project_dir: str, user_id: str, display_name: str):
             f"**User ID:** {user_id}\n"
             f"**First contact:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
             f"## About This User\n\n"
-            f"<!-- Add notes about this user here. The agent reads this on every message. -->\n\n"
-            f"## Instructions\n\n"
-            f"<!-- Add user-specific instructions here. -->\n"
+            f"<!-- Add notes about this user here. The agent reads this on every message. -->\n"
         )
+
+    # Refresh the auto-managed instructions block (human edits outside preserved)
+    inject_instructions(claude_file, instructions)
 
     result = subprocess.run(
         ["git", "log", "--oneline", "-1"],
@@ -155,8 +242,21 @@ def _setup_dm_project(project_dir: str, user_id: str, display_name: str):
         )
 
 
-def _setup_channel_project(project_dir: str, channel_id: str, channel_name: str, workspace_name: str):
-    """Set up a Slack channel's project folder."""
+def _setup_channel_project(
+    project_dir: str,
+    channel_id: str,
+    channel_name: str,
+    workspace_name: str,
+    session_type: str,
+    roles: list[str],
+    instructions: str,
+):
+    """Set up (or refresh) a Slack channel's project folder.
+
+    Same regeneration semantics as _setup_dm_project: .agentwire.yml is
+    rewritten from config on every call; the instructions block in CLAUDE.md
+    is refreshed while human edits elsewhere in CLAUDE.md are preserved.
+    """
     project = Path(project_dir)
     project.mkdir(parents=True, exist_ok=True)
 
@@ -171,14 +271,8 @@ def _setup_channel_project(project_dir: str, channel_id: str, channel_name: str,
             "*.pyc\n"
         )
 
-    config_file = project / ".agentwire.yml"
-    if not config_file.exists():
-        config_file.write_text(
-            "type: claude-bypass\n"
-            "roles:\n"
-            "  - agentwire\n"
-            "  - slack-dm\n"
-        )
+    # Always rewrite .agentwire.yml from current config
+    _write_agentwire_yml(project, session_type, roles)
 
     claude_file = project / "CLAUDE.md"
     if not claude_file.exists():
@@ -190,10 +284,11 @@ def _setup_channel_project(project_dir: str, channel_id: str, channel_name: str,
             f"**Channel ID:** {channel_id}\n"
             f"**Created:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
             f"## Purpose\n\n"
-            f"<!-- Describe what this channel is for. -->\n\n"
-            f"## Instructions\n\n"
-            f"<!-- Add channel-specific instructions here. -->\n"
+            f"<!-- Describe what this channel is for. -->\n"
         )
+
+    # Refresh the auto-managed instructions block (human edits outside preserved)
+    inject_instructions(claude_file, instructions)
 
     result = subprocess.run(
         ["git", "log", "--oneline", "-1"],
@@ -263,6 +358,72 @@ class SlackBridge:
 
     def _get_channel_mapping(self, channel_id: str) -> SlackChannelMapping | None:
         return self.config.channel_map.get(str(channel_id))
+
+    def _get_user_mapping(self, user_id: str) -> SlackUserMapping | None:
+        """Get per-user DM overrides from user_map. DM scope only."""
+        return self.config.user_map.get(str(user_id))
+
+    def _platform_config(self) -> dict:
+        """Level 1 config: applies to all Slack sessions."""
+        return {
+            "type": self.config.default_type,
+            "roles": self.config.default_roles,
+            "instructions": self.config.default_instructions,
+        }
+
+    def _dm_scope_config(self) -> dict:
+        """Level 2a config: applies to all DM sessions."""
+        return {
+            "roles": self.config.dm_roles,
+            "instructions": self.config.dm_instructions,
+        }
+
+    def _channel_scope_config(self) -> dict:
+        """Level 2b config: applies to all channel (non-DM) sessions."""
+        return {
+            "roles": self.config.channel_roles,
+            "instructions": self.config.channel_instructions,
+        }
+
+    def compose_dm_config(self, user_id: str) -> tuple[str, list[str], str]:
+        """Compose session config for a DM with a specific user.
+
+        Hierarchy: platform → dm_scope → user_map[user_id] (if present).
+        Returns (type, roles, instructions).
+        """
+        user_mapping = self._get_user_mapping(user_id)
+        specific: dict = {}
+        if user_mapping:
+            specific = {
+                "type": user_mapping.type,
+                "roles": user_mapping.roles,
+                "instructions": user_mapping.instructions,
+            }
+        return compose_session_config(
+            platform=self._platform_config(),
+            scope=self._dm_scope_config(),
+            specific=specific,
+        )
+
+    def compose_channel_config(self, channel_id: str) -> tuple[str, list[str], str]:
+        """Compose session config for a Slack channel.
+
+        Hierarchy: platform → channel_scope → channel_map[channel_id] (if present).
+        Returns (type, roles, instructions).
+        """
+        ch_mapping = self._get_channel_mapping(channel_id)
+        specific: dict = {}
+        if ch_mapping:
+            specific = {
+                "type": ch_mapping.type,
+                "roles": ch_mapping.roles,
+                "instructions": ch_mapping.instructions,
+            }
+        return compose_session_config(
+            platform=self._platform_config(),
+            scope=self._channel_scope_config(),
+            specific=specific,
+        )
 
     def _ensure_portal_listener(self, session: str, reply_func):
         """Start a portal WebSocket listener for a session in a background thread."""
@@ -455,7 +616,12 @@ class SlackBridge:
             except Exception:
                 workspace_name = "Unknown"
 
-            _setup_channel_project(project, channel_id, f"ch-{channel_id}", workspace_name)
+            # Compose session config: platform → channel scope → per-channel override
+            ch_type, ch_roles, ch_instructions = bridge.compose_channel_config(channel_id)
+            _setup_channel_project(
+                project, channel_id, f"ch-{channel_id}", workspace_name,
+                session_type=ch_type, roles=ch_roles, instructions=ch_instructions,
+            )
 
             # Start portal listener for replies
             def reply_to_channel(reply_text):
@@ -513,7 +679,12 @@ class SlackBridge:
             # Set up DM project
             session = bridge._get_dm_session(user_id)
             project = bridge._get_dm_project(user_id)
-            _setup_dm_project(project, user_id, display_name)
+            # Compose session config: platform → dm scope → per-user override
+            dm_type, dm_roles, dm_instructions = bridge.compose_dm_config(user_id)
+            _setup_dm_project(
+                project, user_id, display_name,
+                session_type=dm_type, roles=dm_roles, instructions=dm_instructions,
+            )
 
             # Start portal listener for DM replies
             channel_id = event.get("channel", "")

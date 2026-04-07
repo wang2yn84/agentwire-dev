@@ -60,9 +60,6 @@ class MyChannel(SendOnlyChannel):
     config_class = MyChannelConfig
     config_key = "my_channel"
 
-    # NO legacy_config_key — only built-in channels can use this.
-    # Custom channels are restricted to channels.{config_key}: in YAML.
-
     async def send(self, text: str, **kwargs) -> ChannelResult:
         """Send a message through your channel.
 

@@ -481,6 +481,14 @@ channels:
     echo_image_url: "https://yourdomain.com/images/echo.png"
     echo_small_url: "https://yourdomain.com/images/echo-small.png"
     logo_image_url: "https://yourdomain.com/images/logo.png"
+  telegram:
+    bot_token: ""              # from @BotFather (or TELEGRAM_AGENTWIRE_BOT_TOKEN env var)
+    allowed_users: []          # Telegram user IDs (integers)
+    default_session: "main"    # fallback session for messages
+    voice_replies: true        # convert TTS to voice notes
+    forward_questions: true    # AskUserQuestion as inline keyboards
+    forward_alerts: true       # alerts to Telegram
+    session_name: "agentwire-telegram"
   quo:
     api_key: ""              # or QUO_API_KEY / OPENPHONE_API_KEY env var
     from_number: "+1234567890"  # E.164 or phone number ID (PNxxx)
@@ -501,27 +509,53 @@ channels:
     default_session: "main"
     voice_replies: true
     session_name: "agentwire-discord"
+    # Composable session config hierarchy (platform → scope → specific):
+    default_type: claude-bypass
+    default_roles: [agentwire]
+    default_instructions: ""      # applies to all Discord sessions
+    dm_roles: [discord-dm]
+    dm_instructions: ""           # applies to all Discord DMs
+    channel_roles: [discord-dm]
+    channel_instructions: ""      # applies to all Discord channel sessions
+    channel_map:                  # per-channel overrides (append to scope)
+      "1234567890":
+        session: "backend"
+        project: "~/projects/api"
+        type: claude-auto         # override type
+        roles: [python-expert]    # appended + deduped
+        instructions: |
+          Backend team channel. Focus on Python.
+    user_map:                     # per-user DM overrides (DM scope only)
+      "252979000000000000":
+        roles: [admin]
+        instructions: |
+          Team lead — be direct and concise.
   slack:
     bot_token: ""            # xoxb-... or SLACK_BOT_TOKEN env var
     app_token: ""            # xapp-... or SLACK_APP_TOKEN env var
     allowed_user_ids: []     # Slack user IDs (strings)
     default_session: "main"
     session_name: "agentwire-slack"
-
-# Legacy config paths still supported for built-in channels:
-# notifications.email: → channels.email:
-# telegram: → channels.telegram:
-telegram:
-  bot_token: ""              # from @BotFather (or TELEGRAM_AGENTWIRE_BOT_TOKEN env var)
-  allowed_users: []          # Telegram user IDs (integers)
-  default_session: "main"   # fallback session for messages
-  voice_replies: true        # convert TTS to voice notes
-  forward_output: false      # continuous output forwarding
-  forward_questions: true    # AskUserQuestion as inline keyboards
-  forward_alerts: true       # alerts to Telegram
-  notify_on:                 # extra notification triggers
-    - idle
-    - task_complete
+    # Composable session config hierarchy (same as Discord):
+    default_type: claude-bypass
+    default_roles: [agentwire]
+    default_instructions: ""      # applies to all Slack sessions
+    dm_roles: [slack-dm]
+    dm_instructions: ""           # applies to all Slack DMs
+    channel_roles: [slack-dm]
+    channel_instructions: ""      # applies to all Slack channel sessions
+    channel_map:                  # per-channel overrides
+      "C12345":
+        session: "backend"
+        type: claude-auto
+        roles: [python-expert]
+        instructions: |
+          Backend team channel. Focus on Python.
+    user_map:                     # per-user DM overrides (DM scope only)
+      "U67890":
+        roles: [admin]
+        instructions: |
+          Team lead — be direct and concise.
 
 scheduler:
   dispatch_cooldown: 60  # Seconds between task dispatches (default: 60)
