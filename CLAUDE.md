@@ -530,6 +530,9 @@ channels:
         roles: [admin]
         instructions: |
           Team lead — be direct and concise.
+    # Self-configuration tip: add channel-admin to dm_roles (or default_roles)
+    # so you can set up new channels by just DMing the bot. The agent will
+    # edit this config.yaml and restart the bridge for you.
   slack:
     bot_token: ""            # xoxb-... or SLACK_BOT_TOKEN env var
     app_token: ""            # xapp-... or SLACK_APP_TOKEN env var
@@ -740,6 +743,9 @@ Roles define agent behavior and are composable. Mix and match roles in `.agentwi
 | `task-runner` | Scheduled task execution |
 | `chatbot` | Conversational personality |
 | `init` | Setup wizard behavior |
+| `slack-dm` | Slack bot — reply()-based conversation with Slack users |
+| `discord-dm` | Discord bot — reply()-based conversation with Discord users |
+| `channel-admin` | Self-configure channel setup via chat (edit config.yaml, restart bridges) |
 
 Use `agentwire roles list` to see available roles. Roles are bundled in `agentwire/roles/` and can be composed freely in `.agentwire.yml`.
 

@@ -209,6 +209,30 @@ On every session spawn, the bridge writes:
 
 Discord uses the identical structure under `channels.discord:`. Custom service channels can opt in by calling `compose_session_config()` and `inject_instructions()` from `agentwire.channels.base`.
 
+### Self-Configuration via Chat
+
+Because the composed config is just a YAML file, the agent can edit its own configuration when given the right role. The bundled `channel-admin` role teaches an agent how to:
+
+- Read and edit `~/.agentwire/config.yaml` safely
+- Find Slack/Discord channel and user IDs
+- Add/update `channel_map` and `user_map` entries
+- Restart the right bridge so changes take effect
+- Warn before destructive actions
+
+**Enable it by adding `channel-admin` to a role level:**
+
+```yaml
+channels:
+  slack:
+    # Option 1: only DMs can reconfigure the bot
+    dm_roles: [slack-dm, channel-admin]
+
+    # Option 2: every session (DMs + channels) can reconfigure
+    default_roles: [agentwire, channel-admin]
+```
+
+The typical flow: invite the bot to a new Slack channel, DM the bot, ask it to "set up this channel for our backend team", and it will walk you through the needed IDs, edit `config.yaml`, and restart the bridge. Restart drops in-flight conversations so the agent confirms before doing so.
+
 ## CLI Integration
 
 ### Send-Only Pattern
