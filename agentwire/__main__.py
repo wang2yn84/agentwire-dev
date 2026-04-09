@@ -1769,6 +1769,18 @@ def get_telegram_session_name() -> str:
     return config.get("services", {}).get("telegram", {}).get("session_name", "agentwire-telegram")
 
 
+def _bridge_tmux_cmd(source_dir: Path, python_invocation: str) -> str:
+    """Build a tmux command that sources ~/.agentwire/.env (if present) under bash,
+    then execs the bridge. Wrapped in bash -c so it works regardless of the user's
+    default shell (zsh can choke on .env values containing special chars)."""
+    env_file = Path.home() / ".agentwire" / ".env"
+    parts = [f"cd {source_dir}"]
+    if env_file.exists():
+        parts.append(f"set -a; source {env_file}; set +a")
+    parts.append(f"exec {python_invocation}")
+    return "bash -c '" + "; ".join(parts) + "'"
+
+
 def cmd_telegram_start(args) -> int:
     """Start the Telegram bridge in tmux."""
     session_name = get_telegram_session_name()
@@ -1786,7 +1798,7 @@ def cmd_telegram_start(args) -> int:
         print(f"Error: Cannot find venv at {venv_python}", file=sys.stderr)
         return 1
 
-    cmd = f"cd {source_dir} && {venv_python} -m agentwire.bridges.telegram"
+    cmd = _bridge_tmux_cmd(source_dir, f"{venv_python} -m agentwire.bridges.telegram")
 
     subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(source_dir)])
     subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
@@ -1892,7 +1904,7 @@ def cmd_discord_start(args) -> int:
         print(f"Error: Cannot find venv at {venv_python}", file=sys.stderr)
         return 1
 
-    cmd = f"cd {source_dir} && {venv_python} -c 'from agentwire.channels.discord import run_bridge; run_bridge()'"
+    cmd = _bridge_tmux_cmd(source_dir, f'{venv_python} -c "from agentwire.channels.discord import run_bridge; run_bridge()"')
 
     subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(source_dir)])
     subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
@@ -1970,7 +1982,7 @@ def cmd_slack_start(args) -> int:
         print(f"Error: Cannot find venv at {venv_python}", file=sys.stderr)
         return 1
 
-    cmd = f"cd {source_dir} && {venv_python} -c 'from agentwire.channels.slack import run_bridge; run_bridge()'"
+    cmd = _bridge_tmux_cmd(source_dir, f'{venv_python} -c "from agentwire.channels.slack import run_bridge; run_bridge()"')
 
     subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-c", str(source_dir)])
     subprocess.run(["tmux", "send-keys", "-t", session_name, cmd, "Enter"])
