@@ -447,6 +447,13 @@ export class SessionWindow {
 
         const url = `${protocol}//${location.host}${endpoint}`;
 
+        // Close any existing WS (even if still CONNECTING) to avoid orphaned
+        // attaches that would receive duplicate broadcast output from tmux.
+        if (this.ws) {
+            try { this.ws.onclose = null; this.ws.close(); } catch (e) {}
+            this.ws = null;
+        }
+
         this.ws = new WebSocket(url);
 
         if (this.mode === 'terminal') {
@@ -590,8 +597,11 @@ export class SessionWindow {
             }
         };
 
-        // For terminal mode, send input to WebSocket
-        if (this.mode === 'terminal' && this.terminal) {
+        // For terminal mode, send input to WebSocket. Only attach once — xterm.js
+        // stacks onData listeners, so re-attaching on every _connectWebSocket()
+        // (initial + reconnects) would multiply each keystroke.
+        if (this.mode === 'terminal' && this.terminal && !this._inputBound) {
+            this._inputBound = true;
             this.terminal.onData((data) => {
                 if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                     this.ws.send(JSON.stringify({ type: 'input', data }));

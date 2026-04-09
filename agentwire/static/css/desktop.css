@@ -457,6 +457,15 @@ body {
     color: var(--accent);
 }
 
+.taskbar-btn[draggable="true"] {
+    cursor: grab;
+}
+
+.taskbar-btn.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+
 .taskbar-icon {
     width: 16px;
     height: 16px;

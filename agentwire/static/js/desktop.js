@@ -176,8 +176,15 @@ async function init() {
     // Set initial voice indicator state
     updateVoiceIndicator('idle');
 
+    // Keep saved taskbar state in sync with minimize/restore events
+    desktop.on('window_minimized', saveTaskbarState);
+    desktop.on('window_restored', saveTaskbarState);
+
     // Fetch initial data (will emit events to listeners above)
     await desktop.fetchSessions();
+
+    // Restore taskbar tabs from previous page session (windows + order + active + minimized)
+    restoreTaskbarState();
 }
 
 /**
@@ -255,6 +262,10 @@ function handleWindowActivity({ session }) {
 // Clean up on page unload
 function setupPageUnload() {
     window.addEventListener('beforeunload', () => {
+        // Suppress taskbar state saves during teardown — we want the saved state
+        // to reflect what was open, so it can be restored on next page load.
+        restoringTaskbar = true;
+
         // Disconnect main WebSocket
         desktop.disconnect();
 
@@ -408,16 +419,19 @@ export function openSessionTerminal(session, mode, machine = null) {
         onClose: (win) => {
             sessionWindows.delete(id);
             removeTaskbarButton(id);
+            unrecordTaskbarEntry(id);
         },
         onFocus: (win) => {
             updateTaskbarActive(id);
             desktop.setActiveWindow(id);
+            saveTaskbarState();
         }
     });
 
     sw.open();
     sessionWindows.set(id, sw);
     addTaskbarButton(id, sw);
+    recordTaskbarEntry({ kind: 'session', id, session, mode, machine });
 }
 
 /**
@@ -455,16 +469,19 @@ export function openArtifactWindow(url, title = 'Artifact', artifactId = null) {
         onClose: () => {
             artifactWindows.delete(id);
             removeTaskbarButton(id);
+            unrecordTaskbarEntry(id);
         },
         onFocus: () => {
             updateTaskbarActive(id);
             desktop.setActiveWindow(id);
+            saveTaskbarState();
         },
     });
 
     aw.open();
     artifactWindows.set(id, aw);
     addTaskbarButton(id, aw);
+    recordTaskbarEntry({ kind: 'artifact', id, url, title });
 }
 
 /**
@@ -508,16 +525,137 @@ function openListWindowWithTaskbar(id, openFn) {
         if (originalCleanup) originalCleanup();
         listWindows.delete(id);
         removeTaskbarButton(id);
+        unrecordTaskbarEntry(id);
     };
 
     addTaskbarButton(id, lw);
+    recordTaskbarEntry({ kind: 'panel', id, panel: id });
 }
 
-// Taskbar management
+// Taskbar management — persist open windows + order across page refresh
+const TASKBAR_STATE_KEY = 'taskbar-state';
+const taskbarRecords = new Map(); // id -> { kind, id, ...args }
+let taskbarDragoverBound = false;
+let restoringTaskbar = false;
+
+function _lookupWindowInstance(id) {
+    return sessionWindows.get(id) || artifactWindows.get(id) || listWindows.get(id) || null;
+}
+
+function loadTaskbarState() {
+    try {
+        const raw = localStorage.getItem(TASKBAR_STATE_KEY);
+        if (!raw) return { tabs: [], activeId: null };
+        const data = JSON.parse(raw);
+        if (Array.isArray(data)) return { tabs: data, activeId: null };  // legacy schema
+        return {
+            tabs: Array.isArray(data.tabs) ? data.tabs : [],
+            activeId: data.activeId || null,
+        };
+    } catch (e) {
+        return { tabs: [], activeId: null };
+    }
+}
+
+function saveTaskbarState() {
+    if (restoringTaskbar) return;
+    const ids = Array.from(elements.taskbarWindows.querySelectorAll('.taskbar-btn'))
+        .map(btn => btn.dataset.session);
+    const tabs = ids.map(id => {
+        const rec = taskbarRecords.get(id);
+        if (!rec) return null;
+        const inst = _lookupWindowInstance(id);
+        return { ...rec, minimized: inst ? !!inst.isMinimized : false };
+    }).filter(Boolean);
+    const activeId = desktop.getActiveWindow ? desktop.getActiveWindow() : null;
+    try {
+        localStorage.setItem(TASKBAR_STATE_KEY, JSON.stringify({ tabs, activeId }));
+    } catch (e) {}
+}
+
+function recordTaskbarEntry(record) {
+    taskbarRecords.set(record.id, record);
+    saveTaskbarState();
+}
+
+function unrecordTaskbarEntry(id) {
+    taskbarRecords.delete(id);
+    saveTaskbarState();
+}
+
+export function restoreTaskbarState() {
+    const { tabs, activeId } = loadTaskbarState();
+    if (tabs.length === 0) return;
+    restoringTaskbar = true;
+    try {
+        const panelMap = {
+            sessions: openSessionsWindow,
+            machines: openMachinesWindow,
+            projects: openProjectsWindow,
+            config: openConfigWindow,
+            artifacts: openArtifactsWindow,
+            scheduler: openSchedulerWindow,
+        };
+        for (const rec of tabs) {
+            try {
+                if (rec.kind === 'session') {
+                    openSessionTerminal(rec.session, rec.mode || 'monitor', rec.machine || null);
+                } else if (rec.kind === 'artifact') {
+                    openArtifactWindow(rec.url, rec.title || 'Artifact', rec.id);
+                } else if (rec.kind === 'panel') {
+                    const fn = panelMap[rec.panel];
+                    if (fn) openListWindowWithTaskbar(rec.panel, fn);
+                }
+            } catch (e) {
+                console.warn('[taskbar] Failed to restore', rec, e);
+            }
+        }
+        // Apply minimized states (skip the active one — it should be visible)
+        for (const rec of tabs) {
+            if (rec.minimized && rec.id !== activeId) {
+                const inst = _lookupWindowInstance(rec.id);
+                if (inst && !inst.isMinimized) inst.minimize();
+            }
+        }
+        // Focus the saved active window. If none saved, fall back to last opened.
+        const focusId = activeId && taskbarRecords.has(activeId)
+            ? activeId
+            : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+        if (focusId) {
+            const inst = _lookupWindowInstance(focusId);
+            if (inst) {
+                if (inst.isMinimized) inst.restore();
+                else if (inst.focus) inst.focus();
+                desktop.setActiveWindow(focusId);
+                updateTaskbarActive(focusId);
+            }
+        }
+    } finally {
+        restoringTaskbar = false;
+        saveTaskbarState();
+    }
+}
+
+function bindTaskbarDragover() {
+    if (taskbarDragoverBound) return;
+    taskbarDragoverBound = true;
+    elements.taskbarWindows.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const dragging = elements.taskbarWindows.querySelector('.taskbar-btn.dragging');
+        if (!dragging) return;
+        const target = e.target.closest('.taskbar-btn');
+        if (!target || target === dragging) return;
+        const rect = target.getBoundingClientRect();
+        const after = (e.clientX - rect.left) > rect.width / 2;
+        target.parentNode.insertBefore(dragging, after ? target.nextSibling : target);
+    });
+}
+
 function addTaskbarButton(id, windowInstance) {
     const btn = document.createElement('div');
     btn.className = 'taskbar-btn active';
     btn.dataset.session = id;
+    btn.draggable = true;
     // Use window title if available, otherwise capitalize id
     btn.textContent = windowInstance.title || windowInstance.session || id;
     btn.addEventListener('click', () => {
@@ -532,7 +670,19 @@ function addTaskbarButton(id, windowInstance) {
             windowInstance.minimize();
         }
     });
+    btn.addEventListener('dragstart', (e) => {
+        btn.classList.add('dragging');
+        if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', id);
+        }
+    });
+    btn.addEventListener('dragend', () => {
+        btn.classList.remove('dragging');
+        saveTaskbarState();
+    });
     elements.taskbarWindows.appendChild(btn);
+    bindTaskbarDragover();
 
     // Listen for minimize events to update tab styling
     desktop.on('window_minimized', ({ id: minimizedId }) => {
@@ -544,7 +694,7 @@ function addTaskbarButton(id, windowInstance) {
 }
 
 function removeTaskbarButton(id) {
-    const btn = elements.taskbarWindows.querySelector(`[data-session="${id}"]`);
+    const btn = elements.taskbarWindows.querySelector(`[data-session="${CSS.escape(id)}"]`);
     if (btn) btn.remove();
 }
 
