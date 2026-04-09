@@ -180,11 +180,13 @@ async function init() {
     desktop.on('window_minimized', saveTaskbarState);
     desktop.on('window_restored', saveTaskbarState);
 
-    // Fetch initial data (will emit events to listeners above)
-    await desktop.fetchSessions();
-
-    // Restore taskbar tabs from previous page session (windows + order + active + minimized)
+    // Restore taskbar tabs from previous page session (windows + order + active + minimized).
+    // Do this BEFORE fetching sessions — restore is independent of the sessions list and
+    // /api/sessions can take several seconds when remote machines need SSH probing.
     restoreTaskbarState();
+
+    // Fetch initial data in the background (will emit events to listeners above)
+    desktop.fetchSessions();
 }
 
 /**
@@ -565,7 +567,9 @@ function saveTaskbarState() {
         const rec = taskbarRecords.get(id);
         if (!rec) return null;
         const inst = _lookupWindowInstance(id);
-        return { ...rec, minimized: inst ? !!inst.isMinimized : false };
+        // For placeholder records (no live instance), trust the record's saved minimized flag.
+        const minimized = inst ? !!inst.isMinimized : !!rec.minimized;
+        return { ...rec, minimized };
     }).filter(Boolean);
     const activeId = desktop.getActiveWindow ? desktop.getActiveWindow() : null;
     try {
@@ -583,11 +587,12 @@ function unrecordTaskbarEntry(id) {
     saveTaskbarState();
 }
 
-export function restoreTaskbarState() {
-    const { tabs, activeId } = loadTaskbarState();
-    if (tabs.length === 0) return;
-    restoringTaskbar = true;
-    try {
+function _openByRecord(rec) {
+    if (rec.kind === 'session') {
+        openSessionTerminal(rec.session, rec.mode || 'monitor', rec.machine || null);
+    } else if (rec.kind === 'artifact') {
+        openArtifactWindow(rec.url, rec.title || 'Artifact', rec.id);
+    } else if (rec.kind === 'panel') {
         const panelMap = {
             sessions: openSessionsWindow,
             machines: openMachinesWindow,
@@ -596,42 +601,87 @@ export function restoreTaskbarState() {
             artifacts: openArtifactsWindow,
             scheduler: openSchedulerWindow,
         };
+        const fn = panelMap[rec.panel];
+        if (fn) openListWindowWithTaskbar(rec.panel, fn);
+    }
+}
+
+export function restoreTaskbarState() {
+    const { tabs, activeId } = loadTaskbarState();
+    if (tabs.length === 0) return;
+    restoringTaskbar = true;
+    try {
+        // Choose which window to actually construct now: saved active, else last in list.
+        const focusRec = (activeId && tabs.find(t => t.id === activeId)) || tabs[tabs.length - 1];
+        // Build placeholders first so they occupy the correct DOM order, then materialize the focus one.
         for (const rec of tabs) {
-            try {
-                if (rec.kind === 'session') {
-                    openSessionTerminal(rec.session, rec.mode || 'monitor', rec.machine || null);
-                } else if (rec.kind === 'artifact') {
-                    openArtifactWindow(rec.url, rec.title || 'Artifact', rec.id);
-                } else if (rec.kind === 'panel') {
-                    const fn = panelMap[rec.panel];
-                    if (fn) openListWindowWithTaskbar(rec.panel, fn);
-                }
-            } catch (e) {
-                console.warn('[taskbar] Failed to restore', rec, e);
-            }
+            if (rec.id === focusRec.id) continue;
+            addPlaceholderTaskbarButton(rec);
         }
-        // Apply minimized states (skip the active one — it should be visible)
-        for (const rec of tabs) {
-            if (rec.minimized && rec.id !== activeId) {
-                const inst = _lookupWindowInstance(rec.id);
-                if (inst && !inst.isMinimized) inst.minimize();
-            }
+        // Open the focus window for real. The minimizeAllExcept inside its open path
+        // is harmless because no real windows exist yet.
+        try {
+            _openByRecord(focusRec);
+        } catch (e) {
+            console.warn('[taskbar] Failed to restore focus window', focusRec, e);
         }
-        // Focus the saved active window. If none saved, fall back to last opened.
-        const focusId = activeId && taskbarRecords.has(activeId)
-            ? activeId
-            : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-        if (focusId) {
-            const inst = _lookupWindowInstance(focusId);
-            if (inst) {
-                if (inst.isMinimized) inst.restore();
-                else if (inst.focus) inst.focus();
-                desktop.setActiveWindow(focusId);
-                updateTaskbarActive(focusId);
+        // Move the focus button into its saved DOM slot (open* appends to end of taskbar)
+        const focusBtn = elements.taskbarWindows.querySelector(`[data-session="${CSS.escape(focusRec.id)}"]`);
+        const focusIndex = tabs.findIndex(t => t.id === focusRec.id);
+        if (focusBtn && focusIndex >= 0) {
+            const refBtn = elements.taskbarWindows.querySelectorAll('.taskbar-btn')[focusIndex];
+            if (refBtn && refBtn !== focusBtn) {
+                elements.taskbarWindows.insertBefore(focusBtn, refBtn);
             }
         }
     } finally {
         restoringTaskbar = false;
+        saveTaskbarState();
+    }
+}
+
+function addPlaceholderTaskbarButton(rec) {
+    const id = rec.id;
+    if (elements.taskbarWindows.querySelector(`[data-session="${CSS.escape(id)}"]`)) return;
+    const btn = document.createElement('div');
+    btn.className = 'taskbar-btn minimized';
+    btn.dataset.session = id;
+    btn.draggable = true;
+    btn.textContent = rec.session || rec.title || rec.panel || id;
+    btn.addEventListener('click', () => materializePlaceholder(btn, rec));
+    btn.addEventListener('dragstart', (e) => {
+        btn.classList.add('dragging');
+        if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', id);
+        }
+    });
+    btn.addEventListener('dragend', () => {
+        btn.classList.remove('dragging');
+        saveTaskbarState();
+    });
+    elements.taskbarWindows.appendChild(btn);
+    bindTaskbarDragover();
+    // Pre-populate record so saveTaskbarState includes the placeholder.
+    taskbarRecords.set(id, { ...rec, minimized: true });
+}
+
+function materializePlaceholder(btn, rec) {
+    if (btn._materialized) return;
+    btn._materialized = true;
+    const id = rec.id;
+    const nextSibling = btn.nextSibling;
+    btn.remove();
+    try {
+        _openByRecord(rec);
+    } catch (e) {
+        console.warn('[taskbar] Failed to materialize placeholder', rec, e);
+        return;
+    }
+    // Move the freshly-created real button to the placeholder's slot.
+    const newBtn = elements.taskbarWindows.querySelector(`[data-session="${CSS.escape(id)}"]`);
+    if (newBtn && nextSibling && newBtn !== nextSibling) {
+        elements.taskbarWindows.insertBefore(newBtn, nextSibling);
         saveTaskbarState();
     }
 }
