@@ -25,7 +25,6 @@
             <div class="status-item" id="sessionCount">
                 <span class="count">0</span> sessions
             </div>
-            <div class="menu-time" id="menuTime"></div>
             <div class="menu-item dropdown" id="settingsMenu">
                 <span class="settings-icon">&#9881;</span>
                 <div class="dropdown-content dropdown-right">
@@ -43,6 +42,26 @@
         </div>
     </div>
 
+    <!-- Left Sidebar (auto-hide on hover) -->
+    <div class="sidebar-hotzone" id="sidebarHotzone" aria-hidden="true"></div>
+    <aside class="sidebar" id="sidebar" role="navigation" aria-label="AgentWire sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-clock" id="sidebarClock"></div>
+            <button class="sidebar-pin" id="sidebarPin" title="Pin sidebar open" aria-label="Pin sidebar">
+                <span class="sidebar-pin-icon">📌</span>
+            </button>
+        </div>
+        <div class="sidebar-sections" id="sidebarSections">
+            <!-- Phase 2/3: accordion sections mount here -->
+        </div>
+        <div class="sidebar-footer">
+            <button class="sidebar-ptt" id="sidebarGlobalPtt" title="Hold to talk to AgentWire (Ctrl+Space)">
+                <span class="ptt-icon">🎤</span>
+            </button>
+            <div class="sidebar-voice-indicator" id="sidebarVoiceIndicator" title="AgentWire idle"><div class="stop-icon"></div></div>
+        </div>
+    </aside>
+
     <!-- Desktop Area -->
     <div class="desktop-area" id="desktopArea">
         <div class="desktop-wallpaper">
@@ -56,15 +75,9 @@
         </div>
     </div>
 
-    <!-- Taskbar -->
+    <!-- Taskbar (Phase 1: still holds session tabs; removed entirely in Phase 2) -->
     <div class="taskbar" id="taskbar">
         <div class="taskbar-windows" id="taskbarWindows"></div>
-        <div class="taskbar-tray">
-            <button class="tray-ptt" id="globalPtt" title="Hold to talk to AgentWire (Ctrl+Space)">
-                <span class="ptt-icon">🎤</span>
-            </button>
-            <div class="tray-item" id="voiceIndicator" title="AgentWire idle"><div class="stop-icon"></div></div>
-        </div>
     </div>
 </div>
 {% endblock %}

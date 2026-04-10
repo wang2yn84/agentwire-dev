@@ -262,12 +262,10 @@ export class SessionWindow {
                 </div>
             `;
         } else {
-            // Terminal mode: xterm.js for interactive terminal + PTT button
+            // Terminal mode: xterm.js for interactive terminal. PTT button lives in the
+            // WinBox titlebar (see _setupPTTInTitlebar), not inside the content area.
             container.innerHTML = `
                 <div class="session-terminal"></div>
-                <button class="ptt-button" title="Hold to record voice input">
-                    <span class="ptt-icon">🎤</span>
-                </button>
                 <div class="session-disconnect-overlay hidden">
                     <div class="disconnect-content">
                         <div class="disconnect-message">Session Disconnected</div>
@@ -1067,8 +1065,19 @@ export class SessionWindow {
     // PTT (Push-to-talk) Methods
 
     _setupPTT(container) {
-        this.pttButton = container.querySelector('.ptt-button');
-        if (!this.pttButton) return;
+        // PTT now lives in the WinBox titlebar (next to the activity indicator),
+        // not inside the container. Create it and prepend to .wb-title.
+        if (!this.winbox) return;
+        const titleEl = this.winbox.window.querySelector('.wb-title');
+        if (!titleEl) return;
+
+        this.pttButton = document.createElement('button');
+        this.pttButton.className = 'wb-title-ptt';
+        this.pttButton.title = 'Hold to record voice input';
+        this.pttButton.innerHTML = '<span class="ptt-icon">🎤</span>';
+        // Stop the click/mousedown from triggering WinBox drag/focus behavior.
+        this.pttButton.addEventListener('mousedown', (e) => e.stopPropagation());
+        titleEl.insertBefore(this.pttButton, titleEl.firstChild);
 
         // Mouse events
         this.pttButton.addEventListener('mousedown', (e) => {

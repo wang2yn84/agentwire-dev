@@ -17,6 +17,7 @@ import { openConfigWindow } from './windows/config-window.js';
 import { openProjectsWindow } from './windows/projects-window.js';
 import { openArtifactsWindow } from './windows/artifacts-window.js';
 import { openSchedulerWindow } from './windows/scheduler-window.js';
+import { sidebar } from './sidebar.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
@@ -35,17 +36,18 @@ let agentwireSessionActive = false;
 const elements = {
     desktopArea: document.getElementById('desktopArea'),
     taskbarWindows: document.getElementById('taskbarWindows'),
-    menuTime: document.getElementById('menuTime'),
+    sidebarClock: document.getElementById('sidebarClock'),
     connectionStatus: document.getElementById('connectionStatus'),
     sessionCount: document.getElementById('sessionCount'),
-    globalPtt: document.getElementById('globalPtt'),
-    voiceIndicator: document.getElementById('voiceIndicator'),
+    globalPtt: document.getElementById('sidebarGlobalPtt'),
+    voiceIndicator: document.getElementById('sidebarVoiceIndicator'),
 };
 
 // Initialize
 document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
+    sidebar.init();
     setupClock();
     setupMenuListeners();
     setupPageUnload();
@@ -333,10 +335,12 @@ function closeSettingsDropdown() {
 function setupClock() {
     function updateTime() {
         const now = new Date();
-        elements.menuTime.textContent = now.toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+        if (elements.sidebarClock) {
+            elements.sidebarClock.textContent = now.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
     }
     updateTime();
     setInterval(updateTime, 1000);
