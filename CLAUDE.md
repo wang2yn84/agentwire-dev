@@ -46,8 +46,11 @@ agentwire info -s name          # session metadata (cwd, panes) as JSON
 agentwire kill -s name          # not: tmux kill-session
 agentwire list                  # not: tmux list-sessions
 agentwire recreate -s name      # destroy and recreate with fresh worktree
-agentwire quicktask name        # worktree + session in one command
-agentwire quicktask name -b develop -p ~/projects/repo  # custom base/project
+agentwire worktree name         # new branch + worktree + session
+agentwire worktree name -b develop  # from specific base branch
+agentwire worktree name -c      # from repo's current branch
+agentwire worktree name -e      # checkout existing branch (no new branch)
+agentwire worktree name --ref v2.0  # detached at tag/commit
 agentwire fork -s name          # fork session into new worktree
 agentwire fork -s name -t project/branch --commit abc123  # fork from specific commit
 
@@ -565,7 +568,7 @@ channels:
 scheduler:
   dispatch_cooldown: 60  # Seconds between task dispatches (default: 60)
 
-quicktask:
+worktree:
   worktree_dir: ~/worktrees       # Where worktrees are created
   default_base: main              # Default base branch
   default_project: ~/projects/my-repo  # Default git repo
