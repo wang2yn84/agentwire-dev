@@ -58,6 +58,7 @@ async function init() {
     setupClock();
     setupPageUnload();
     setupGlobalPtt();
+    setupWindowCycling();
 
     // Set up event listeners BEFORE fetching data
     desktop.on('sessions', updateSessionCount);
@@ -265,6 +266,22 @@ function handleWindowActivity({ session }) {
             Notification.requestPermission();
         }
     }
+}
+
+// Alt+Tab / Alt+Shift+Tab to cycle open windows
+function setupWindowCycling() {
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab' || !e.altKey) return;
+        e.preventDefault();
+        const items = Array.from(elements.taskbarWindows.querySelectorAll('.sidebar-open-item'));
+        if (items.length === 0) return;
+        const activeId = desktop.getActiveWindow ? desktop.getActiveWindow() : null;
+        const currentIndex = items.findIndex(el => el.dataset.session === activeId);
+        const direction = e.shiftKey ? -1 : 1;
+        const nextIndex = (currentIndex + direction + items.length) % items.length;
+        const nextItem = items[nextIndex];
+        if (nextItem) nextItem.click();
+    });
 }
 
 // Clean up on page unload
