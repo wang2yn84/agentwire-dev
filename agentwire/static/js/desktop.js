@@ -35,7 +35,9 @@ let agentwireSessionActive = false;
 // DOM Elements (simplified - only what we need)
 const elements = {
     desktopArea: document.getElementById('desktopArea'),
-    taskbarWindows: document.getElementById('taskbarWindows'),
+    // Open Windows list lives in the sidebar now (Phase 2 removed bottom taskbar).
+    // Variable name kept as `taskbarWindows` internally to avoid churning every caller.
+    taskbarWindows: document.getElementById('openWindowsList'),
     sidebarClock: document.getElementById('sidebarClock'),
     connectionStatus: document.getElementById('connectionStatus'),
     sessionCount: document.getElementById('sessionCount'),
@@ -565,7 +567,7 @@ function loadTaskbarState() {
 
 function saveTaskbarState() {
     if (restoringTaskbar) return;
-    const ids = Array.from(elements.taskbarWindows.querySelectorAll('.taskbar-btn'))
+    const ids = Array.from(elements.taskbarWindows.querySelectorAll('.sidebar-open-item'))
         .map(btn => btn.dataset.session);
     const tabs = ids.map(id => {
         const rec = taskbarRecords.get(id);
@@ -633,7 +635,7 @@ export function restoreTaskbarState() {
         const focusBtn = elements.taskbarWindows.querySelector(`[data-session="${CSS.escape(focusRec.id)}"]`);
         const focusIndex = tabs.findIndex(t => t.id === focusRec.id);
         if (focusBtn && focusIndex >= 0) {
-            const refBtn = elements.taskbarWindows.querySelectorAll('.taskbar-btn')[focusIndex];
+            const refBtn = elements.taskbarWindows.querySelectorAll('.sidebar-open-item')[focusIndex];
             if (refBtn && refBtn !== focusBtn) {
                 elements.taskbarWindows.insertBefore(focusBtn, refBtn);
             }
@@ -648,10 +650,28 @@ function addPlaceholderTaskbarButton(rec) {
     const id = rec.id;
     if (elements.taskbarWindows.querySelector(`[data-session="${CSS.escape(id)}"]`)) return;
     const btn = document.createElement('div');
-    btn.className = 'taskbar-btn minimized';
+    btn.className = 'sidebar-open-item minimized';
     btn.dataset.session = id;
     btn.draggable = true;
-    btn.textContent = rec.session || rec.title || rec.panel || id;
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'sidebar-open-item-title';
+    titleEl.textContent = rec.session || rec.title || rec.panel || id;
+    btn.appendChild(titleEl);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'sidebar-open-item-close';
+    closeBtn.type = 'button';
+    closeBtn.title = 'Remove';
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+    closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        btn.remove();
+        unrecordTaskbarEntry(id);
+    });
+    btn.appendChild(closeBtn);
+
     btn.addEventListener('click', () => materializePlaceholder(btn, rec));
     btn.addEventListener('dragstart', (e) => {
         btn.classList.add('dragging');
@@ -695,23 +715,42 @@ function bindTaskbarDragover() {
     taskbarDragoverBound = true;
     elements.taskbarWindows.addEventListener('dragover', (e) => {
         e.preventDefault();
-        const dragging = elements.taskbarWindows.querySelector('.taskbar-btn.dragging');
+        const dragging = elements.taskbarWindows.querySelector('.sidebar-open-item.dragging');
         if (!dragging) return;
-        const target = e.target.closest('.taskbar-btn');
+        const target = e.target.closest('.sidebar-open-item');
         if (!target || target === dragging) return;
         const rect = target.getBoundingClientRect();
-        const after = (e.clientX - rect.left) > rect.width / 2;
+        // Vertical reorder: insert before/after based on midpoint of height.
+        const after = (e.clientY - rect.top) > rect.height / 2;
         target.parentNode.insertBefore(dragging, after ? target.nextSibling : target);
     });
 }
 
 function addTaskbarButton(id, windowInstance) {
     const btn = document.createElement('div');
-    btn.className = 'taskbar-btn active';
+    btn.className = 'sidebar-open-item active';
     btn.dataset.session = id;
     btn.draggable = true;
-    // Use window title if available, otherwise capitalize id
-    btn.textContent = windowInstance.title || windowInstance.session || id;
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'sidebar-open-item-title';
+    titleEl.textContent = windowInstance.title || windowInstance.session || id;
+    btn.appendChild(titleEl);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'sidebar-open-item-close';
+    closeBtn.type = 'button';
+    closeBtn.title = 'Close window';
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+    closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof windowInstance.close === 'function') {
+            windowInstance.close();
+        }
+    });
+    btn.appendChild(closeBtn);
+
     btn.addEventListener('click', () => {
         if (windowInstance.isMinimized) {
             // Skip minimizeAllExcept for tiled windows — they restore to their tile position
@@ -753,7 +792,7 @@ function removeTaskbarButton(id) {
 }
 
 function updateTaskbarActive(id) {
-    elements.taskbarWindows.querySelectorAll('.taskbar-btn').forEach(btn => {
+    elements.taskbarWindows.querySelectorAll('.sidebar-open-item').forEach(btn => {
         if (btn.dataset.session === id) {
             btn.classList.add('active');
             btn.classList.remove('minimized');

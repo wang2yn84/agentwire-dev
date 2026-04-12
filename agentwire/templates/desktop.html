@@ -52,7 +52,11 @@
             </button>
         </div>
         <div class="sidebar-sections" id="sidebarSections">
-            <!-- Phase 2/3: accordion sections mount here -->
+            <div class="sidebar-section sidebar-section-open">
+                <div class="sidebar-section-title">Open Windows</div>
+                <div class="sidebar-open-list" id="openWindowsList"></div>
+            </div>
+            <!-- Phase 3: list panel accordion sections mount here -->
         </div>
         <div class="sidebar-footer">
             <button class="sidebar-ptt" id="sidebarGlobalPtt" title="Hold to talk to AgentWire (Ctrl+Space)">
@@ -75,10 +79,7 @@
         </div>
     </div>
 
-    <!-- Taskbar (Phase 1: still holds session tabs; removed entirely in Phase 2) -->
-    <div class="taskbar" id="taskbar">
-        <div class="taskbar-windows" id="taskbarWindows"></div>
-    </div>
+    <!-- Bottom taskbar removed in Phase 2 — open windows live in the sidebar now. -->
 </div>
 {% endblock %}
 

@@ -160,15 +160,15 @@ All except Scheduler extend `ListWindow` (`list-window.js`).
 - Remove `--taskbar-height` variable (or repurpose if needed)
 - Adjust `.desktop-area` to use full viewport height minus only the top menu bar
 
-### Acceptance criteria — Phase 2
-- [ ] Bottom bar gone; desktop area extends to bottom of viewport
-- [ ] Open windows appear as items in the sidebar's "Open" section in the order they were opened
-- [ ] Clicking an item focuses or restores its window
-- [ ] Clicking `×` closes the window
-- [ ] Drag-to-reorder works vertically; order persists across refresh
-- [ ] Active window highlighted in the list
-- [ ] Refresh restores the same set of open windows + active state (no regression from current behavior)
-- [ ] Lazy placeholder logic still works (only the active window is constructed on refresh)
+### Acceptance criteria — Phase 2 — DONE
+- [x] Bottom bar gone; desktop area extends to bottom of viewport
+- [x] Open windows appear as items in the sidebar's "Open" section in the order they were opened
+- [x] Clicking an item focuses or restores its window
+- [x] Clicking `×` closes the window
+- [x] Drag-to-reorder works vertically; order persists across refresh
+- [x] Active window highlighted in the list
+- [x] Refresh restores the same set of open windows + active state (no regression from current behavior)
+- [x] Lazy placeholder logic still works (only the active window is constructed on refresh)
 
 ---
 
@@ -241,7 +241,7 @@ For each panel:
 ## Tracking
 
 - Phase 1: Sidebar shell — **DONE**
-- Phase 2: Open Windows + delete taskbar — _not started_
+- Phase 2: Open Windows + delete taskbar — **DONE**
 - Phase 3: List accordions — _not started_
 
 When complete, move to `docs/missions/completed/sidebar-redesign.md` per the project's documentation philosophy.

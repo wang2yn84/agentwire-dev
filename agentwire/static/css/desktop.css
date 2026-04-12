@@ -3,7 +3,7 @@
 :root {
     /* Layout */
     --menu-height: 28px;
-    --taskbar-height: 40px;
+    --taskbar-height: 0px;  /* Phase 2 removed the bottom bar; kept at 0 for WinBox max sizing calc */
     --spacing-base: 8px;
     --sidebar-width: 280px;
     --sidebar-hotzone: 30px;
@@ -408,77 +408,88 @@ body {
     font-size: 14px;
 }
 
-/* Taskbar */
-.taskbar {
-    height: var(--taskbar-height);
-    background: var(--chrome);
-    border-top: 1px solid var(--chrome-border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 var(--spacing-base);
-    position: relative;
-    z-index: 1000;
+/* Sidebar accordion sections */
+.sidebar-section {
+    margin-bottom: calc(var(--spacing-base) * 1.5);
 }
 
-.taskbar-windows {
+.sidebar-section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 0 4px 6px;
+    border-bottom: 1px solid var(--chrome-border);
+    margin-bottom: 6px;
+}
+
+/* Open Windows list (Phase 2 — replaces bottom taskbar) */
+.sidebar-open-list {
     display: flex;
+    flex-direction: column;
     gap: 4px;
-    flex: 1;
-    overflow-x: auto;
 }
 
-.taskbar-btn {
-    padding: 6px 12px;
-    background: var(--background);
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    cursor: pointer;
+.sidebar-open-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    max-width: 180px;
+    padding: 6px 8px;
+    background: var(--background);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    cursor: grab;
+    color: var(--accent);
+    font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--accent);
 }
 
-.taskbar-btn:hover {
+.sidebar-open-item:hover {
     background: var(--hover);
 }
 
-.taskbar-btn.active {
+.sidebar-open-item.active {
     background: var(--accent);
     border-color: var(--accent);
     color: #000000;
 }
 
-.taskbar-btn.minimized {
+.sidebar-open-item.minimized {
     background: var(--background);
     border: 1px solid var(--accent);
     color: var(--accent);
 }
 
-.taskbar-btn[draggable="true"] {
-    cursor: grab;
-}
-
-.taskbar-btn.dragging {
+.sidebar-open-item.dragging {
     opacity: 0.4;
     cursor: grabbing;
 }
 
-.taskbar-icon {
-    width: 16px;
-    height: 16px;
-    border-radius: 2px;
-    flex-shrink: 0;
-}
-
-.taskbar-label {
+.sidebar-open-item-title {
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.sidebar-open-item-close {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    border-radius: 3px;
+    opacity: 0.6;
+}
+
+.sidebar-open-item-close:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.2);
 }
 
 /* Voice Indicator States */
@@ -2457,31 +2468,6 @@ body .winbox.max {
         font-size: 12px;
     }
 
-    /* Taskbar responsiveness - tighter spacing for narrow viewports */
-    .taskbar-btn {
-        max-width: 120px;
-        padding: 4px 8px;
-        font-size: 11px;
-    }
-
-    .taskbar-windows {
-        gap: 2px;
-    }
-
-    /* Ensure smooth horizontal scrolling */
-    .taskbar-windows::-webkit-scrollbar {
-        height: 4px;
-    }
-
-    .taskbar-windows::-webkit-scrollbar-track {
-        background: transparent;
-    }
-
-    .taskbar-windows::-webkit-scrollbar-thumb {
-        background: var(--chrome-border);
-        border-radius: 2px;
-    }
-
     /* Config modal responsive: stack label/value vertically */
     .config-item {
         flex-direction: column;
@@ -3746,8 +3732,7 @@ body.sidebar-pinned .desktop-area {
     margin-left: var(--sidebar-width);
 }
 
-body.sidebar-pinned .menu-bar,
-body.sidebar-pinned .taskbar {
+body.sidebar-pinned .menu-bar {
     padding-left: calc(var(--sidebar-width) + var(--spacing-base));
 }
 
