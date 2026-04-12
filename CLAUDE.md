@@ -392,6 +392,7 @@ All in `~/.agentwire/`:
 | `voices/` | Custom TTS voice samples |
 | `uploads/` | Uploaded images for cross-machine sharing |
 | `artifacts/` | Agent-generated HTML for artifact windows |
+| `wiki/` | LLM-maintained knowledge base (Karpathy LLM Wiki pattern) |
 | `logs/` | Audit logs for damage-control |
 
 Per-session config (type, roles, voice) lives in `.agentwire.yml` in each project directory.
@@ -473,6 +474,9 @@ uploads:
 artifacts:
   dir: "~/.agentwire/artifacts"
   max_size_mb: 10
+
+wiki:
+  dir: "~/.agentwire/wiki"           # Wiki vault location
 
 portal:
   url: "https://localhost:8765"
@@ -999,6 +1003,20 @@ agentwire kill --pane 1
 
 ## Desktop UI Patterns
 
+### Left Sidebar (auto-hide)
+
+The portal uses a left sidebar instead of a top menu bar or bottom taskbar. Hover the left edge (30px hotzone) to open, pin to keep visible (reflows desktop area).
+
+**Structure:**
+- **Header**: connection status dot, session count, clock, pin toggle
+- **Open Windows section**: lists currently-open windows (drag to reorder, click to focus, × to close). Persisted in `localStorage['taskbar-state']` — restores on refresh.
+- **Accordion sections**: Sessions, Machines, Projects, Artifacts, Scheduler, Config. Click header to expand/collapse. Data fetched on first expand.
+- **Footer**: global PTT button, voice indicator
+
+**Keyboard:** Tab cycles forward through open windows, Shift+Tab cycles backward. Works inside terminals (captured on `window` in capture phase before xterm).
+
+**Files:** `static/js/sidebar.js` (shell + accordion infra), `static/js/sidebar/<name>-section.js` (per-section modules), `static/css/desktop.css` (sidebar-* classes).
+
 ### Session Window Modes
 
 | Mode | Element | Use Case |
@@ -1007,6 +1025,8 @@ agentwire kill --pane 1
 | **Terminal** | xterm.js | Interactive terminal, attaches via `tmux attach` |
 
 **Important:** Monitor mode must use a simple `<pre>` element, NOT xterm.js. xterm.js requires precise container dimensions for its fit addon to work correctly. Since monitor mode just displays captured text output, a `<pre>` element with `white-space: pre-wrap` and ANSI-to-HTML conversion is simpler and more reliable.
+
+**Per-session PTT** lives in the WinBox titlebar (next to the activity indicator), not as a floating button.
 
 ### Artifact Windows
 
@@ -1025,6 +1045,28 @@ desktop_open_artifact(url="https://example.com", title="External")
 **Files served from:** `~/.agentwire/artifacts/` via `/artifacts/` route.
 
 **Sandboxing:** Local files get `allow-scripts allow-same-origin`. External URLs get `allow-scripts allow-forms allow-popups` (no same-origin).
+
+## Wiki (Knowledge Base)
+
+LLM-maintained knowledge base at `~/.agentwire/wiki/` using the Karpathy LLM Wiki pattern. Research and debugging knowledge compounds across sessions.
+
+```
+~/.agentwire/wiki/
+├── CLAUDE.md          # schema: entity types, conventions, operations
+├── raw/               # drop source material here (auto-ingested hourly)
+└── wiki/              # LLM-maintained pages
+    ├── technologies/  # tools, libraries, engines
+    ├── patterns/      # architecture decisions, debugging solutions
+    ├── apis/          # external API reference
+    └── research/      # market, competitors, evaluations
+```
+
+**Three ways knowledge grows:**
+1. **Agents auto-write** — agentwire role instructs agents to update wiki pages when they discover gotchas, patterns, or solutions
+2. **Scheduler** — `wiki-ingest` task runs hourly, processes new files in `raw/` into wiki pages
+3. **Manual** — `/wiki ingest`, `/wiki query <question>`, `/wiki lint` skills from any session
+
+**Before researching**: agents check the wiki first. After discovering: agents write it down.
 
 ## Docs
 
