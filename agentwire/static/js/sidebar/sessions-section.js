@@ -74,17 +74,24 @@ export const sessionsSection = {
             const id = machine ? `${name}@${machine}` : name;
             const activity = activityStates.get(name) || s.activity || 'idle';
             const dotClass = activity === 'idle' ? 'dot-idle' : activity === 'processing' ? 'dot-processing' : activity === 'generating' ? 'dot-generating' : 'dot-playing';
-            const typeTag = s.type ? `<span class="sidebar-tag">${s.type}</span>` : '';
-            const machineTag = machine ? `<span class="sidebar-tag">@${machine}</span>` : '';
             const isSdk = (s.type || '').startsWith('sdk');
             const connectAction = isSdk ? 'sdk' : 'connect';
             const connectLabel = isSdk ? 'Open' : '▸';
-            return `<div class="sidebar-list-item sidebar-session-item" data-session="${name}" data-machine="${machine || ''}" data-id="${id}">
-                <span class="sidebar-activity-dot ${dotClass}" data-session-dot="${name}"></span>
-                <span class="sidebar-list-item-title">${name}</span>
-                ${machineTag}${typeTag}
-                <button class="sidebar-list-item-btn" data-action="${connectAction}" title="Connect">${connectLabel}</button>
-                <button class="sidebar-list-item-btn" data-action="monitor" title="Monitor">👁</button>
+            const tags = [];
+            if (s.type) tags.push(`<span class="sidebar-tag">${s.type}</span>`);
+            if (machine) tags.push(`<span class="sidebar-tag">@${machine}</span>`);
+            const path = s.path ? s.path.replace(/^\/Users\/[^/]+\//, '~/') : '';
+            return `<div class="sidebar-session-card" data-session="${name}" data-machine="${machine || ''}" data-id="${id}">
+                <div class="sidebar-session-row1">
+                    <span class="sidebar-activity-dot ${dotClass}" data-session-dot="${name}"></span>
+                    <span class="sidebar-session-name">${name}</span>
+                    <button class="sidebar-list-item-btn" data-action="${connectAction}" title="Connect">${connectLabel}</button>
+                    <button class="sidebar-list-item-btn" data-action="monitor" title="Monitor">👁</button>
+                </div>
+                <div class="sidebar-session-row2">
+                    ${tags.join('')}
+                    ${path ? `<span class="sidebar-session-path">${path}</span>` : ''}
+                </div>
             </div>`;
         }).join('');
         body.onclick = (e) => this._handleClick(e, body);
