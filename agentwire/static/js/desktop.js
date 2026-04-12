@@ -279,8 +279,18 @@ function setupWindowCycling() {
         const currentIndex = items.findIndex(el => el.dataset.session === activeId);
         const direction = e.shiftKey ? -1 : 1;
         const nextIndex = (currentIndex + direction + items.length) % items.length;
-        const nextItem = items[nextIndex];
-        if (nextItem) nextItem.click();
+        const nextId = items[nextIndex]?.dataset.session;
+        if (!nextId) return;
+        const inst = _lookupWindowInstance(nextId);
+        if (!inst) return;
+        if (inst.isMinimized) {
+            if (!desktop.isTiled(nextId)) desktop.minimizeAllExcept(nextId);
+            inst.restore();
+        }
+        inst.focus();
+        desktop.setActiveWindow(nextId);
+        updateTaskbarActive(nextId);
+        saveTaskbarState();
     });
 }
 
