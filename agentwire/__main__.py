@@ -4850,6 +4850,98 @@ def cmd_recreate(args) -> int:
     return 0
 
 
+def cmd_quicktask(args) -> int:
+    """Create a worktree + session in one command for ad-hoc tasks.
+
+    Fetches the base branch, creates a git worktree with a new branch named
+    after the task, and launches an agentwire session pointing at it.
+    If the worktree already exists, reattaches to the existing session.
+    """
+    json_mode = getattr(args, 'json', False)
+    task_name = args.name
+
+    if not _check_config_exists():
+        return _output_result(False, json_mode, "AgentWire not configured. Run 'agentwire init'")
+    if not _check_tmux_installed():
+        return _output_result(False, json_mode, "tmux is required but not installed")
+
+    config = load_config()
+    qt_config = config.get("quicktask", {})
+
+    # Resolve project repo path
+    project_arg = getattr(args, 'project', None)
+    project_path = Path(
+        project_arg or qt_config.get("default_project") or os.getcwd()
+    ).expanduser().resolve()
+    if not (project_path / ".git").exists():
+        return _output_result(False, json_mode, f"Not a git repo: {project_path}")
+
+    # Resolve config
+    base_branch = getattr(args, 'base', None) or qt_config.get("default_base", "main")
+    worktree_dir = Path(qt_config.get("worktree_dir", "~/worktrees")).expanduser().resolve()
+    project_name = project_path.name
+
+    session_name = f"{project_name}-{task_name}"
+    worktree_path = worktree_dir / session_name
+
+    # If worktree already exists, reattach
+    if worktree_path.exists():
+        if json_mode:
+            _output_json({"success": True, "session": session_name, "path": str(worktree_path), "reattached": True})
+        else:
+            print(f"Worktree exists: {worktree_path}")
+        if tmux_session_exists(session_name):
+            subprocess.run(["tmux", "attach-session", "-t", session_name])
+        else:
+            return cmd_new(type('Args', (), {
+                'session': session_name, 'path': str(worktree_path), 'json': json_mode,
+                'force': False, 'bare': False, 'restricted': False, 'prompted': False,
+                'type': getattr(args, 'type', None), 'roles': getattr(args, 'roles', None),
+                'instructions': None, 'persist': False,
+            })())
+        return 0
+
+    # Fetch and create worktree
+    print(f"Fetching origin/{base_branch}...")
+    fetch_result = subprocess.run(
+        ["git", "-C", str(project_path), "fetch", "origin", base_branch, "--quiet"],
+        capture_output=True, text=True,
+    )
+    if fetch_result.returncode != 0:
+        return _output_result(False, json_mode, f"Failed to fetch origin/{base_branch}: {fetch_result.stderr.strip()}")
+
+    worktree_dir.mkdir(parents=True, exist_ok=True)
+
+    wt_result = subprocess.run(
+        ["git", "-C", str(project_path), "worktree", "add", str(worktree_path), f"origin/{base_branch}", "--detach", "--quiet"],
+        capture_output=True, text=True,
+    )
+    if wt_result.returncode != 0:
+        return _output_result(False, json_mode, f"Failed to create worktree: {wt_result.stderr.strip()}")
+
+    # Create task branch
+    branch_result = subprocess.run(
+        ["git", "-C", str(worktree_path), "checkout", "-b", task_name, "--quiet"],
+        capture_output=True, text=True,
+    )
+    if branch_result.returncode != 0:
+        return _output_result(False, json_mode, f"Failed to create branch '{task_name}': {branch_result.stderr.strip()}")
+
+    if json_mode:
+        _output_json({"success": True, "session": session_name, "path": str(worktree_path), "branch": task_name, "base": base_branch, "reattached": False})
+    else:
+        print(f"Created worktree: {worktree_path}")
+        print(f"Branch: {task_name} (from origin/{base_branch})")
+
+    # Launch session
+    return cmd_new(type('Args', (), {
+        'session': session_name, 'path': str(worktree_path), 'json': json_mode,
+        'force': False, 'bare': False, 'restricted': False, 'prompted': False,
+        'type': getattr(args, 'type', None), 'roles': getattr(args, 'roles', None),
+        'instructions': None, 'persist': False,
+    })())
+
+
 def cmd_fork(args) -> int:
     """Fork a session into a new worktree with copied Claude context.
 
@@ -10290,6 +10382,16 @@ def main() -> int:
     fork_parser.add_argument("--commit", metavar="REF", help="Fork from this commit/ref instead of HEAD (e.g. abc123, main~5)")
     fork_parser.add_argument("--json", action="store_true", help="Output as JSON")
     fork_parser.set_defaults(func=cmd_fork)
+
+    # === quicktask command ===
+    qt_parser = subparsers.add_parser("quicktask", help="Create a worktree + session in one command")
+    qt_parser.add_argument("name", help="Task name (becomes branch name and session suffix)")
+    qt_parser.add_argument("--base", "-b", help="Base branch to fork from (default: from config or 'main')")
+    qt_parser.add_argument("--project", "-p", help="Path to git repo (default: from config or cwd)")
+    qt_parser.add_argument("--type", help="Session type override")
+    qt_parser.add_argument("--roles", help="Comma-separated role names")
+    qt_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    qt_parser.set_defaults(func=cmd_quicktask)
 
     # === dev command ===
     dev_parser = subparsers.add_parser(
