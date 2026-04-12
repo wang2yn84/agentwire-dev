@@ -268,11 +268,12 @@ function handleWindowActivity({ session }) {
     }
 }
 
-// Alt+Tab / Alt+Shift+Tab to cycle open windows
+// Tab / Shift+Tab to cycle open windows
 function setupWindowCycling() {
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Tab' || !e.altKey) return;
+    window.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab') return;
         e.preventDefault();
+        e.stopPropagation();
         const items = Array.from(elements.taskbarWindows.querySelectorAll('.sidebar-open-item'));
         if (items.length === 0) return;
         const activeId = desktop.getActiveWindow ? desktop.getActiveWindow() : null;
@@ -290,7 +291,7 @@ function setupWindowCycling() {
         desktop.setActiveWindow(nextId);
         updateTaskbarActive(nextId);
         saveTaskbarState();
-    });
+    }, true);  // capture phase — runs before xterm's handlers
 }
 
 // Clean up on page unload
