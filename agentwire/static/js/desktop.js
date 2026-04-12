@@ -281,13 +281,12 @@ function setupWindowCycling() {
         const nextIndex = (currentIndex + direction + items.length) % items.length;
         const nextId = items[nextIndex]?.dataset.session;
         if (!nextId) return;
+        // Focus the window and its terminal directly (don't use click which toggles minimize)
         const inst = _lookupWindowInstance(nextId);
-        if (!inst) return;
-        if (inst.isMinimized) {
-            if (!desktop.isTiled(nextId)) desktop.minimizeAllExcept(nextId);
-            inst.restore();
+        if (inst) {
+            if (inst.isMinimized) inst.restore();
+            inst.focus();
         }
-        inst.focus();
         desktop.setActiveWindow(nextId);
         updateTaskbarActive(nextId);
         saveTaskbarState();
