@@ -180,6 +180,9 @@ export class SessionWindow {
         if (this.winbox) {
             this.winbox.focus();
         }
+        if (this.terminal) {
+            this.terminal.focus();
+        }
     }
 
     /**
