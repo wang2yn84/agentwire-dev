@@ -18,6 +18,8 @@ import { machinesSection } from './sidebar/machines-section.js';
 import { sessionsSection } from './sidebar/sessions-section.js';
 import { projectsSection } from './sidebar/projects-section.js';
 import { schedulerSection } from './sidebar/scheduler-section.js';
+import { servicesSection } from './sidebar/services-section.js';
+import { socialsSection } from './sidebar/socials-section.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
@@ -50,6 +52,8 @@ document.addEventListener('DOMContentLoaded', init);
 async function init() {
     sidebar.init();
     sidebar.addSection('sessions', sessionsSection);
+    sidebar.addSection('socials', socialsSection);
+    sidebar.addSection('services', servicesSection);
     sidebar.addSection('machines', machinesSection);
     sidebar.addSection('projects', projectsSection);
     sidebar.addSection('artifacts', artifactsSection);

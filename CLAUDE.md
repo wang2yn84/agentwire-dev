@@ -1003,19 +1003,27 @@ agentwire kill --pane 1
 
 ## Desktop UI Patterns
 
-### Left Sidebar (auto-hide)
+### Left Sidebar (click-toggle tab handle)
 
-The portal uses a left sidebar instead of a top menu bar or bottom taskbar. Hover the left edge (30px hotzone) to open, pin to keep visible (reflows desktop area).
+The portal uses a left sidebar with a floating tab handle instead of hover hotzone. A small tab (›) peeks from the left edge — click to slide sidebar open, click again to close. Click outside or press Escape to dismiss. Pin to keep visible (reflows desktop area).
 
 **Structure:**
+- **Tab handle**: floating 20×40px button on left edge, rides sidebar when open, chevron flips direction
 - **Header**: connection status dot, session count, clock, pin toggle
 - **Open Windows section**: lists currently-open windows (drag to reorder, click to focus, × to close). Persisted in `localStorage['taskbar-state']` — restores on refresh.
-- **Accordion sections**: Sessions, Machines, Projects, Artifacts, Scheduler, Config. Click header to expand/collapse. Data fetched on first expand.
+- **Accordion sections**: Sessions, Socials, Services, Machines, Projects, Artifacts, Scheduler, Config. Click header to expand/collapse. Data fetched on first expand.
 - **Footer**: global PTT button, voice indicator
+
+**Session grouping:** Sessions are split into three accordion sections based on type:
+- **Sessions**: working sessions (excludes services and socials)
+- **Socials**: DM/channel sessions (`discord-dm-*`, `slack-dm-*`, or sessions with social roles)
+- **Services**: infrastructure sessions (`agentwire-*` prefix: portal, tts, stt, telegram, discord, slack)
+
+All three share session data from `sessions-section.js` (single fetch, shared activity state, pub-sub via `onSessionsChanged`).
 
 **Keyboard:** Tab cycles forward through open windows, Shift+Tab cycles backward. Works inside terminals (captured on `window` in capture phase before xterm).
 
-**Files:** `static/js/sidebar.js` (shell + accordion infra), `static/js/sidebar/<name>-section.js` (per-section modules), `static/css/desktop.css` (sidebar-* classes).
+**Files:** `static/js/sidebar.js` (shell + click-toggle), `static/js/sidebar/<name>-section.js` (per-section modules), `static/css/desktop.css` (sidebar-* classes).
 
 ### Session Window Modes
 

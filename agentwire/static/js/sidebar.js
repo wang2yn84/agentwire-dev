@@ -1,46 +1,36 @@
 /**
- * Sidebar - auto-hide left navigation panel
+ * Sidebar - click-toggle left navigation panel with floating tab handle.
  *
- * Phase 1: shell + utility chrome (clock / global PTT / voice indicator).
- * Phase 2: hosts "Open Windows" accordion (replaces bottom taskbar).
- * Phase 3: hosts Sessions/Machines/Projects/Artifacts/Scheduler/Config accordion sections.
+ * A small tab peeks out from the left edge. Click to slide sidebar open,
+ * click again to close. No hover behavior — purely intentional.
  */
 
 const PIN_KEY = 'sidebar-pinned';
 
 export const sidebar = {
     el: null,
-    hotzone: null,
+    tab: null,
     pinBtn: null,
-    _closeTimer: null,
 
     init() {
         this.el = document.getElementById('sidebar');
-        this.hotzone = document.getElementById('sidebarHotzone');
+        this.tab = document.getElementById('sidebarTab');
         this.pinBtn = document.getElementById('sidebarPin');
-        if (!this.el || !this.hotzone) return;
+        if (!this.el || !this.tab) return;
 
         // Restore pinned state from localStorage
         if (localStorage.getItem(PIN_KEY) === 'true') {
             this.pin();
         }
 
-        // Hover hotzone → open
-        this.hotzone.addEventListener('mouseenter', () => this.open());
+        // Tab click → toggle sidebar
+        this.tab.addEventListener('click', () => this.toggle());
 
-        // Also open when hovering the sidebar itself (prevents close-on-reenter race)
-        this.el.addEventListener('mouseenter', () => {
-            if (this._closeTimer) {
-                clearTimeout(this._closeTimer);
-                this._closeTimer = null;
-            }
-        });
-
-        // Mouse leave sidebar → close (unless pinned)
-        this.el.addEventListener('mouseleave', () => {
-            if (this.isPinned()) return;
-            // Small delay to avoid flicker when passing over child elements briefly
-            this._closeTimer = setTimeout(() => this.close(), 120);
+        // Click outside sidebar → close (unless pinned)
+        document.addEventListener('mousedown', (e) => {
+            if (!this.isOpen() || this.isPinned()) return;
+            if (this.el.contains(e.target) || this.tab.contains(e.target)) return;
+            this.close();
         });
 
         // ESC closes (unless pinned)
@@ -60,11 +50,13 @@ export const sidebar = {
     open() {
         if (!this.el) return;
         this.el.classList.add('open');
+        document.body.classList.add('sidebar-open');
     },
 
     close() {
         if (!this.el || this.isPinned()) return;
         this.el.classList.remove('open');
+        document.body.classList.remove('sidebar-open');
     },
 
     toggle() {
@@ -84,6 +76,7 @@ export const sidebar = {
         this.el.classList.add('pinned');
         this.el.classList.add('open');
         document.body.classList.add('sidebar-pinned');
+        document.body.classList.add('sidebar-open');
         try { localStorage.setItem(PIN_KEY, 'true'); } catch (e) {}
     },
 

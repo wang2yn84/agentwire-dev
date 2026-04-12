@@ -6,7 +6,8 @@
     --taskbar-height: 0px;  /* Phase 2 removed the bottom bar; kept at 0 for WinBox max sizing calc */
     --spacing-base: 8px;
     --sidebar-width: 280px;
-    --sidebar-hotzone: 30px;
+    --sidebar-tab-width: 20px;
+    --sidebar-tab-height: 40px;
     --sidebar-transition: 180ms ease;
 
     /* Theme colors */
@@ -3780,14 +3781,55 @@ body .winbox.max {
    Left Sidebar (Phase 1 — auto-hide, holds clock/PTT/voice indicator)
    ========================================================================= */
 
-.sidebar-hotzone {
+/* Sidebar tab handle — floating drawer pull on left edge */
+.sidebar-tab {
     position: fixed;
-    top: 0;
+    top: 50%;
     left: 0;
-    width: var(--sidebar-hotzone);
-    height: 100vh;
-    z-index: 9000;
-    background: transparent;
+    transform: translateY(-50%);
+    width: var(--sidebar-tab-width);
+    height: var(--sidebar-tab-height);
+    z-index: 9002;
+    background: var(--chrome);
+    border: 1px solid var(--chrome-border);
+    border-left: none;
+    border-radius: 0 6px 6px 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0.5;
+    transition: opacity 150ms ease, left var(--sidebar-transition), background 150ms ease;
+}
+
+.sidebar-tab:hover {
+    opacity: 1;
+    background: var(--hover);
+    color: var(--accent);
+}
+
+.sidebar-tab-chevron {
+    display: block;
+    transition: transform 180ms ease;
+}
+
+/* When sidebar is open, tab rides the right edge */
+.sidebar.open ~ .sidebar-tab,
+.sidebar.pinned ~ .sidebar-tab {
+    /* Won't work with ~ since tab is before sidebar in DOM — handled via JS class on body */
+}
+
+body.sidebar-open .sidebar-tab {
+    left: var(--sidebar-width);
+    opacity: 0.7;
+}
+
+body.sidebar-open .sidebar-tab .sidebar-tab-chevron {
+    transform: scaleX(-1);
 }
 
 .sidebar {
@@ -3813,6 +3855,11 @@ body .winbox.max {
 
 body.sidebar-pinned .desktop-area {
     margin-left: var(--sidebar-width);
+}
+
+body.sidebar-pinned .sidebar-tab {
+    left: var(--sidebar-width);
+    opacity: 0.7;
 }
 
 
