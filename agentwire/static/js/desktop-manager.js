@@ -606,25 +606,32 @@ class DesktopManager {
      * @returns {Promise<Array<Object>>}
      */
     async fetchSessions() {
+        // Local sessions first (fast), then merge remote when SSH completes.
         try {
-            const response = await fetch('/api/sessions');
-            const data = await response.json();
-
-            // API returns {machines: [{sessions: [...]}]} - flatten to get all sessions
-            const allSessions = [];
-            for (const machine of (data.machines || [])) {
-                for (const session of (machine.sessions || [])) {
-                    allSessions.push(session);
-                }
-            }
-
-            this.sessions = allSessions;
+            const localRes = await fetch('/api/sessions/local');
+            const localData = await localRes.json();
+            this.sessions = localData.sessions || [];
             this.emit('sessions', this.sessions);
-            return this.sessions;
         } catch (error) {
-            console.error('[DesktopManager] Failed to fetch sessions:', error);
-            return this.sessions;
+            console.error('[DesktopManager] Failed to fetch local sessions:', error);
         }
+
+        // Fire-and-forget: merge remote sessions when they arrive
+        fetch('/api/sessions/remote').then(async (res) => {
+            try {
+                const data = await res.json();
+                const remote = data.sessions || [];
+                if (remote.length) {
+                    const localNames = new Set(this.sessions.map(s => s.name));
+                    for (const s of remote) {
+                        if (!localNames.has(s.name)) this.sessions.push(s);
+                    }
+                    this.emit('sessions', this.sessions);
+                }
+            } catch (e) {}
+        }).catch(() => {});
+
+        return this.sessions;
     }
 
     /**

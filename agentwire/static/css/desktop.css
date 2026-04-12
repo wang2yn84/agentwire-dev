@@ -2,7 +2,7 @@
 
 :root {
     /* Layout */
-    --menu-height: 28px;
+    --menu-height: 0px;  /* Menu bar removed — kept at 0 for WinBox max sizing calc */
     --taskbar-height: 0px;  /* Phase 2 removed the bottom bar; kept at 0 for WinBox max sizing calc */
     --spacing-base: 8px;
     --sidebar-width: 280px;
@@ -58,117 +58,16 @@ body {
 }
 
 /* Menu Bar */
-.menu-bar {
-    height: var(--menu-height);
-    background: var(--chrome);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 var(--spacing-base);
-    border-bottom: 1px solid var(--chrome-border);
-    user-select: none;
-    position: relative;
-    z-index: 1000;
-}
-
-.menu-left,
-.menu-right {
+/* Status indicators (used in sidebar header + session windows) */
+.sidebar-status {
     display: flex;
     align-items: center;
-    gap: 2px;
 }
 
-.menu-item {
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    position: relative;
-}
-
-.menu-item:hover {
-    background: var(--hover);
-    color: var(--accent);
-}
-
-.settings-icon {
-    font-size: 16px;
-}
-
-/* Dropdowns */
-.dropdown-content {
-    display: none;
-    position: absolute;
-    top: 100%;
-    left: 0;
-    min-width: 200px;
-    background: var(--chrome);
-    border: 1px solid var(--chrome-border);
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-    padding: 4px 0;
-    z-index: 1001;
-}
-
-.dropdown-content.dropdown-right {
-    left: auto;
-    right: 0;
-}
-
-.dropdown:hover .dropdown-content,
-.dropdown.active .dropdown-content {
-    display: block;
-}
-
-.dropdown-header {
-    padding: 6px 12px;
+.sidebar-session-count {
     font-size: 11px;
-    font-weight: 600;
     color: var(--text-muted);
-    text-transform: uppercase;
-}
-
-.dropdown-item {
-    padding: var(--spacing-base) 12px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-base);
-}
-
-.dropdown-item:hover {
-    background: var(--hover);
-    color: var(--accent);
-}
-
-.dropdown-item .icon {
-    width: 16px;
-    text-align: center;
-}
-
-.dropdown-divider {
-    height: 1px;
-    background: var(--chrome-border);
-    margin: 4px 0;
-}
-
-.voice-select {
-    width: calc(100% - 24px);
-    margin: 4px 12px var(--spacing-base);
-    padding: 6px var(--spacing-base);
-    background: var(--background);
-    border: 1px solid var(--chrome-border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 12px;
-}
-
-/* Status items */
-.status-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
+    flex: 1;
 }
 
 .status-dot {
@@ -233,18 +132,6 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.menu-time {
-    font-size: 12px;
-    padding: 4px 10px;
-    font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 600px) {
-    .menu-time {
-        display: none;
-    }
 }
 
 /* Desktop Area */
@@ -550,6 +437,11 @@ body {
     background: var(--chrome-border);
     color: var(--text-muted);
     flex-shrink: 0;
+}
+
+.sidebar-tag-role {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
 }
 
 .sidebar-status-dot {
@@ -2687,11 +2579,6 @@ body .winbox.max {
         font-size: 12px;
     }
 
-    /* Compact status bar items - icon/number only */
-    #connectionStatus .status-text,
-    #sessionCount .count-label {
-        display: none;
-    }
 }
 
 /* ============================================
@@ -3928,9 +3815,6 @@ body.sidebar-pinned .desktop-area {
     margin-left: var(--sidebar-width);
 }
 
-body.sidebar-pinned .menu-bar {
-    padding-left: calc(var(--sidebar-width) + var(--spacing-base));
-}
 
 .sidebar-header {
     display: flex;

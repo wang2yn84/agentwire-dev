@@ -56,7 +56,6 @@ async function init() {
     sidebar.addSection('scheduler', schedulerSection);
     sidebar.addSection('config', configSection);
     setupClock();
-    setupMenuListeners();
     setupPageUnload();
     setupGlobalPtt();
 
@@ -282,47 +281,6 @@ function setupPageUnload() {
         sessionWindows.forEach(sw => sw.close());
         artifactWindows.forEach(aw => aw.close());
     });
-}
-
-// Menu listeners - open windows when menu items clicked
-function setupMenuListeners() {
-    // Left side menu items → expand sidebar sections
-    document.getElementById('machinesMenu')?.addEventListener('click', () => sidebar.expandSection('machines'));
-    document.getElementById('projectsMenu')?.addEventListener('click', () => sidebar.expandSection('projects'));
-    document.getElementById('sessionsMenu')?.addEventListener('click', () => sidebar.expandSection('sessions'));
-    document.getElementById('artifactsMenu')?.addEventListener('click', () => sidebar.expandSection('artifacts'));
-    document.getElementById('schedulerMenu')?.addEventListener('click', () => sidebar.expandSection('scheduler'));
-
-    // Right side settings dropdown items
-    document.getElementById('configMenuItem')?.addEventListener('click', () => {
-        sidebar.expandSection('config');
-        closeSettingsDropdown();
-    });
-    document.getElementById('resetWindowsMenuItem')?.addEventListener('click', () => {
-        desktop.clearWindowStates();
-        closeSettingsDropdown();
-        // Show brief confirmation
-        alert('Window positions reset. Changes take effect when windows are reopened.');
-    });
-
-    // Settings dropdown toggle (click to open/close)
-    const settingsMenu = document.getElementById('settingsMenu');
-    settingsMenu?.addEventListener('click', (e) => {
-        // Don't toggle if clicking on dropdown items
-        if (e.target.closest('.dropdown-item')) return;
-        settingsMenu.classList.toggle('active');
-    });
-
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('#settingsMenu')) {
-            closeSettingsDropdown();
-        }
-    });
-}
-
-function closeSettingsDropdown() {
-    document.getElementById('settingsMenu')?.classList.remove('active');
 }
 
 // Clock

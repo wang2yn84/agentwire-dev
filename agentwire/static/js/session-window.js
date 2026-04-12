@@ -8,7 +8,7 @@
 
 
 import { desktop } from './desktop-manager.js';
-import { getSessionIconByName } from './windows/sessions-window.js';
+import { sessionIcons } from './icon-manager.js';
 
 export class SessionWindow {
     /**
@@ -363,7 +363,7 @@ export class SessionWindow {
 
         this.winbox = new WinBox({
             title: title,
-            icon: getSessionIconByName(this.session),
+            icon: sessionIcons.getIcon(this.session),
             mount: container,
             root: this.root,
             width: '100%',

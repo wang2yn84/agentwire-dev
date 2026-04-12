@@ -10,7 +10,7 @@
  */
 
 import { desktop } from '../desktop-manager.js';
-import { getSessionIconByName } from './sessions-window.js';
+import { sessionIcons } from '../icon-manager.js';
 
 /** @type {ChatWindow|null} */
 let chatWindowInstance = null;
@@ -164,7 +164,7 @@ class ChatWindow {
             ? `${this._initialSession} (chat)`
             : 'Chat';
         const icon = this._initialSession
-            ? getSessionIconByName(this._initialSession)
+            ? sessionIcons.getIcon(this._initialSession)
             : '/static/favicon.png';
 
         // Load saved position/size (null on mobile)
@@ -347,7 +347,7 @@ class ChatWindow {
         // Update WinBox title and icon
         if (this.winbox) {
             this.winbox.setTitle(`${session} (chat)`);
-            this.winbox.setIcon(getSessionIconByName(session));
+            this.winbox.setIcon(sessionIcons.getIcon(session));
         }
 
         this._connectSessionWs();

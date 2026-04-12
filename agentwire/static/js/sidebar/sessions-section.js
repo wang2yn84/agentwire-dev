@@ -80,6 +80,7 @@ export const sessionsSection = {
             const tags = [];
             if (s.type) tags.push(`<span class="sidebar-tag">${s.type}</span>`);
             if (machine) tags.push(`<span class="sidebar-tag">@${machine}</span>`);
+            const roles = (s.roles || []).map(r => `<span class="sidebar-tag sidebar-tag-role">${r}</span>`).join('');
             const path = s.path ? s.path.replace(/^\/Users\/[^/]+\//, '~/') : '';
             return `<div class="sidebar-session-card" data-session="${name}" data-machine="${machine || ''}" data-id="${id}">
                 <div class="sidebar-session-row1">
@@ -89,7 +90,7 @@ export const sessionsSection = {
                     <button class="sidebar-list-item-btn" data-action="monitor" title="Monitor">👁</button>
                 </div>
                 <div class="sidebar-session-row2">
-                    ${tags.join('')}
+                    ${tags.join('')}${roles}
                     ${path ? `<span class="sidebar-session-path">${path}</span>` : ''}
                 </div>
             </div>`;

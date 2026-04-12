@@ -2222,26 +2222,34 @@ def _get_current_tmux_session() -> str | None:
     return None
 
 
-def _get_session_type_from_path(path: str) -> str | None:
-    """Read session type from .agentwire.yml in the given path.
+def _get_session_config_from_path(path: str) -> dict:
+    """Read session config from .agentwire.yml in the given path.
 
     Returns:
-        Session type (e.g., 'bare', 'claude-bypass', 'claude-restricted') or None
+        Dict with 'type' and 'roles' keys (values may be None/empty).
     """
     import yaml
 
     if not path:
-        return None
+        return {"type": None, "roles": []}
 
     yml_path = Path(path) / ".agentwire.yml"
     if yml_path.exists():
         try:
             with open(yml_path) as f:
                 config = yaml.safe_load(f) or {}
-                return config.get("type")
+                return {
+                    "type": config.get("type"),
+                    "roles": config.get("roles", []) or [],
+                }
         except Exception:
             pass
-    return None
+    return {"type": None, "roles": []}
+
+
+def _get_session_type_from_path(path: str) -> str | None:
+    """Read session type from .agentwire.yml in the given path."""
+    return _get_session_config_from_path(path).get("type")
 
 
 def _get_remote_session_type(machine_id: str, path: str) -> str | None:
@@ -3355,12 +3363,14 @@ def cmd_list(args) -> int:
                     parts = line.split(":", 2)
                     if len(parts) >= 2:
                         path = parts[2] if len(parts) > 2 else ""
+                        cfg = _get_session_config_from_path(path)
                         session_info = {
-                            "name": parts[0],  # Local sessions don't have machine suffix
+                            "name": parts[0],
                             "windows": int(parts[1]) if parts[1].isdigit() else 1,
                             "path": path,
-                            "machine": None,  # Local session
-                            "type": _get_session_type_from_path(path),
+                            "machine": None,
+                            "type": cfg.get("type"),
+                            "roles": cfg.get("roles", []),
                         }
                         local_sessions.append(session_info)
                         all_sessions.append(session_info)

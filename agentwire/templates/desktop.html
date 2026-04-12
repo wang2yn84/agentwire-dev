@@ -8,44 +8,16 @@
 
 {% block content %}
 <div class="desktop-container">
-    <!-- Menu Bar -->
-    <div class="menu-bar">
-        <div class="menu-left">
-            <div class="menu-item" id="machinesMenu">Machines</div>
-            <div class="menu-item" id="projectsMenu">Projects</div>
-            <div class="menu-item" id="sessionsMenu">Sessions</div>
-            <div class="menu-item" id="artifactsMenu">Artifacts</div>
-            <div class="menu-item" id="schedulerMenu">Scheduler</div>
-        </div>
-        <div class="menu-right">
-            <div class="status-item" id="connectionStatus">
-                <span class="status-dot disconnected"></span>
-                <span class="status-text">Connecting...</span>
-            </div>
-            <div class="status-item" id="sessionCount">
-                <span class="count">0</span> sessions
-            </div>
-            <div class="menu-item dropdown" id="settingsMenu">
-                <span class="settings-icon">&#9881;</span>
-                <div class="dropdown-content dropdown-right">
-                    <div class="dropdown-item" id="configMenuItem">
-                        <span class="icon">&#9881;</span>
-                        <span>Config</span>
-                    </div>
-                    <div class="dropdown-divider"></div>
-                    <div class="dropdown-item" id="resetWindowsMenuItem">
-                        <span class="icon">&#8634;</span>
-                        <span>Reset Window Positions</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Left Sidebar (auto-hide on hover) -->
     <div class="sidebar-hotzone" id="sidebarHotzone" aria-hidden="true"></div>
     <aside class="sidebar" id="sidebar" role="navigation" aria-label="AgentWire sidebar">
         <div class="sidebar-header">
+            <div class="sidebar-status" id="connectionStatus">
+                <span class="status-dot disconnected"></span>
+            </div>
+            <div class="sidebar-session-count" id="sessionCount">
+                <span class="count">0</span> sessions
+            </div>
             <div class="sidebar-clock" id="sidebarClock"></div>
             <button class="sidebar-pin" id="sidebarPin" title="Pin sidebar open" aria-label="Pin sidebar">
                 <span class="sidebar-pin-icon">📌</span>
