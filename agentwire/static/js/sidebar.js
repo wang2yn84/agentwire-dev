@@ -93,4 +93,73 @@ export const sidebar = {
         document.body.classList.remove('sidebar-pinned');
         try { localStorage.setItem(PIN_KEY, 'false'); } catch (e) {}
     },
+
+    // --- Accordion sections (Phase 3) ---
+    _sections: new Map(),
+
+    addSection(id, sectionObj) {
+        const container = document.getElementById('sidebarSections');
+        if (!container) return;
+        const section = document.createElement('div');
+        section.className = 'sidebar-section';
+        section.dataset.sectionId = id;
+
+        const header = document.createElement('div');
+        header.className = 'sidebar-section-title sidebar-section-toggle';
+        header.innerHTML = `<span class="sidebar-section-chevron">▸</span> ${sectionObj.title}`;
+        header.addEventListener('click', () => this.toggleSection(id));
+        section.appendChild(header);
+
+        const body = document.createElement('div');
+        body.className = 'sidebar-section-body';
+        body.style.display = 'none';
+        section.appendChild(body);
+
+        container.appendChild(section);
+
+        const entry = { id, sectionObj, el: section, header, body, mounted: false, refreshTimer: null };
+        this._sections.set(id, entry);
+    },
+
+    expandSection(id) {
+        const entry = this._sections.get(id);
+        if (!entry) return;
+        this.open();
+        entry.body.style.display = '';
+        entry.header.querySelector('.sidebar-section-chevron').textContent = '▾';
+        entry.el.classList.add('expanded');
+        const s = entry.sectionObj;
+        if (!entry.mounted) {
+            entry.mounted = true;
+            s.mount(entry.body);
+        } else if (s.refresh) {
+            s.refresh(entry.body);
+        }
+        if (s.autoRefreshMs && !entry.refreshTimer) {
+            entry.refreshTimer = setInterval(() => {
+                if (entry.el.classList.contains('expanded') && s.refresh) {
+                    s.refresh(entry.body);
+                }
+            }, s.autoRefreshMs);
+        }
+        entry.body.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    },
+
+    collapseSection(id) {
+        const entry = this._sections.get(id);
+        if (!entry) return;
+        entry.body.style.display = 'none';
+        entry.header.querySelector('.sidebar-section-chevron').textContent = '▸';
+        entry.el.classList.remove('expanded');
+        if (entry.refreshTimer) {
+            clearInterval(entry.refreshTimer);
+            entry.refreshTimer = null;
+        }
+    },
+
+    toggleSection(id) {
+        const entry = this._sections.get(id);
+        if (!entry) return;
+        entry.el.classList.contains('expanded') ? this.collapseSection(id) : this.expandSection(id);
+    },
 };

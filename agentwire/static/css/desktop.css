@@ -492,6 +492,155 @@ body {
     background: rgba(0, 0, 0, 0.2);
 }
 
+/* Sidebar list items (shared across sections) */
+.sidebar-list-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: default;
+}
+
+.sidebar-list-item:hover {
+    background: var(--hover);
+}
+
+.sidebar-list-item-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sidebar-list-item-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.sidebar-list-item-btn {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--chrome-border);
+    border-radius: 3px;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    line-height: 1;
+}
+
+.sidebar-list-item-btn:hover {
+    background: var(--hover);
+    border-color: var(--accent);
+}
+
+.sidebar-list-item-btn-danger:hover {
+    border-color: var(--error);
+    color: var(--error);
+}
+
+.sidebar-tag {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--chrome-border);
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.sidebar-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.sidebar-status-dot.dot-online { background: var(--accent); }
+.sidebar-status-dot.dot-offline { background: var(--error); }
+.sidebar-status-dot.dot-checking { background: var(--orb-awaiting); animation: pulse-dot 1s ease-in-out infinite; }
+
+.sidebar-activity-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.sidebar-activity-dot.dot-idle { background: var(--text-muted); opacity: 0.4; }
+.sidebar-activity-dot.dot-processing { background: var(--orb-processing); animation: pulse-dot 1s ease-in-out infinite; }
+.sidebar-activity-dot.dot-generating { background: var(--orb-generating); animation: pulse-dot 0.6s ease-in-out infinite; }
+.sidebar-activity-dot.dot-playing { background: var(--orb-speaking); animation: pulse-dot 0.8s ease-in-out infinite; }
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.sidebar-section-subheader {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 8px 4px 4px;
+    opacity: 0.7;
+}
+
+.sidebar-section-toggle {
+    cursor: pointer;
+    user-select: none;
+}
+
+.sidebar-section-toggle:hover {
+    color: var(--accent);
+}
+
+.sidebar-section-chevron {
+    display: inline-block;
+    width: 12px;
+    font-size: 10px;
+}
+
+.sidebar-section-body {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.sidebar-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 8px 4px;
+    font-style: italic;
+}
+
+.sidebar-config-item {
+    display: flex;
+    gap: 8px;
+    padding: 3px 4px;
+    font-size: 12px;
+}
+
+.sidebar-config-key {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 80px;
+}
+
+.sidebar-config-val {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sidebar-config-val code {
+    font-size: 11px;
+    color: var(--accent);
+}
+
 /* Voice Indicator States */
 #sidebarVoiceIndicator {
     display: flex;

@@ -11,18 +11,17 @@ import { desktop } from './desktop-manager.js';
 import { tileManager } from './tile-manager.js';
 import { SessionWindow } from './session-window.js';
 import { ArtifactWindow } from './artifact-window.js';
-import { openSessionsWindow } from './windows/sessions-window.js';
-import { openMachinesWindow } from './windows/machines-window.js';
-import { openConfigWindow } from './windows/config-window.js';
-import { openProjectsWindow } from './windows/projects-window.js';
-import { openArtifactsWindow } from './windows/artifacts-window.js';
-import { openSchedulerWindow } from './windows/scheduler-window.js';
 import { sidebar } from './sidebar.js';
+import { configSection } from './sidebar/config-section.js';
+import { artifactsSection } from './sidebar/artifacts-section.js';
+import { machinesSection } from './sidebar/machines-section.js';
+import { sessionsSection } from './sidebar/sessions-section.js';
+import { projectsSection } from './sidebar/projects-section.js';
+import { schedulerSection } from './sidebar/scheduler-section.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
 const artifactWindows = new Map();  // artifactId -> ArtifactWindow instance
-const listWindows = new Map();     // windowId -> ListWindow instance
 
 // Global PTT state
 let globalPttState = 'idle';  // idle | recording | processing
@@ -50,6 +49,12 @@ document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
     sidebar.init();
+    sidebar.addSection('sessions', sessionsSection);
+    sidebar.addSection('machines', machinesSection);
+    sidebar.addSection('projects', projectsSection);
+    sidebar.addSection('artifacts', artifactsSection);
+    sidebar.addSection('scheduler', schedulerSection);
+    sidebar.addSection('config', configSection);
     setupClock();
     setupMenuListeners();
     setupPageUnload();
@@ -144,9 +149,7 @@ async function init() {
         if (msg.window_type === 'session') {
             openSessionTerminal(msg.session, msg.mode || 'monitor');
         } else if (msg.window_type === 'panel') {
-            const panelMap = { sessions: openSessionsWindow, machines: openMachinesWindow, projects: openProjectsWindow, config: openConfigWindow, artifacts: openArtifactsWindow, scheduler: openSchedulerWindow };
-            const openFn = panelMap[msg.panel];
-            if (openFn) openListWindowWithTaskbar(msg.panel, openFn);
+            sidebar.expandSection(msg.panel);
         } else if (msg.window_type === 'artifact') {
             openArtifactWindow(msg.url, msg.title || 'Artifact', msg.artifact_id);
         }
@@ -278,32 +281,21 @@ function setupPageUnload() {
         // Close all windows
         sessionWindows.forEach(sw => sw.close());
         artifactWindows.forEach(aw => aw.close());
-        listWindows.forEach(lw => lw.close());
     });
 }
 
 // Menu listeners - open windows when menu items clicked
 function setupMenuListeners() {
-    // Left side menu items
-    document.getElementById('machinesMenu')?.addEventListener('click', () => {
-        openListWindowWithTaskbar('machines', openMachinesWindow);
-    });
-    document.getElementById('projectsMenu')?.addEventListener('click', () => {
-        openListWindowWithTaskbar('projects', openProjectsWindow);
-    });
-    document.getElementById('sessionsMenu')?.addEventListener('click', () => {
-        openListWindowWithTaskbar('sessions', openSessionsWindow);
-    });
-    document.getElementById('artifactsMenu')?.addEventListener('click', () => {
-        openListWindowWithTaskbar('artifacts', openArtifactsWindow);
-    });
-    document.getElementById('schedulerMenu')?.addEventListener('click', () => {
-        openListWindowWithTaskbar('scheduler', openSchedulerWindow);
-    });
+    // Left side menu items → expand sidebar sections
+    document.getElementById('machinesMenu')?.addEventListener('click', () => sidebar.expandSection('machines'));
+    document.getElementById('projectsMenu')?.addEventListener('click', () => sidebar.expandSection('projects'));
+    document.getElementById('sessionsMenu')?.addEventListener('click', () => sidebar.expandSection('sessions'));
+    document.getElementById('artifactsMenu')?.addEventListener('click', () => sidebar.expandSection('artifacts'));
+    document.getElementById('schedulerMenu')?.addEventListener('click', () => sidebar.expandSection('scheduler'));
 
     // Right side settings dropdown items
     document.getElementById('configMenuItem')?.addEventListener('click', () => {
-        openListWindowWithTaskbar('config', openConfigWindow);
+        sidebar.expandSection('config');
         closeSettingsDropdown();
     });
     document.getElementById('resetWindowsMenuItem')?.addEventListener('click', () => {
@@ -492,54 +484,6 @@ export function openArtifactWindow(url, title = 'Artifact', artifactId = null) {
     recordTaskbarEntry({ kind: 'artifact', id, url, title });
 }
 
-/**
- * Open a list window with taskbar integration.
- * Handles restore-if-minimized, taskbar button creation/cleanup.
- *
- * @param {string} id - Window identifier (matches ListWindow id)
- * @param {Function} openFn - The open function (e.g., openSessionsWindow)
- */
-function openListWindowWithTaskbar(id, openFn) {
-    // Already tracked — restore if minimized, otherwise focus
-    if (listWindows.has(id)) {
-        const lw = listWindows.get(id);
-        if (lw.winbox) {
-            if (lw.isMinimized) {
-                if (!desktop.isTiled(id)) {
-                    desktop.minimizeAllExcept(id);
-                }
-                lw.restore();
-            } else {
-                lw.winbox.focus();
-            }
-            return;
-        }
-        // Winbox gone (was closed) — remove stale entry
-        listWindows.delete(id);
-        removeTaskbarButton(id);
-    }
-
-    // Minimize all before opening
-    desktop.minimizeAllExcept(null);
-
-    const lw = openFn();
-    if (!lw) return;
-
-    listWindows.set(id, lw);
-
-    // Patch cleanup to also remove taskbar button
-    const originalCleanup = lw._cleanup;
-    lw._cleanup = () => {
-        if (originalCleanup) originalCleanup();
-        listWindows.delete(id);
-        removeTaskbarButton(id);
-        unrecordTaskbarEntry(id);
-    };
-
-    addTaskbarButton(id, lw);
-    recordTaskbarEntry({ kind: 'panel', id, panel: id });
-}
-
 // Taskbar management — persist open windows + order across page refresh
 const TASKBAR_STATE_KEY = 'taskbar-state';
 const taskbarRecords = new Map(); // id -> { kind, id, ...args }
@@ -547,7 +491,7 @@ let taskbarDragoverBound = false;
 let restoringTaskbar = false;
 
 function _lookupWindowInstance(id) {
-    return sessionWindows.get(id) || artifactWindows.get(id) || listWindows.get(id) || null;
+    return sessionWindows.get(id) || artifactWindows.get(id) || null;
 }
 
 function loadTaskbarState() {
@@ -598,22 +542,13 @@ function _openByRecord(rec) {
         openSessionTerminal(rec.session, rec.mode || 'monitor', rec.machine || null);
     } else if (rec.kind === 'artifact') {
         openArtifactWindow(rec.url, rec.title || 'Artifact', rec.id);
-    } else if (rec.kind === 'panel') {
-        const panelMap = {
-            sessions: openSessionsWindow,
-            machines: openMachinesWindow,
-            projects: openProjectsWindow,
-            config: openConfigWindow,
-            artifacts: openArtifactsWindow,
-            scheduler: openSchedulerWindow,
-        };
-        const fn = panelMap[rec.panel];
-        if (fn) openListWindowWithTaskbar(rec.panel, fn);
     }
 }
 
 export function restoreTaskbarState() {
-    const { tabs, activeId } = loadTaskbarState();
+    const { tabs: rawTabs, activeId } = loadTaskbarState();
+    // Phase 3 moved panels to sidebar accordions — filter out stale panel records.
+    const tabs = rawTabs.filter(t => t.kind !== 'panel');
     if (tabs.length === 0) return;
     restoringTaskbar = true;
     try {

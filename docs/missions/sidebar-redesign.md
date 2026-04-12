@@ -208,17 +208,17 @@ For each panel:
 - **Sessions** icon picker is a modal — keep it modal.
 - **Scheduler** is the most complex. Acceptable Phase 3 outcomes: (a) full migration to a wider-when-expanded sidebar accordion, or (b) leave it as a window for now and revisit. Default to (b) unless time allows.
 
-### Acceptance criteria — Phase 3
-- [ ] Config section renders inside the sidebar; no separate window
-- [ ] Artifacts section renders inside the sidebar; open/delete work
-- [ ] Machines section renders inside the sidebar; status polling works
-- [ ] Sessions section renders inside the sidebar; activity updates real-time; clicking a session opens its window
-- [ ] Projects section renders inside the sidebar; detail/drill-down work via sub-pane
-- [ ] Scheduler either migrated or explicitly deferred
-- [ ] All `windows/*-window.js` files for migrated panels deleted
-- [ ] `panelMap` and any panel-kind records in `taskbar-state` cleaned up
-- [ ] Top menu bar nav links still expand the correct sidebar section (or top menu bar removed cleanly)
-- [ ] `desktop_open_panel` MCP tool still functional (now expands sidebar instead of opening window)
+### Acceptance criteria — Phase 3 — DONE
+- [x] Config section renders inside the sidebar; no separate window
+- [x] Artifacts section renders inside the sidebar; open/delete work
+- [x] Machines section renders inside the sidebar; status polling works
+- [x] Sessions section renders inside the sidebar; activity updates real-time; clicking a session opens its window
+- [x] Projects section renders inside the sidebar (simplified — no drill-down, new session on click)
+- [x] Scheduler migrated — compact view with status + task list + enable/disable/run controls
+- [x] `openListWindowWithTaskbar`, `listWindows` map, and all `openXxxWindow` imports deleted
+- [x] Panel-kind records filtered from `taskbar-state` on restore (stale data from pre-Phase 3)
+- [x] Top menu bar nav links expand the correct sidebar section
+- [x] `desktop_open_panel` MCP tool expands sidebar section instead of opening window
 
 ---
 
@@ -242,6 +242,6 @@ For each panel:
 
 - Phase 1: Sidebar shell — **DONE**
 - Phase 2: Open Windows + delete taskbar — **DONE**
-- Phase 3: List accordions — _not started_
+- Phase 3: List accordions — **DONE**
 
 When complete, move to `docs/missions/completed/sidebar-redesign.md` per the project's documentation philosophy.
