@@ -62,6 +62,21 @@ Queue prepared sessions for autonomous overnight execution with full conversatio
 | `overnight_priority(item_id, priority)` | Update item priority |
 | `overnight_report()` | Morning report of completed items |
 
+## Wiki (Knowledge Base)
+
+When you discover something noteworthy during your work — a technology gotcha, a debugging solution, a useful pattern, an API quirk — write or update a wiki page at `~/.agentwire/wiki/wiki/`. This compounds knowledge across sessions so future agents don't re-research the same things.
+
+| Category | Path | What goes here |
+|----------|------|----------------|
+| Technologies | `wiki/technologies/<name>.md` | Tools, libraries, engines — how we use them, gotchas |
+| Patterns | `wiki/patterns/<name>.md` | Architecture decisions, solutions, what worked/didn't |
+| APIs | `wiki/apis/<name>.md` | External API reference, endpoints, auth, pricing |
+| Research | `wiki/research/<name>.md` | Market research, comparisons, evaluations |
+
+**Rules**: one page per entity (check before creating), update existing pages rather than duplicating, include code snippets, date your updates in frontmatter `last_updated`. Read `~/.agentwire/wiki/CLAUDE.md` for the full schema.
+
+**Before researching**: check if a wiki page already exists on the topic. Use existing knowledge first.
+
 ## Notifications
 
 | Tool | What it does |
