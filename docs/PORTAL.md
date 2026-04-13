@@ -89,7 +89,7 @@ Projects are folders with `.agentwire.yml` files, discovered from `projects.dir`
 | Field | Description |
 |-------|-------------|
 | Name | Folder name |
-| Type | Session type (`claude-bypass`, `claude-prompted`, `claudeglm-bypass`, etc.) |
+| Type | Session type (`claude-bypass`, `claude-prompted`, `claude-auto`, etc.) |
 | Path | Full path to project folder |
 | Roles | Configured roles from `.agentwire.yml` |
 

@@ -23,9 +23,6 @@ class TestSessionTypeFromStr:
         ("claude-bypass", SessionType.CLAUDE_BYPASS),
         ("claude-prompted", SessionType.CLAUDE_PROMPTED),
         ("claude-restricted", SessionType.CLAUDE_RESTRICTED),
-        ("claudeglm-bypass", SessionType.CLAUDEGLM_BYPASS),
-        ("claudeglm-prompted", SessionType.CLAUDEGLM_PROMPTED),
-        ("claudeglm-restricted", SessionType.CLAUDEGLM_RESTRICTED),
         ("standard", SessionType.STANDARD),
         ("worker", SessionType.WORKER),
         ("voice", SessionType.VOICE),
@@ -73,27 +70,21 @@ class TestSessionTypeToCliFlags:
 class TestNormalizeSessionType:
     @pytest.mark.parametrize("universal,agent,expected", [
         ("standard", "claude", "claude-bypass"),
-        ("standard", "claudeglm", "claudeglm-bypass"),
         ("worker", "claude", "claude-restricted"),
-        ("worker", "claudeglm", "claudeglm-restricted"),
         ("voice", "claude", "claude-prompted"),
-        ("voice", "claudeglm", "claudeglm-prompted"),
     ])
     def test_universal_mappings(self, universal, agent, expected):
         assert normalize_session_type(universal, agent) == expected
 
     @pytest.mark.parametrize("agent_specific", [
         "claude-bypass", "claude-prompted", "claude-restricted",
-        "claudeglm-bypass", "claudeglm-prompted", "claudeglm-restricted",
         "bare",
     ])
     def test_agent_specific_passthrough(self, agent_specific):
         assert normalize_session_type(agent_specific, "claude") == agent_specific
-        assert normalize_session_type(agent_specific, "claudeglm") == agent_specific
 
     def test_unknown_defaults_to_bypass(self):
         assert normalize_session_type("foobar", "claude") == "claude-bypass"
-        assert normalize_session_type("foobar", "claudeglm") == "claudeglm-bypass"
 
 
 # --- ProjectConfig ---

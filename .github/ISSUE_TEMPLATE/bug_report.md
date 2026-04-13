@@ -29,7 +29,7 @@ What actually happens.
 - **OS:** (e.g., macOS 14.2, Ubuntu 22.04)
 - **Python:** (e.g., 3.11.5)
 - **AgentWire version:** (run `agentwire --version`)
-- **Agent:** (Claude Code / claudeGLM / Other)
+- **Agent:** (Claude Code)
 
 ## Logs
 

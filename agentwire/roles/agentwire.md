@@ -42,8 +42,7 @@ Workers auto-exit when idle. They write summary files before exiting, and you re
 
 | `pane_type` | Agent |
 |-------------|-------|
-| `claudeglm-bypass` | Claude Code via Z.AI GLM-5 (default — use this) |
-| `claude-bypass` | Claude Code via Anthropic (expensive — only if needed) |
+| `claude-bypass` | Claude Code with full permissions (default) |
 
 ## Hierarchy
 

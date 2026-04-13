@@ -19,9 +19,6 @@ class SessionType(str, Enum):
     CLAUDE_AUTO = "claude-auto"      # Claude with auto mode (classifier safety net)
     CLAUDE_PROMPTED = "claude-prompted"  # Claude with permission hooks
     CLAUDE_RESTRICTED = "claude-restricted"  # Claude with only say allowed
-    CLAUDEGLM_BYPASS = "claudeglm-bypass"  # Claude via Z.AI GLM-5 with skip permissions
-    CLAUDEGLM_PROMPTED = "claudeglm-prompted"  # Claude via Z.AI GLM-5 with permission hooks
-    CLAUDEGLM_RESTRICTED = "claudeglm-restricted"  # Claude via Z.AI GLM-5 restricted
     # Universal types (agent-agnostic, map to agent-specific types)
     STANDARD = "standard"  # Full automation -> claude-bypass
     WORKER = "worker"      # Worker pane -> claude-restricted
@@ -65,7 +62,7 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
 
     Args:
         session_type: "standard", "worker", "voice", or agent-specific type
-        agent_type: "claude" or "claudeglm"
+        agent_type: "claude"
 
     Returns:
         Agent-specific session type
@@ -73,7 +70,6 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
     # If already agent-specific, return as-is
     agent_specific_types = [
         "claude-bypass", "claude-auto", "claude-prompted", "claude-restricted",
-        "claudeglm-bypass", "claudeglm-prompted", "claudeglm-restricted",
         "bare"
     ]
     if session_type in agent_specific_types:

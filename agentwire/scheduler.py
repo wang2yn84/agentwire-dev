@@ -905,7 +905,7 @@ def _pre_create_session(task: SchedulerTask) -> None:
     """Pre-create session with scheduler type/role overrides if needed.
 
     The scheduler may specify a different session type than the project's
-    .agentwire.yml (e.g., claudeglm-bypass for scheduled tasks). If overrides
+    .agentwire.yml (e.g., claude-auto for scheduled tasks). If overrides
     are set, we need to create the session before ensure runs, because
     ensure uses project defaults.
 

@@ -301,7 +301,7 @@ def session_create(
         name: Session name (required)
         project_dir: Project directory path (optional)
         roles: Comma-separated list of roles to apply (optional)
-        session_type: Session type like 'claude-bypass', 'claudeglm-bypass' (optional)
+        session_type: Session type like 'claude-bypass', 'claude-bypass' (optional)
 
     Returns:
         Success message or error description.

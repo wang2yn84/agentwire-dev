@@ -42,7 +42,7 @@ For each task:
 
 For quick parallel tasks that don't need overnight:
 
-1. `pane_spawn(pane_type="claudeglm-bypass", roles="worker")`
+1. `pane_spawn(pane_type="claude-bypass", roles="worker")`
 2. `pane_send(pane=1, message="Clear task description")`
 3. Monitor progress with `pane_output(pane=1)`
 4. Workers auto-exit and write summaries when idle

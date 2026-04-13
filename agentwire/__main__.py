@@ -87,7 +87,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
     """Build the agent command for a session.
 
     Args:
-        session_type: Session type (e.g., "claude-bypass", "claudeglm-bypass", "bare")
+        session_type: Session type (e.g., "claude-bypass", "claude-auto", "bare")
         roles: Optional list of roles to apply
         model: Optional model override (e.g., "haiku", "sonnet", "opus")
 
@@ -100,52 +100,6 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
 
     # Merge roles if provided
     merged = merge_roles(roles) if roles else None
-
-    # === Claude Code via Z.AI GLM (must check before "claude" since "claudeglm" starts with "claude") ===
-    if session_type.startswith("claudeglm"):
-        config = load_config()
-        zai = config.get("zai", {})
-
-        # Build env var prefix — only auth, base URL, and timeout.
-        # No model mappings: Z.AI auto-maps Claude model names to latest GLM equivalents.
-        env_prefix = (
-            f"ANTHROPIC_AUTH_TOKEN={shlex.quote(zai.get('api_key', ''))} "
-            f"ANTHROPIC_BASE_URL={shlex.quote(zai.get('base_url', 'https://api.z.ai/api/anthropic'))} "
-            f"API_TIMEOUT_MS={shlex.quote(str(zai.get('timeout_ms', 3000000)))} "
-        )
-
-        parts = [env_prefix + "claude"]
-
-        # Permission flags (same as claude-*)
-        if session_type == "claudeglm-bypass":
-            parts.append("--dangerously-skip-permissions")
-        elif session_type == "claudeglm-restricted":
-            parts.append("--tools Bash")
-
-        # Model override
-        if model:
-            parts.append(f"--model {model}")
-
-        # Role-based flags (not for restricted mode)
-        temp_file = None
-        if merged and session_type != "claudeglm-restricted":
-            if merged.tools:
-                parts.append(f"--tools {','.join(merged.tools)}")
-
-            if merged.disallowed_tools:
-                parts.append(f"--disallowedTools {','.join(merged.disallowed_tools)}")
-
-            if merged.instructions:
-                f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                f.write(merged.instructions)
-                f.close()
-                temp_file = f.name
-                parts.append(f'--append-system-prompt "$(<{temp_file})"')
-
-        return AgentCommand(
-            command=" ".join(parts),
-            temp_file=temp_file,
-        )
 
     # === Claude Code ===
     if session_type.startswith("claude"):
@@ -9878,7 +9832,7 @@ def main() -> int:
     new_parser.add_argument("-p", "--path", help="Working directory (default: ~/projects/<name>)")
     new_parser.add_argument("-f", "--force", action="store_true", help="Replace existing session")
     # Session type
-    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted, standard, worker, voice)")
+    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
     new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
@@ -9913,7 +9867,7 @@ def main() -> int:
     spawn_parser.add_argument("-s", "--session", help="Target session (default: auto-detect)")
     spawn_parser.add_argument("--cwd", help="Working directory (default: current)")
     spawn_parser.add_argument("--branch", "-b", help="Create worktree on this branch for isolated commits")
-    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted)")
+    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted)")
     spawn_parser.add_argument("--roles", default="worker", help="Comma-separated roles (default: worker)")
     spawn_parser.add_argument("--no-wait", action="store_true", help="Don't wait for worker to be ready (default: wait up to 30s)")
     spawn_parser.add_argument("--timeout", type=int, default=30, help="Seconds to wait for worker ready (default: 30)")
@@ -9951,7 +9905,7 @@ def main() -> int:
     recreate_parser = subparsers.add_parser("recreate", help="Destroy and recreate session with fresh worktree")
     recreate_parser.add_argument("-s", "--session", required=True, help="Session name (project/branch or project/branch@machine)")
     # Session type
-    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted, standard, worker, voice)")
+    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
     recreate_parser.add_argument("--json", action="store_true", help="Output as JSON")
     recreate_parser.set_defaults(func=cmd_recreate)
 
@@ -9960,7 +9914,7 @@ def main() -> int:
     fork_parser.add_argument("-s", "--source", required=True, help="Source session (project or project/branch)")
     fork_parser.add_argument("-t", "--target", required=True, help="Target session (must include branch: project/new-branch)")
     # Session type
-    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, claudeglm-bypass, claudeglm-prompted, claudeglm-restricted, standard, worker, voice)")
+    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
     fork_parser.add_argument("--commit", metavar="REF", help="Fork from this commit/ref instead of HEAD (e.g. abc123, main~5)")
     fork_parser.add_argument("--json", action="store_true", help="Output as JSON")
     fork_parser.set_defaults(func=cmd_fork)

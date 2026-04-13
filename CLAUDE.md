@@ -574,12 +574,6 @@ overnight:
     You have been prepared with full context for this task.
     Begin autonomous execution now. Commit frequently.
 
-zai:  # Z.AI API configuration (for claudeGLM sessions)
-  api_key: ""  # Z.AI API key (or set ZAI_API_KEY env var)
-  base_url: "https://api.z.ai/api/anthropic"
-  timeout_ms: 3000000  # API timeout (milliseconds)
-  # No model mappings — Z.AI auto-maps Claude model names to latest GLM equivalents
-
 session:
   default_role: "agentwire"  # Default role for new sessions
 ```
@@ -609,7 +603,7 @@ session:
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `claudeglm-bypass`, etc. | Session permission level. **Use `claude-auto` for overnight/unattended work** — same capability as `claude-bypass` but with AI classifier blocking dangerous actions. Requires Team/Enterprise plan. |
+| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `claude-restricted` | Session permission level. **Use `claude-auto` for overnight/unattended work** — same capability as `claude-bypass` but with AI classifier blocking dangerous actions. Requires Team/Enterprise plan. |
 | `roles` | List of role names | Roles to load (from bundled or `~/.agentwire/roles/`) |
 | `voice` | Voice name | TTS voice for this project |
 | `parent` | Session name | Parent session for hierarchical notifications |
@@ -787,41 +781,6 @@ tail -f /tmp/claude-hook-debug.log
 # View queue processor logs
 tail -f /tmp/queue-processor-debug.log
 ```
-
-## claudeGLM (GLM-5 via Claude Code)
-
-A wrapper script at `~/bin/claudeGLM` runs Claude Code against Z.AI's GLM-5 model instead of Anthropic's Claude. Same binary, same hooks, same configs — only the API endpoint and model are overridden via env vars.
-
-```bash
-claudeGLM --dangerously-skip-permissions  # interactive session
-claudeGLM -p "quick task"                 # print mode
-```
-
-### How It Works
-
-The wrapper sets env vars and calls the same `claude` binary:
-
-| Variable | Value |
-|----------|-------|
-| `ANTHROPIC_BASE_URL` | `https://api.z.ai/api/anthropic` |
-| `ANTHROPIC_AUTH_TOKEN` | Z.AI API key |
-| `API_TIMEOUT_MS` | `3000000` |
-
-No model mappings — Z.AI auto-maps Claude model names to the latest GLM equivalents (currently GLM-5.1 for opus/sonnet, GLM-4.7-flash for haiku). No system prompt override — uses Claude Code's default.
-
-Everything else is shared: `~/.claude/` config, hooks, skills, MCP servers, damage control. No file conflicts with normal Claude Code instances — env vars are process-scoped.
-
-### Scheduler Decision
-
-The scheduler uses **claudeGLM** (Claude Code + Z.AI GLM) for scheduled tasks. claudeGLM provides the full Claude Code tool ecosystem (MCP, subagents, CLAUDE.md, Chrome extension) while using cost-effective Z.AI models.
-
-### Session Type Separation
-
-| Use Case | Agent | Config |
-|----------|-------|--------|
-| Human-directed work | `claude` (Anthropic) | `.agentwire.yml` → `type: claude-bypass` |
-| Human-directed, cost-sensitive | `claudeGLM` (Z.AI) | Manual session creation |
-| Scheduled tasks (scheduler) | `claudeGLM` (Z.AI) | `scheduler.yaml` → `type: claude-bypass` |
 
 By default, `agentwire new --type X` is a session-level override only and never saves to `.agentwire.yml`. Use `--persist` to opt in to saving.
 

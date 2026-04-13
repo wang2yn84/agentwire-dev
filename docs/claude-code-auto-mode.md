@@ -183,7 +183,7 @@ work, but prevents catastrophic failures at 3am when nobody's watching.
 
 | Constraint | Detail |
 |------------|--------|
-| **Anthropic API only** | Classifier runs on Sonnet 4.6; requires Anthropic auth. Z.AI/GLM-5 sessions cannot use auto mode. |
+| **Anthropic API only** | Classifier runs on Sonnet 4.6; requires Anthropic auth. Third-party API proxies cannot use auto mode. |
 | **Plan required** | Team or Enterprise plan (research preview). Pro/Max individual plans not supported. Admin must enable in Claude Code admin settings first. |
 | **Model requirement** | Session model must be Sonnet 4.6 or Opus 4.6. Not available on Haiku or claude-3. |
 | **Not a safety guarantee** | 6–17% false negative rate. Not for production systems without backup strategy. |
@@ -280,10 +280,10 @@ which tasks blocked and what action triggered it.
 Some tasks use `claude-auto` (production repos), others `claude-bypass` (sandboxed
 experiments). Session type is per-session — both run simultaneously without conflict.
 
-**Haiku / GLM-5 incompatibility:**
-Auto mode requires Sonnet 4.6 or Opus 4.6 and Anthropic auth. Tasks using Haiku or
-Z.AI sessions (`claudeglm-*`) cannot use auto mode. AgentWire should warn at session
-creation time if the combination is invalid.
+**Haiku incompatibility:**
+Auto mode requires Sonnet 4.6 or Opus 4.6 and Anthropic auth. Tasks using Haiku
+cannot use auto mode. AgentWire should warn at session creation time if the
+combination is invalid.
 
 ---
 
