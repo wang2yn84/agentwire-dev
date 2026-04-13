@@ -115,26 +115,26 @@ class TestPaneTools:
 
 class TestVoiceTools:
     @patch("agentwire.mcp_server.run_agentwire_cmd")
-    def test_alert_with_target(self, mock_cmd):
-        from agentwire.mcp_server import alert
+    def test_notify_with_target(self, mock_cmd):
+        from agentwire.mcp_server import notify
         mock_cmd.return_value = _success()
-        alert(text="hey", to="main")
+        notify(text="hey", to="main")
         args = mock_cmd.call_args[0][0]
-        assert args == ["alert", "--to", "main", "hey"]
+        assert args == ["notify-parent", "--to", "main", "hey"]
 
     @patch("agentwire.mcp_server.run_agentwire_cmd")
-    def test_alert_without_target(self, mock_cmd):
-        from agentwire.mcp_server import alert
+    def test_notify_without_target(self, mock_cmd):
+        from agentwire.mcp_server import notify
         mock_cmd.return_value = _success()
-        alert(text="hey")
+        notify(text="hey")
         args = mock_cmd.call_args[0][0]
-        assert args == ["alert", "hey"]
+        assert args == ["notify-parent", "hey"]
 
     @patch("agentwire.mcp_server.run_agentwire_cmd")
-    def test_alert_failure(self, mock_cmd):
-        from agentwire.mcp_server import alert
+    def test_notify_failure(self, mock_cmd):
+        from agentwire.mcp_server import notify
         mock_cmd.return_value = _failure("no portal")
-        result = alert(text="hey")
+        result = notify(text="hey")
         assert "Failed" in result
 
 

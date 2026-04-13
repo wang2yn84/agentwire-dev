@@ -109,19 +109,16 @@ class TestIsPathAllowedForOp:
 
 class TestCheckCommandSafety:
     def test_allowed_with_empty_patterns(self, tmp_path, monkeypatch):
-        """If patterns.yaml doesn't exist, everything is allowed."""
+        """If RULES_DIR has no yaml files, everything is allowed."""
         import agentwire.cli_safety as mod
-        original = mod.PATTERNS_FILE
-        monkeypatch.setattr(mod, "PATTERNS_FILE", tmp_path / "no-patterns.yaml")
+        monkeypatch.setattr(mod, "RULES_DIR", tmp_path / "empty-rules")
 
         result = check_command_safety("echo hello")
         assert result["decision"] == "allow"
 
-        monkeypatch.setattr(mod, "PATTERNS_FILE", original)
-
     def test_result_structure(self, tmp_path, monkeypatch):
         import agentwire.cli_safety as mod
-        monkeypatch.setattr(mod, "PATTERNS_FILE", tmp_path / "no-patterns.yaml")
+        monkeypatch.setattr(mod, "RULES_DIR", tmp_path / "empty-rules")
 
         result = check_command_safety("ls -la")
         assert "decision" in result
@@ -216,32 +213,33 @@ class TestLoadAllowedPaths:
 # --- check_command_safety with allowlist ---
 
 class TestCheckCommandSafetyAllowlist:
-    def _make_patterns_file(self, tmp_path, patterns_dict):
-        """Create a patterns.yaml and return path."""
+    def _make_rules_dir(self, tmp_path, patterns_dict):
+        """Create a rules dir with a patterns.yaml and return the dir path."""
         import yaml
-        pf = tmp_path / "patterns.yaml"
-        with open(pf, "w") as f:
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir(exist_ok=True)
+        with open(rules_dir / "patterns.yaml", "w") as f:
             yaml.safe_dump(patterns_dict, f)
-        return pf
+        return rules_dir
 
     def test_allowlist_bypasses_readonly(self, tmp_path, monkeypatch):
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "readOnlyPaths": ["dist/"],
             "allowedPaths": [{"path": "*/dist/*", "allow": "all"}],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         result = check_command_safety("rm /home/user/project/dist/old.whl")
         assert result["decision"] == "allow"
 
     def test_allowlist_bypasses_nodelete(self, tmp_path, monkeypatch):
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "noDeletePaths": [".git/"],
             "allowedPaths": [],  # .git/ not allowlisted
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         # .git/ not allowlisted, should still block
         result = check_command_safety("rm .git/config")
@@ -250,13 +248,13 @@ class TestCheckCommandSafetyAllowlist:
     def test_hard_blocked_rm_rf_never_bypassed(self, tmp_path, monkeypatch):
         """rm -rf is hard-blocked even with all perms on target path."""
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "bashToolPatterns": [
                 {"pattern": r"\brm\s+(-[^\s]*)*-[rRf]", "reason": "rm with flags"},
             ],
             "allowedPaths": [{"path": "/tmp/*", "allow": "all"}],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         result = check_command_safety("rm -rf /tmp/test")
         assert result["decision"] == "block"
@@ -264,13 +262,13 @@ class TestCheckCommandSafetyAllowlist:
     def test_bypassable_rm_with_delete_permission(self, tmp_path, monkeypatch):
         """Plain rm (bypassable) should be allowed if target has delete permission."""
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "bashToolPatterns": [
                 {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
             ],
             "allowedPaths": [{"path": "*/dist/*", "allow": "all"}],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         result = check_command_safety("rm /home/user/project/dist/old.whl")
         assert result["decision"] == "allow"
@@ -278,13 +276,13 @@ class TestCheckCommandSafetyAllowlist:
     def test_bypassable_rm_without_delete_permission(self, tmp_path, monkeypatch):
         """Plain rm (bypassable) should block if target only has read/write."""
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "bashToolPatterns": [
                 {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
             ],
             "allowedPaths": [{"path": "*/dist/*", "allow": ["read", "write"]}],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         result = check_command_safety("rm /home/user/project/dist/old.whl")
         assert result["decision"] == "block"
@@ -292,13 +290,13 @@ class TestCheckCommandSafetyAllowlist:
     def test_bypassable_rm_non_allowed_path(self, tmp_path, monkeypatch):
         """Plain rm (bypassable) should block if target is not in allowlist at all."""
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "bashToolPatterns": [
                 {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
             ],
             "allowedPaths": [{"path": "*/dist/*", "allow": "all"}],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         result = check_command_safety("rm ~/.ssh/id_rsa")
         assert result["decision"] == "block"
@@ -306,11 +304,11 @@ class TestCheckCommandSafetyAllowlist:
     def test_read_only_permission_blocks_delete(self, tmp_path, monkeypatch):
         """Path with only read permission should not bypass noDelete."""
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "noDeletePaths": ["README.md"],
             "allowedPaths": [{"path": "README.md", "allow": ["read"]}],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         result = check_command_safety("rm README.md")
         assert result["decision"] == "block"
@@ -318,13 +316,13 @@ class TestCheckCommandSafetyAllowlist:
     def test_multiple_paths_all_must_match(self, tmp_path, monkeypatch):
         """Security: ALL paths in command must be allowed for bypass."""
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "bashToolPatterns": [
                 {"pattern": r"\brm\s+[^-]", "reason": "rm file deletion", "bypassable": True},
             ],
             "allowedPaths": [{"path": "/tmp/", "allow": "all"}],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         # One path is allowed, the other is not — should block
         result = check_command_safety("rm /tmp/safe.txt /etc/passwd")
@@ -333,11 +331,11 @@ class TestCheckCommandSafetyAllowlist:
     def test_empty_allowedpaths_no_change(self, tmp_path, monkeypatch):
         """With empty allowedPaths, behavior is unchanged."""
         import agentwire.cli_safety as mod
-        pf = self._make_patterns_file(tmp_path, {
+        rd = self._make_rules_dir(tmp_path, {
             "readOnlyPaths": ["dist/"],
             "allowedPaths": [],
         })
-        monkeypatch.setattr(mod, "PATTERNS_FILE", pf)
+        monkeypatch.setattr(mod, "RULES_DIR", rd)
 
         result = check_command_safety("mv something dist/file")
         assert result["decision"] == "block"

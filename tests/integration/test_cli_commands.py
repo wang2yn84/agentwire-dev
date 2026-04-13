@@ -44,7 +44,7 @@ class TestCmdRolesList:
 class TestCmdSafetyCheck:
     def test_allowed_command(self, tmp_path, monkeypatch):
         import agentwire.cli_safety as mod
-        monkeypatch.setattr(mod, "PATTERNS_FILE", tmp_path / "no-patterns.yaml")
+        monkeypatch.setattr(mod, "RULES_DIR", tmp_path / "empty-rules")
 
         result = mod.check_command_safety("echo hello")
         assert result["decision"] == "allow"
@@ -52,8 +52,9 @@ class TestCmdSafetyCheck:
     def test_blocked_by_pattern(self, tmp_path, monkeypatch):
         import agentwire.cli_safety as mod
 
-        # Create a patterns file with a blocking pattern
-        patterns_file = tmp_path / "patterns.yaml"
+        # Create a rules dir with a blocking pattern
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
         patterns = {
             "bashToolPatterns": [
                 {
@@ -63,10 +64,10 @@ class TestCmdSafetyCheck:
                 }
             ]
         }
-        with open(patterns_file, "w") as f:
+        with open(rules_dir / "patterns.yaml", "w") as f:
             yaml.safe_dump(patterns, f)
 
-        monkeypatch.setattr(mod, "PATTERNS_FILE", patterns_file)
+        monkeypatch.setattr(mod, "RULES_DIR", rules_dir)
 
         result = mod.check_command_safety("rm -rf /")
         assert result["decision"] == "block"
