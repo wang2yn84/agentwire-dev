@@ -735,6 +735,7 @@ Roles define agent behavior and are composable. Mix and match roles in `.agentwi
 | Role | Purpose |
 |------|---------|
 | `agentwire` | Core session/pane/MCP tools awareness |
+| `orchestrator` | Long-lived project orchestrator — plans, delegates, manages overnight queue |
 | `voice` | Voice communication (speak/listen) |
 | `worker` | Receive tasks, execute autonomously, report back |
 | `task-runner` | Scheduled task execution |
