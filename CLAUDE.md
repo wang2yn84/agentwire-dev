@@ -577,10 +577,8 @@ overnight:
 zai:  # Z.AI API configuration (for claudeGLM sessions)
   api_key: ""  # Z.AI API key (or set ZAI_API_KEY env var)
   base_url: "https://api.z.ai/api/anthropic"
-  opus_model: "glm-5"  # Model for opus tier
-  sonnet_model: "glm-5"  # Model for sonnet tier
-  haiku_model: "glm-4.7-flash"  # Model for haiku tier
   timeout_ms: 3000000  # API timeout (milliseconds)
+  # No model mappings — Z.AI auto-maps Claude model names to latest GLM equivalents
 
 session:
   default_role: "agentwire"  # Default role for new sessions
@@ -807,15 +805,15 @@ The wrapper sets env vars and calls the same `claude` binary:
 |----------|-------|
 | `ANTHROPIC_BASE_URL` | `https://api.z.ai/api/anthropic` |
 | `ANTHROPIC_AUTH_TOKEN` | Z.AI API key |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` | `glm-5` |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | `glm-5` |
-| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `glm-4.7-flash` |
+| `API_TIMEOUT_MS` | `3000000` |
+
+No model mappings — Z.AI auto-maps Claude model names to the latest GLM equivalents (currently GLM-5.1 for opus/sonnet, GLM-4.7-flash for haiku). No system prompt override — uses Claude Code's default.
 
 Everything else is shared: `~/.claude/` config, hooks, skills, MCP servers, damage control. No file conflicts with normal Claude Code instances — env vars are process-scoped.
 
 ### Scheduler Decision
 
-The scheduler uses **claudeGLM** (Claude Code + GLM-5) for scheduled tasks. claudeGLM provides the full Claude Code tool ecosystem (MCP, subagents, CLAUDE.md, Chrome extension) while using cost-effective Z.AI models.
+The scheduler uses **claudeGLM** (Claude Code + Z.AI GLM) for scheduled tasks. claudeGLM provides the full Claude Code tool ecosystem (MCP, subagents, CLAUDE.md, Chrome extension) while using cost-effective Z.AI models.
 
 ### Session Type Separation
 

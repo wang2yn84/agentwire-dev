@@ -106,13 +106,11 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         config = load_config()
         zai = config.get("zai", {})
 
-        # Build env var prefix for command line (inline, so the running shell picks them up)
+        # Build env var prefix — only auth, base URL, and timeout.
+        # No model mappings: Z.AI auto-maps Claude model names to latest GLM equivalents.
         env_prefix = (
             f"ANTHROPIC_AUTH_TOKEN={shlex.quote(zai.get('api_key', ''))} "
             f"ANTHROPIC_BASE_URL={shlex.quote(zai.get('base_url', 'https://api.z.ai/api/anthropic'))} "
-            f"ANTHROPIC_DEFAULT_OPUS_MODEL={shlex.quote(zai.get('opus_model', 'glm-5'))} "
-            f"ANTHROPIC_DEFAULT_SONNET_MODEL={shlex.quote(zai.get('sonnet_model', 'glm-5'))} "
-            f"ANTHROPIC_DEFAULT_HAIKU_MODEL={shlex.quote(zai.get('haiku_model', 'glm-4.7-flash'))} "
             f"API_TIMEOUT_MS={shlex.quote(str(zai.get('timeout_ms', 3000000)))} "
         )
 
@@ -128,12 +126,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         if model:
             parts.append(f"--model {model}")
 
-        # GLM-5 system prompt — replaces Claude's default identity with GLM-5 identity
-        # while preserving all tool usage, safety, and behavioral instructions
-        glm_prompt_path = Path(__file__).parent / "glm_system_prompt.md"
-        glm_prompt = glm_prompt_path.read_text()
-
-        # Append role instructions to the system prompt (not for restricted mode)
+        # Role-based flags (not for restricted mode)
         temp_file = None
         if merged and session_type != "claudeglm-restricted":
             if merged.tools:
@@ -143,14 +136,11 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
                 parts.append(f"--disallowedTools {','.join(merged.disallowed_tools)}")
 
             if merged.instructions:
-                glm_prompt += "\n\n" + merged.instructions
-
-        # Write combined system prompt to temp file
-        f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-        f.write(glm_prompt)
-        f.close()
-        temp_file = f.name
-        parts.append(f'--system-prompt "$(<{temp_file})"')
+                f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                f.write(merged.instructions)
+                f.close()
+                temp_file = f.name
+                parts.append(f'--append-system-prompt "$(<{temp_file})"')
 
         return AgentCommand(
             command=" ".join(parts),

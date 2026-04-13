@@ -13,9 +13,6 @@ FAKE_CONFIG = {
     "zai": {
         "api_key": "test-key-123",
         "base_url": "https://api.z.ai/api/anthropic",
-        "opus_model": "glm-5",
-        "sonnet_model": "glm-5",
-        "haiku_model": "glm-4.7-flash",
         "timeout_ms": 3000000,
     }
 }
@@ -59,36 +56,30 @@ class TestBuildAgentCommand:
         assert "claude" in cmd.command
         assert "ANTHROPIC_BASE_URL" in cmd.command
         assert "ANTHROPIC_AUTH_TOKEN" in cmd.command
+        assert "API_TIMEOUT_MS" in cmd.command
         assert "--dangerously-skip-permissions" in cmd.command
-        # Uses --system-prompt (GLM identity) instead of Claude's default
-        assert "--system-prompt" in cmd.command
-        assert cmd.temp_file is not None
-        # Verify the temp file contains GLM identity
-        with open(cmd.temp_file) as f:
-            content = f.read()
-        assert "GLM-5" in content
-        assert "Zhipu AI" in content
-        os.unlink(cmd.temp_file)
+        # No model mappings — Z.AI auto-maps
+        assert "ANTHROPIC_DEFAULT_OPUS_MODEL" not in cmd.command
+        # No system prompt override — uses Claude Code's default
+        assert "--system-prompt" not in cmd.command
+        assert cmd.temp_file is None
 
     def test_claudeglm_restricted(self):
         cmd = self._build("claudeglm-restricted")
         assert "claude" in cmd.command
         assert "--tools Bash" in cmd.command
-        # Restricted still gets GLM system prompt
-        assert "--system-prompt" in cmd.command
-        assert cmd.temp_file is not None
-        os.unlink(cmd.temp_file)
+        # No system prompt override
+        assert "--system-prompt" not in cmd.command
+        assert cmd.temp_file is None
 
     def test_claudeglm_with_roles(self):
-        """claudeglm should merge role instructions into GLM system prompt."""
+        """claudeglm should use --append-system-prompt for role instructions."""
         roles = [RoleConfig(name="test", instructions="You are a task runner.")]
         cmd = self._build("claudeglm-bypass", roles=roles)
-        assert "--system-prompt" in cmd.command
-        # Role instructions should be appended to GLM prompt, not separate
-        assert "--append-system-prompt" not in cmd.command
+        assert "--append-system-prompt" in cmd.command
+        assert cmd.temp_file is not None
         with open(cmd.temp_file) as f:
             content = f.read()
-        assert "GLM-5" in content
         assert "You are a task runner." in content
         os.unlink(cmd.temp_file)
 
@@ -96,13 +87,9 @@ class TestBuildAgentCommand:
         """claudeglm-restricted should not get role tools/instructions."""
         roles = [RoleConfig(name="test", tools=["Read"], instructions="Hello")]
         cmd = self._build("claudeglm-restricted", roles=roles)
-        assert "--system-prompt" in cmd.command
         # Should not have role tools or appended instructions
-        with open(cmd.temp_file) as f:
-            content = f.read()
-        assert "GLM-5" in content
-        assert "Hello" not in content
-        os.unlink(cmd.temp_file)
+        assert "--append-system-prompt" not in cmd.command
+        assert cmd.temp_file is None
 
     def test_with_model_override(self):
         cmd = self._build("claude-bypass", model="haiku")
