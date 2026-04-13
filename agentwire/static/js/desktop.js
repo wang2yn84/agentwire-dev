@@ -41,7 +41,6 @@ const elements = {
     taskbarWindows: document.getElementById('openWindowsList'),
     sidebarClock: document.getElementById('sidebarClock'),
     connectionStatus: document.getElementById('connectionStatus'),
-    sessionCount: document.getElementById('sessionCount'),
     globalPtt: document.getElementById('sidebarGlobalPtt'),
     voiceIndicator: document.getElementById('sidebarVoiceIndicator'),
 };
@@ -65,7 +64,6 @@ async function init() {
     setupWindowCycling();
 
     // Set up event listeners BEFORE fetching data
-    desktop.on('sessions', updateSessionCount);
     desktop.on('disconnect', () => updateConnectionStatus(false));
     desktop.on('connect', () => updateConnectionStatus(true));
 
@@ -334,12 +332,6 @@ function updateConnectionStatus(connected) {
     elements.connectionStatus.innerHTML = connected
         ? '<span class="status-dot connected"></span><span class="status-text">Connected</span>'
         : '<span class="status-dot disconnected"></span><span class="status-text">Disconnected</span>';
-}
-
-// Session count
-function updateSessionCount(sessions) {
-    const count = sessions?.length || 0;
-    elements.sessionCount.innerHTML = `<span class="count">${count}</span><span class="count-label"> session${count !== 1 ? 's' : ''}</span>`;
 }
 
 // Voice indicator - shows agentwire session and TTS activity state

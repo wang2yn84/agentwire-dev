@@ -99,8 +99,26 @@ export const sidebar = {
 
         const header = document.createElement('div');
         header.className = 'sidebar-section-title sidebar-section-toggle';
-        header.innerHTML = `<span class="sidebar-section-chevron">▸</span> ${sectionObj.title}`;
-        header.addEventListener('click', () => this.toggleSection(id));
+        const titleSpan = `<span class="sidebar-section-chevron">▸</span> ${sectionObj.title}`;
+        const actions = (sectionObj.actions || []).map(a =>
+            `<button class="sidebar-section-action" data-action="${a.id}" title="${a.title || a.label}">${a.label}</button>`
+        ).join('');
+        header.innerHTML = actions
+            ? `<span class="sidebar-section-title-text">${titleSpan}</span><span class="sidebar-section-actions">${actions}</span>`
+            : titleSpan;
+        header.querySelector('.sidebar-section-title-text, .sidebar-section-chevron')
+            ?.closest('.sidebar-section-title-text')
+            ?.addEventListener('click', () => this.toggleSection(id));
+        if (!actions) header.addEventListener('click', () => this.toggleSection(id));
+        // Action button clicks
+        header.querySelectorAll('.sidebar-section-action').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const entry = this._sections.get(id);
+                if (!entry?.el.classList.contains('expanded')) this.expandSection(id);
+                sectionObj.onAction?.(btn.dataset.action, entry.body);
+            });
+        });
         section.appendChild(header);
 
         const body = document.createElement('div');

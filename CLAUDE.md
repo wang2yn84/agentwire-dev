@@ -357,24 +357,7 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | Minimize all | `desktop_minimize_all()` |
 | Multi-window layout | `desktop_layout(windows=[{id: "...", zone: "left"}])` |
 
-### SDK Hierarchy (6 tools)
-
-| Action | MCP Tool |
-|--------|----------|
-| Spawn child session | `sdk_child_spawn(child_name="...", parent="...", role="...", path="...", auto_kill=True)` |
-| Send prompt to child | `sdk_child_send(child="...", prompt="...")` |
-| Check child status | `sdk_child_status(child="...")` |
-| Get child's last result | `sdk_child_result(child="...")` |
-| List children | `sdk_children_list(parent="...")` |
-| Kill child | `sdk_child_kill(child="...")` |
-
-SDK hierarchy enables parent-child relationships between SDK sessions. Children notify parents on completion via `child_completed` messages. Parents auto-detect from `$TMUX_PANE` when `parent` is omitted. Killing a parent cascades to all children. Dashboard shows hierarchy tags and groups children under parents.
-
-Portal API endpoints:
-- `POST /api/session/{name}/spawn` — Spawn child (`{name, path?, type?, role?, auto_kill_on_complete?}`)
-- `GET /api/session/{name}/children` — List children (`{children: [{name, busy, message_count, path}]}`)
-
-**92 tools total.** When to use CLI vs MCP:
+**86 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
@@ -628,7 +611,7 @@ session:
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `sdk-bypass`, etc. | Session permission level. **Use `claude-auto` for overnight/unattended work** — same capability as `claude-bypass` but with AI classifier blocking dangerous actions. Requires Team/Enterprise plan. |
+| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `claudeglm-bypass`, etc. | Session permission level. **Use `claude-auto` for overnight/unattended work** — same capability as `claude-bypass` but with AI classifier blocking dangerous actions. Requires Team/Enterprise plan. |
 | `roles` | List of role names | Roles to load (from bundled or `~/.agentwire/roles/`) |
 | `voice` | Voice name | TTS voice for this project |
 | `parent` | Session name | Parent session for hierarchical notifications |
@@ -840,23 +823,8 @@ The scheduler uses **claudeGLM** (Claude Code + GLM-5) for scheduled tasks. clau
 | Human-directed work | `claude` (Anthropic) | `.agentwire.yml` → `type: claude-bypass` |
 | Human-directed, cost-sensitive | `claudeGLM` (Z.AI) | Manual session creation |
 | Scheduled tasks (scheduler) | `claudeGLM` (Z.AI) | `scheduler.yaml` → `type: claude-bypass` |
-| SDK sessions (structured events) | Agent SDK | `type: sdk-bypass` / `sdk-prompted` / `sdk-restricted` |
 
 By default, `agentwire new --type X` is a session-level override only and never saves to `.agentwire.yml`. Use `--persist` to opt in to saving.
-
-### SDK Sessions (Agent SDK)
-
-SDK sessions use the Claude Agent SDK instead of tmux. They run as pure Python async processes in the portal, providing structured JSON message events instead of terminal scraping. No tmux needed.
-
-**Session types:**
-- `sdk-bypass` → `bypassPermissions` (full automation)
-- `sdk-prompted` → `default` (permission prompts)
-- `sdk-restricted` → `plan` (read-only)
-
-**Constraints:** SDK sessions live in portal memory. Portal crash = lost sessions. They require the portal to be running.
-
-**Create via CLI:** `agentwire new -s name --type sdk-bypass -p /path/to/project`
-**Create via Portal UI:** Select an `sdk-*` type in the session creation dialog
 
 ### Scheduler Task Gates
 

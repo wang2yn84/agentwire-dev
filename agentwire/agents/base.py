@@ -1,7 +1,6 @@
 """Abstract base class for agent backends."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from pathlib import Path
 
 
@@ -96,99 +95,3 @@ class AgentBackend(ABC):
         """
         pass
 
-    # --- Structured event methods (SDK backends) ---
-    # Non-abstract with default NotImplementedError so TmuxAgent is unaffected.
-
-    def supports_structured_events(self) -> bool:
-        """Whether this backend provides structured JSON message events.
-
-        Returns:
-            True for SDK-based backends, False for terminal-scraping backends.
-        """
-        return False
-
-    async def send_prompt(self, name: str, prompt: str) -> bool:
-        """Send a prompt to a session and begin processing.
-
-        Args:
-            name: Session name
-            prompt: The user prompt text
-
-        Returns:
-            True if prompt was sent successfully
-        """
-        raise NotImplementedError("send_prompt requires an SDK backend")
-
-    async def get_messages(self, name: str) -> list[dict]:
-        """Get full structured message history for a session.
-
-        Args:
-            name: Session name
-
-        Returns:
-            List of message dicts with type, timestamp, content fields
-        """
-        raise NotImplementedError("get_messages requires an SDK backend")
-
-    async def interrupt_session(self, name: str) -> bool:
-        """Interrupt a running session.
-
-        Args:
-            name: Session name
-
-        Returns:
-            True if interrupt was sent successfully
-        """
-        raise NotImplementedError("interrupt_session requires an SDK backend")
-
-    def register_message_callback(self, name: str, callback: Callable) -> None:
-        """Register a callback for real-time message events.
-
-        Args:
-            name: Session name
-            callback: Async callable receiving a message dict
-        """
-        raise NotImplementedError("register_message_callback requires an SDK backend")
-
-    def unregister_message_callback(self, name: str, callback: Callable) -> None:
-        """Unregister a previously registered message callback.
-
-        Args:
-            name: Session name
-            callback: The callback to remove
-        """
-        raise NotImplementedError("unregister_message_callback requires an SDK backend")
-
-    # --- Hierarchy methods (SDK backends) ---
-
-    async def spawn_child(
-        self,
-        parent_name: str,
-        child_name: str,
-        path: str | None = None,
-        session_type: str | None = None,
-        system_prompt_append: str | None = None,
-        auto_kill_on_complete: bool = True,
-    ) -> bool:
-        """Spawn a child session linked to a parent.
-
-        Args:
-            parent_name: Parent session name
-            child_name: Name for the new child session
-            path: Working directory (defaults to parent's path)
-            session_type: Session type (defaults to parent's type)
-            system_prompt_append: Extra instructions for the child
-            auto_kill_on_complete: Kill child on completion (default True)
-        """
-        raise NotImplementedError("spawn_child requires an SDK backend")
-
-    def list_children(self, parent_name: str) -> list[dict]:
-        """List children of a parent session.
-
-        Args:
-            parent_name: Parent session name
-
-        Returns:
-            List of child info dicts with name, busy, message_count, path
-        """
-        raise NotImplementedError("list_children requires an SDK backend")

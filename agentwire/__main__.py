@@ -31,7 +31,6 @@ from .project_config import (
     detect_default_agent_type,
     get_parent_from_config,
     get_voice_from_config,
-    is_sdk_session_type,
     load_project_config,
     normalize_session_type,
     save_project_config,
@@ -483,138 +482,6 @@ def _portal_api(method: str, path: str, data: dict | None = None, timeout: int =
     except Exception:
         return None
 
-
-# --- SDK task runner helpers ---
-
-
-def _sdk_session_status(name: str) -> dict | None:
-    """Get SDK session status from portal. Returns None if portal unreachable."""
-    return _portal_api("GET", f"/api/session/{name}/status")
-
-
-def _sdk_session_exists(name: str) -> bool:
-    """Check if an SDK session exists in the portal."""
-    status = _sdk_session_status(name)
-    return status is not None and status.get("exists", False)
-
-
-def _sdk_session_busy(name: str) -> bool:
-    """Check if an SDK session is currently processing a prompt."""
-    status = _sdk_session_status(name)
-    return status is not None and status.get("busy", False)
-
-
-def _sdk_send_prompt(name: str, prompt: str) -> bool:
-    """Send a prompt to an SDK session via portal API."""
-    result = _portal_api("POST", f"/api/session/{name}/prompt", {"prompt": prompt}, timeout=30)
-    return result is not None and result.get("success", False)
-
-
-def _sdk_get_message_count(name: str) -> int:
-    """Get current message count for an SDK session."""
-    status = _sdk_session_status(name)
-    return status.get("message_count", 0) if status else 0
-
-
-def _sdk_get_messages(name: str) -> list[dict]:
-    """Get all messages from an SDK session."""
-    result = _portal_api("GET", f"/api/session/{name}/messages", timeout=30)
-    return result.get("messages", []) if result else []
-
-
-def _sdk_wait_for_result(name: str, since_count: int, timeout: float = 600.0, poll_interval: float = 3.0) -> dict | None:
-    """Poll SDK session messages until a ResultMessage appears after since_count.
-
-    Returns the result message dict, or None on timeout.
-    """
-    start = time.time()
-    while time.time() - start < timeout:
-        messages = _sdk_get_messages(name)
-        # Look for a result message after the since_count position
-        for msg in messages[since_count:]:
-            if msg.get("type") == "result":
-                return msg
-        time.sleep(poll_interval)
-    return None
-
-
-def _sdk_capture_output(name: str, lines: int = 50) -> str:
-    """Capture recent output from an SDK session as plain text."""
-    messages = _sdk_get_messages(name)
-    return _render_messages_as_text(messages[-lines:] if len(messages) > lines else messages)
-
-
-def _render_messages_as_text(messages: list[dict]) -> str:
-    """Render SDK messages as plain text for output capture."""
-    parts = []
-    for msg in messages:
-        msg_type = msg.get("type", "")
-        if msg_type == "user":
-            parts.append(f"User: {msg.get('text', '')}")
-        elif msg_type == "assistant":
-            content = msg.get("content", [])
-            for block in content:
-                if block.get("type") == "text":
-                    parts.append(f"Assistant: {block.get('text', '')}")
-                elif block.get("type") == "tool_use":
-                    parts.append(f"Tool: {block.get('name', '')}({json.dumps(block.get('input', {}))[:200]})")
-        elif msg_type == "result":
-            result_text = msg.get("result", "")
-            is_error = msg.get("is_error", False)
-            prefix = "Error" if is_error else "Result"
-            parts.append(f"{prefix}: {result_text}")
-    return "\n".join(parts)
-
-
-def _sdk_spawn_child(parent: str, child_name: str, **kwargs) -> bool:
-    """Spawn a child SDK session via portal API.
-
-    kwargs: path, type, role, auto_kill_on_complete
-    """
-    body = {"name": child_name}
-    if kwargs.get("path"):
-        body["path"] = kwargs["path"]
-    if kwargs.get("type"):
-        body["type"] = kwargs["type"]
-    if kwargs.get("role"):
-        body["role"] = kwargs["role"]
-    if "auto_kill_on_complete" in kwargs:
-        body["auto_kill_on_complete"] = kwargs["auto_kill_on_complete"]
-
-    result = _portal_api("POST", f"/api/session/{parent}/spawn", body, timeout=30)
-    return result is not None and result.get("success", False)
-
-
-def _sdk_list_children(parent: str) -> list[dict]:
-    """List children of an SDK session via portal API."""
-    result = _portal_api("GET", f"/api/session/{parent}/children", timeout=10)
-    return result.get("children", []) if result else []
-
-
-SDK_STATUS_PROMPT = """Based on your work above, classify the outcome.
-Reply with EXACTLY one line: STATUS: complete|incomplete|failed — <one sentence summary>"""
-
-
-def _parse_sdk_status(result_text: str) -> tuple[str, str]:
-    """Parse STATUS: complete|incomplete|failed — summary from agent response.
-
-    Returns (status, summary). Falls back to keyword matching, defaults to "complete".
-    """
-    import re
-
-    # Try exact format first
-    match = re.search(r"STATUS:\s*(complete|incomplete|failed)\s*[—\-–]\s*(.*)", result_text, re.IGNORECASE)
-    if match:
-        return match.group(1).lower(), match.group(2).strip()
-
-    # Fallback: keyword matching
-    lower = result_text.lower()
-    if "failed" in lower or "error" in lower:
-        return "failed", result_text[:200].strip()
-    if "incomplete" in lower or "not complete" in lower:
-        return "incomplete", result_text[:200].strip()
-
-    return "complete", result_text[:200].strip()
 
 
 def _parse_session_target(name: str) -> tuple[str, str | None]:
@@ -3185,16 +3052,6 @@ def cmd_send(args) -> int:
             print("Usage: agentwire send -s <session> <prompt>", file=sys.stderr)
         return 1
 
-    # SDK sessions: send via portal API
-    result = _portal_api("POST", f"/api/session/{session_full}/prompt", {"prompt": prompt})
-    if result is not None and result.get("success"):
-        if json_mode:
-            print(json.dumps({"success": True, "session": session_full, "message": "Prompt sent via SDK"}))
-        else:
-            print(f"Sent to {session_full} (SDK)")
-        return 0
-    # Not an SDK session or portal not running - fall through to tmux
-
     # Parse session@machine format
     session, machine_id = _parse_session_target(session_full)
     if machine_id:
@@ -3376,28 +3233,6 @@ def cmd_list(args) -> int:
                         all_sessions.append(session_info)
 
     # Get remote sessions from all registered machines (skip if local_only)
-    # Get SDK sessions from portal (if running) — uses fast /api/sessions/sdk endpoint
-    sdk_sessions = []
-    if not remote_only:
-        portal_data = _portal_api("GET", "/api/sessions/sdk", timeout=5)
-        if portal_data:
-            for s in portal_data.get("sessions", []):
-                session_info = {
-                    "name": s["name"],
-                    "windows": 0,
-                    "path": s.get("path", ""),
-                    "machine": None,
-                    "type": s.get("type", "sdk-bypass"),
-                    "backend": "sdk",
-                }
-                if s.get("parent_session"):
-                    session_info["parent_session"] = s["parent_session"]
-                if s.get("children"):
-                    session_info["children"] = s["children"]
-                sdk_sessions.append(session_info)
-                all_sessions.append(session_info)
-                local_sessions.append(session_info)
-
     remote_by_machine = {}
     if not local_only:
         machines = _get_all_machines()
@@ -3470,10 +3305,7 @@ def cmd_list(args) -> int:
             for s in sessions:
                 # Remove @machine suffix for display within machine group
                 display_name = s['name'].rsplit('@', 1)[0] if '@' in s['name'] else s['name']
-                if s.get('backend') == 'sdk':
-                    print(f"  {display_name}: [sdk] ({s['path']})")
-                else:
-                    print(f"  {display_name}: {s['windows']} window(s) ({s['path']})")
+                print(f"  {display_name}: {s['windows']} window(s) ({s['path']})")
         else:
             print("  (no sessions)")
         print()
@@ -3482,47 +3314,18 @@ def cmd_list(args) -> int:
 
 
 def cmd_new(args) -> int:
-    """Create a new agent session (tmux or SDK).
+    """Create a new agent session.
 
     Supports:
     - "project" -> simple session in ~/projects/project/
     - "project/branch" -> worktree session in ~/projects/project-worktrees/branch/
     - "project@machine" -> remote session
     - "project/branch@machine" -> remote worktree session
-    - SDK sessions (sdk-bypass, sdk-prompted, sdk-restricted) -> portal API, no tmux
     """
     json_mode = getattr(args, 'json', False)
 
     if not _check_config_exists():
         return 1 if not json_mode else _output_result(False, json_mode, "AgentWire not configured. Run 'agentwire init'")
-
-    # SDK sessions: create via portal API (no tmux needed)
-    from .project_config import is_sdk_session_type
-    session_type = getattr(args, 'type', None)
-    if session_type and is_sdk_session_type(session_type):
-        name = args.session
-        path = args.path
-        if not name:
-            return _output_result(False, json_mode, "Usage: agentwire new -s <name> --type sdk-bypass [-p path]")
-
-        config = load_config()
-        projects_dir = Path(config.get("projects", {}).get("dir", "~/projects")).expanduser()
-        session_path = str(Path(path).expanduser().resolve()) if path else str(projects_dir / name)
-
-        result = _portal_api("POST", "/api/create", {
-            "name": name,
-            "path": session_path,
-            "type": session_type,
-        })
-        if result is None:
-            return _output_result(False, json_mode, "Portal not running. SDK sessions require the portal.")
-        if result.get("success"):
-            if json_mode:
-                print(json.dumps({"session": name, "path": session_path, "type": session_type}))
-            else:
-                print(f"Created SDK session '{name}' (type={session_type})")
-            return 0
-        return _output_result(False, json_mode, result.get("error", "Failed to create SDK session"))
 
     if not _check_tmux_installed():
         return 1 if not json_mode else _output_result(False, json_mode, "tmux is required but not installed")
@@ -3909,22 +3712,6 @@ def cmd_output(args) -> int:
             print("Usage: agentwire output -s <session> [-n lines]", file=sys.stderr)
             print("   or: agentwire output --pane N [-n lines]", file=sys.stderr)
         return 1
-
-    # Check if this is an SDK session via portal
-    result_data = _portal_api("GET", f"/api/session/{session_full}/messages")
-    if result_data is not None:
-        messages = result_data.get("messages", [])
-        if json_mode:
-            print(json.dumps({"success": True, "session": session_full, "messages": messages}))
-        else:
-            from .agents.sdk import _render_messages_as_text
-            text = _render_messages_as_text(messages, lines)
-            if text:
-                print(text)
-            else:
-                print(f"(SDK session '{session_full}' — no messages yet)")
-        return 0
-    # Not an SDK session or portal not running - fall through to tmux
 
     # Parse session@machine format
     session, machine_id = _parse_session_target(session_full)
@@ -7819,21 +7606,6 @@ def cmd_ensure(args) -> int:
     # Acquire lock
     try:
         with session_lock(session, wait=wait_lock, timeout=lock_timeout):
-            # Check if this should use the SDK path
-            if _sdk_session_exists(session):
-                return _run_ensure_task_sdk(
-                    args, session, task, ctx, shell, project_path, json_mode
-                )
-
-            from .project_config import load_project_config as _load_pc, is_sdk_session_type
-            project_config = _load_pc(project_path)
-            if project_config and project_config.type:
-                if is_sdk_session_type(project_config.type.value):
-                    return _run_ensure_task_sdk(
-                        args, session, task, ctx, shell, project_path, json_mode
-                    )
-
-            # Default: tmux path
             return _run_ensure_task(
                 args, session, task, ctx, shell, project_path, json_mode
             )
@@ -8306,232 +8078,6 @@ def _run_ensure_task(args, session, task, ctx, shell, project_path, json_mode) -
         if ctx.pr_url:
             result_data["pr_url"] = ctx.pr_url
         _output_json(result_data)
-    else:
-        print(f"\nTask {task.name}: {last_status}")
-
-    return exit_code
-
-
-def _run_ensure_task_sdk(args, session, task, ctx, shell, project_path, json_mode) -> int:
-    """Run a task using the SDK backend (called within lock context).
-
-    SDK sessions use structured messages and ResultMessage for completion detection.
-    No hooks, no summary files, no idle heuristics.
-    """
-    from .completion import status_to_exit_code
-    from .tasks import PreCommandError, run_post_command, run_pre_command
-    from .templating import TemplateError, expand_all
-
-    max_attempts = task.retries + 1
-    last_status = "incomplete"
-    last_summary = ""
-
-    for attempt in range(1, max_attempts + 1):
-        ctx.attempt = attempt
-
-        if not json_mode and max_attempts > 1:
-            print(f"Attempt {attempt}/{max_attempts}")
-
-        # Ensure SDK session exists — create via portal API if needed
-        if not _sdk_session_exists(session):
-            if not json_mode:
-                print(f"Creating SDK session '{session}'...")
-
-            from .project_config import load_project_config as _load_pc
-            pc = _load_pc(project_path)
-            session_type = pc.type.value if pc and pc.type else "sdk-bypass"
-
-            result = _portal_api("POST", "/api/create", {
-                "name": session,
-                "type": session_type,
-                "path": str(project_path),
-            }, timeout=15)
-            if not result or not result.get("success"):
-                return _output_result(
-                    False, json_mode,
-                    f"Failed to create SDK session '{session}'",
-                    exit_code=ENSURE_EXIT_SESSION_ERROR,
-                )
-
-        # Wait for session to not be busy
-        if not json_mode:
-            print("Waiting for SDK session to be idle...")
-        wait_start = time.time()
-        while _sdk_session_busy(session):
-            if time.time() - wait_start > 60:
-                return _output_result(
-                    False, json_mode,
-                    f"SDK session '{session}' still busy after 60s",
-                    exit_code=ENSURE_EXIT_SESSION_ERROR,
-                )
-            time.sleep(2)
-
-        # Run pre-commands (same as tmux path)
-        if task.pre:
-            if not json_mode:
-                print("Running pre-commands...")
-            for pre in task.pre:
-                try:
-                    output = run_pre_command(pre, shell, project_path)
-                    ctx.set_pre_output(pre.name, output)
-                    if not json_mode:
-                        print(f"  {pre.name}: {len(output)} chars")
-                except PreCommandError as e:
-                    return _output_result(False, json_mode, str(e), exit_code=ENSURE_EXIT_PRE_FAILURE)
-
-        # Expand prompt (same as tmux path)
-        try:
-            prompt = expand_all(task.prompt, ctx)
-        except TemplateError as e:
-            return _output_result(False, json_mode, str(e), exit_code=ENSURE_EXIT_PRE_FAILURE)
-
-        # Append previous task summaries
-        summary_glob = f".agentwire/task-summary-{session}-{task.name}-*.md"
-        prev_summaries = sorted(
-            project_path.glob(summary_glob),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )[:5]
-        if prev_summaries:
-            prompt += "\n\nPrevious task summaries (consider them when generating your output):"
-            for p in prev_summaries:
-                prompt += f"\n- {p}"
-
-        # Record message count before sending
-        count_before = _sdk_get_message_count(session)
-
-        if not json_mode:
-            print("Sending task prompt...")
-
-        # Send prompt via portal API
-        if not _sdk_send_prompt(session, prompt):
-            return _output_result(
-                False, json_mode,
-                f"Failed to send prompt to SDK session '{session}'",
-                exit_code=ENSURE_EXIT_SESSION_ERROR,
-            )
-
-        # Wait for ResultMessage
-        if not json_mode:
-            print("Waiting for task completion...")
-
-        result_msg = _sdk_wait_for_result(session, count_before, timeout=task.idle_timeout * 20)
-
-        if result_msg is None:
-            last_status = "incomplete"
-            last_summary = "Timeout waiting for SDK task completion"
-            if attempt < max_attempts:
-                if not json_mode:
-                    print(f"Timeout, retrying in {task.retry_delay}s...")
-                time.sleep(task.retry_delay)
-                continue
-            break
-
-        # Determine status from result
-        if result_msg.get("is_error"):
-            last_status = "failed"
-            last_summary = result_msg.get("result", "Unknown error")[:500]
-        else:
-            # Ask agent to classify its own work
-            assess_count = _sdk_get_message_count(session)
-            if not json_mode:
-                print("Requesting status assessment...")
-
-            if _sdk_send_prompt(session, SDK_STATUS_PROMPT):
-                assess_result = _sdk_wait_for_result(session, assess_count, timeout=120)
-                if assess_result and not assess_result.get("is_error"):
-                    last_status, last_summary = _parse_sdk_status(assess_result.get("result", ""))
-                else:
-                    # Assessment failed — treat original result as complete
-                    last_status = "complete"
-                    last_summary = result_msg.get("result", "")[:200]
-            else:
-                # Couldn't send assessment — use result text
-                last_status = "complete"
-                last_summary = result_msg.get("result", "")[:200]
-
-        ctx.status = last_status
-        ctx.summary = last_summary
-
-        if not json_mode:
-            print(f"Task status: {last_status}")
-            if last_summary:
-                print(f"Summary: {last_summary}")
-
-        # on_task_end: send as SDK prompt and wait for completion
-        if task.on_task_end:
-            try:
-                end_prompt = expand_all(task.on_task_end, ctx)
-                end_count = _sdk_get_message_count(session)
-                if _sdk_send_prompt(session, end_prompt):
-                    _sdk_wait_for_result(session, end_count, timeout=120)
-                    if not json_mode:
-                        print("on_task_end completed")
-                else:
-                    if not json_mode:
-                        print("Warning: could not send on_task_end prompt (session busy)")
-            except TemplateError as e:
-                if not json_mode:
-                    print(f"Warning: template error in on_task_end: {e}")
-
-        # Capture output
-        ctx.output = _sdk_capture_output(session, lines=task.output.capture)
-
-        # Run post-commands (same as tmux path)
-        if task.post:
-            if not json_mode:
-                print("Running post-commands...")
-            for cmd in task.post:
-                try:
-                    expanded_cmd = expand_all(cmd, ctx)
-                    rc, stdout, stderr = run_post_command(expanded_cmd, shell, project_path)
-                    if rc != 0 and not json_mode:
-                        print(f"  Warning: post-command failed: {stderr}")
-                except TemplateError as e:
-                    if not json_mode:
-                        print(f"  Warning: template error in post-command: {e}")
-
-        # Handle notifications (same as tmux path)
-        if task.output.notify:
-            _handle_task_notification(task.output.notify, ctx, session, json_mode)
-
-        # Save output if configured (same as tmux path)
-        if task.output.save:
-            try:
-                save_path = Path(expand_all(task.output.save, ctx)).expanduser()
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                save_path.write_text(ctx.output)
-                if not json_mode:
-                    print(f"Output saved to: {save_path}")
-            except Exception as e:
-                if not json_mode:
-                    print(f"Warning: Failed to save output: {e}")
-
-        # Exit on complete: kill SDK session
-        if task.exit_on_complete and last_status == "complete":
-            _portal_api("DELETE", f"/api/sessions/{session}")
-            if not json_mode:
-                print(f"Session '{session}' killed (exit_on_complete)")
-
-        # Check if we should retry
-        if last_status == "failed" and attempt < max_attempts:
-            if not json_mode:
-                print(f"Task failed, retrying in {task.retry_delay}s...")
-            time.sleep(task.retry_delay)
-            continue
-
-        break
-
-    # Final result
-    exit_code = status_to_exit_code(last_status)
-
-    if json_mode:
-        _output_json({
-            "success": last_status == "complete",
-            "status": last_status,
-            "summary": last_summary,
-            "attempt": ctx.attempt,
-        })
     else:
         print(f"\nTask {task.name}: {last_status}")
 

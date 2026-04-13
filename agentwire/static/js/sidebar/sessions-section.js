@@ -28,9 +28,6 @@ export function renderCard(s) {
     const id = machine ? `${name}@${machine}` : name;
     const activity = activityStates.get(name) || s.activity || 'idle';
     const dotClass = activity === 'idle' ? 'dot-idle' : activity === 'processing' ? 'dot-processing' : activity === 'generating' ? 'dot-generating' : 'dot-playing';
-    const isSdk = (s.type || '').startsWith('sdk');
-    const connectAction = isSdk ? 'sdk' : 'connect';
-    const connectLabel = isSdk ? 'Open' : '▸';
     const tags = [];
     if (s.type) tags.push(`<span class="sidebar-tag">${s.type}</span>`);
     if (machine) tags.push(`<span class="sidebar-tag">@${machine}</span>`);
@@ -40,7 +37,7 @@ export function renderCard(s) {
         <div class="sidebar-session-row1">
             <span class="sidebar-activity-dot ${dotClass}" data-session-dot="${name}"></span>
             <span class="sidebar-session-name">${name}</span>
-            <button class="sidebar-list-item-btn" data-action="${connectAction}" title="Connect">${connectLabel}</button>
+            <button class="sidebar-list-item-btn" data-action="connect" title="Connect">▸</button>
             <button class="sidebar-list-item-btn" data-action="monitor" title="Monitor">👁</button>
         </div>
         <div class="sidebar-session-row2">
@@ -69,7 +66,6 @@ export async function handleSessionClick(e) {
     const { openSessionTerminal } = await import('../desktop.js');
     if (action === 'connect') openSessionTerminal(session, 'terminal', machine);
     else if (action === 'monitor') openSessionTerminal(session, 'monitor', machine);
-    else if (action === 'sdk') openSessionTerminal(session, 'sdk', machine);
 }
 
 // Data fetching + WebSocket events (registered once by sessionsSection)
@@ -130,7 +126,12 @@ async function fetchSessions() {
 
 export const sessionsSection = {
     title: 'Sessions',
+    actions: [
+        { id: 'new', label: '+', title: 'New session' },
+        { id: 'worktree', label: '⎇', title: 'New worktree session' },
+    ],
     _body: null,
+    _formType: null,  // null | 'new' | 'worktree'
 
     async mount(body) {
         this._body = body;
@@ -143,13 +144,112 @@ export const sessionsSection = {
         await fetchSessions();
     },
 
-    _render(body) {
-        const work = allSessions.filter(s => !isService(s.name || '') && !isSocial(s));
-        if (!work.length) {
-            body.innerHTML = '<div class="sidebar-empty">No sessions</div>';
+    onAction(actionId, body) {
+        if (this._formType === actionId) {
+            this._formType = null;
+        } else {
+            this._formType = actionId;
+        }
+        this._render(body);
+        const input = body.querySelector('.sidebar-form input[name="name"], .sidebar-form input[name="path"]');
+        input?.focus();
+    },
+
+    _renderForm() {
+        if (!this._formType) return '';
+        const isWorktree = this._formType === 'worktree';
+        return `<div class="sidebar-form">
+            ${isWorktree ? '' : '<input type="text" name="name" placeholder="Session name" autocomplete="off" />'}
+            <input type="text" name="path" placeholder="Path (e.g. ~/projects/foo)" autocomplete="off" />
+            ${isWorktree ? '<input type="text" name="branch" placeholder="Branch name" autocomplete="off" />' : ''}
+            ${isWorktree ? '<input type="text" name="base" placeholder="Base branch (default: main)" autocomplete="off" />' : ''}
+            <div class="sidebar-form-row">
+                <button class="sidebar-form-btn" data-form-action="submit">${isWorktree ? 'Create worktree' : 'Create'}</button>
+                <button class="sidebar-form-btn sidebar-form-btn-cancel" data-form-action="cancel">Cancel</button>
+            </div>
+        </div>`;
+    },
+
+    async _handleFormClick(e, body) {
+        const btn = e.target.closest('[data-form-action]');
+        if (!btn) return;
+        const action = btn.dataset.formAction;
+        if (action === 'cancel') {
+            this._formType = null;
+            this._render(body);
             return;
         }
-        body.innerHTML = work.map(s => renderCard(s)).join('');
-        body.onclick = (e) => handleSessionClick(e);
+        if (action === 'submit') {
+            const form = body.querySelector('.sidebar-form');
+            const isWorktree = this._formType === 'worktree';
+            const path = form.querySelector('input[name="path"]')?.value.trim();
+            let name;
+            if (isWorktree) {
+                if (!path) return;
+                // Derive project name from path basename
+                name = path.replace(/\/+$/, '').split('/').pop().replace(/^~/, '');
+                if (!name) return;
+            } else {
+                name = form.querySelector('input[name="name"]')?.value.trim();
+                if (!name) return;
+            }
+            const branch = isWorktree ? (form.querySelector('input[name="branch"]')?.value.trim() || '') : '';
+            if (isWorktree && !branch) return;
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+            try {
+                const payload = { name };
+                if (path) payload.path = path;
+                if (isWorktree) {
+                    payload.worktree = true;
+                    payload.branch = branch;
+                }
+                const res = await fetch('/api/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    this._formType = null;
+                    this._render(body);
+                    const { openSessionTerminal } = await import('../desktop.js');
+                    const sessionName = data.session || data.name || name;
+                    openSessionTerminal(sessionName, 'terminal');
+                } else {
+                    const err = await res.json().catch(() => ({}));
+                    btn.textContent = err.error || 'Error';
+                    setTimeout(() => { btn.disabled = false; btn.textContent = isWorktree ? 'Create worktree' : 'Create'; }, 2000);
+                }
+            } catch (e) {
+                btn.textContent = 'Error';
+                setTimeout(() => { btn.disabled = false; btn.textContent = isWorktree ? 'Create worktree' : 'Create'; }, 2000);
+            }
+        }
+    },
+
+    _render(body) {
+        const work = allSessions.filter(s => !isService(s.name || '') && !isSocial(s));
+        let html = this._renderForm();
+        if (!work.length && !this._formType) {
+            html += '<div class="sidebar-empty">No sessions</div>';
+        } else {
+            html += work.map(s => renderCard(s)).join('');
+        }
+        body.innerHTML = html;
+        body.onclick = (e) => {
+            if (e.target.closest('.sidebar-form')) {
+                this._handleFormClick(e, body);
+                return;
+            }
+            handleSessionClick(e);
+        };
+        // Enter key submits form
+        body.querySelector('.sidebar-form')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                body.querySelector('[data-form-action="submit"]')?.click();
+            }
+        });
     },
 };

@@ -1051,9 +1051,9 @@ class TestComposeSessionConfig:
         t, _, _ = compose_session_config(
             platform={"type": "claude-bypass"},
             scope={"type": "claude-auto"},
-            specific={"type": "sdk-bypass"},
+            specific={"type": "claudeglm-bypass"},
         )
-        assert t == "sdk-bypass"
+        assert t == "claudeglm-bypass"
 
     def test_type_precedence_scope_over_platform(self):
         from agentwire.channels.base import compose_session_config
@@ -1072,9 +1072,9 @@ class TestComposeSessionConfig:
     def test_type_custom_fallback(self):
         from agentwire.channels.base import compose_session_config
         t, _, _ = compose_session_config(
-            platform={}, scope={}, specific={}, fallback_type="sdk-prompted",
+            platform={}, scope={}, specific={}, fallback_type="claudeglm-prompted",
         )
-        assert t == "sdk-prompted"
+        assert t == "claudeglm-prompted"
 
     def test_empty_instructions_skipped(self):
         from agentwire.channels.base import compose_session_config

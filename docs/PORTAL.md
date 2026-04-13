@@ -89,7 +89,7 @@ Projects are folders with `.agentwire.yml` files, discovered from `projects.dir`
 | Field | Description |
 |-------|-------------|
 | Name | Folder name |
-| Type | Session type (`claude-bypass`, `claude-prompted`, `claudeglm-bypass`, `sdk-bypass`, `sdk-prompted`, `sdk-restricted`) |
+| Type | Session type (`claude-bypass`, `claude-prompted`, `claudeglm-bypass`, etc.) |
 | Path | Full path to project folder |
 | Roles | Configured roles from `.agentwire.yml` |
 
@@ -115,18 +115,6 @@ Sessions can be opened from the Sessions dropdown in two modes:
 **Monitor mode** uses a `<pre>` element with ANSI-to-HTML conversion for colored output display. Ideal for observing Claude work without needing terminal interaction.
 
 **Terminal mode** uses xterm.js with WebGL acceleration (falls back to canvas). Full terminal emulation with vim, tab completion, readline support.
-
-### SDK Session Windows
-
-SDK sessions (`sdk-bypass`, `sdk-prompted`, `sdk-restricted`) use the Claude Agent SDK instead of tmux. They provide a chat-like interface with structured message display.
-
-| Feature | tmux sessions | SDK sessions |
-|---------|---------------|--------------|
-| Backend | tmux subprocess | Claude Agent SDK (Python async) |
-| Output | Terminal emulation (Monitor/Terminal) | Structured JSON messages |
-| Interface | `<pre>` / xterm.js | Chat message list + input bar |
-| Persistence | Survives portal crash | Lives in portal memory |
-| Child sessions | Worker panes | SDK hierarchy (parent-child) |
 
 ### Simultaneous Operation
 
@@ -315,9 +303,6 @@ uploads:
 | `/api/session/{name}/fork` | POST | Fork Claude Code session |
 | `/api/session/{name}/restart-service` | POST | Restart system service |
 | `/api/sessions/{name}/connections` | GET | Get connection count for session |
-| `/api/session/{name}/spawn` | POST | Spawn child SDK session (`{name, path?, type?, role?, auto_kill_on_complete?}`) |
-| `/api/session/{name}/children` | GET | List children of SDK session (`{children: [{name, busy, message_count, path}]}`) |
-
 ### Voice & Input
 
 | Endpoint | Method | Purpose |
