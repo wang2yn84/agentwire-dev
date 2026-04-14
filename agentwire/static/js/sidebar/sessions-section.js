@@ -4,7 +4,10 @@ import { desktop } from '../desktop-manager.js';
 export const activityStates = new Map();
 export function isService(name) { return name.startsWith('agentwire-'); }
 
-const SOCIAL_PREFIXES = ['discord-dm-', 'slack-dm-', 'telegram-dm-'];
+const SOCIAL_PREFIXES = [
+    'discord-dm-', 'slack-dm-', 'telegram-dm-',
+    'discord-ch-', 'slack-ch-',
+];
 const SOCIAL_ROLES = ['discord-dm', 'slack-dm', 'telegram-dm'];
 
 export function isSocial(session) {
