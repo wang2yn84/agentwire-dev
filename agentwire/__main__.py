@@ -106,6 +106,26 @@ def inject_session_env(session: str, env: dict[str, str], remote_host: str | Non
             )
 
 
+def parse_env_args(env_args: list[str] | None) -> dict[str, str]:
+    """Parse repeated `--env KEY=VAL` flags into a dict.
+
+    Raises SystemExit via argparse pattern if an entry lacks `=`.
+    """
+    if not env_args:
+        return {}
+    result: dict[str, str] = {}
+    for entry in env_args:
+        if "=" not in entry:
+            print(f"Error: --env expects KEY=VAL, got {entry!r}", file=sys.stderr)
+            sys.exit(2)
+        key, value = entry.split("=", 1)
+        if not key:
+            print(f"Error: --env KEY cannot be empty (got {entry!r})", file=sys.stderr)
+            sys.exit(2)
+        result[key] = value
+    return result
+
+
 def build_session_env_shell_fragment(session: str, env: dict[str, str]) -> str:
     """Build a shell fragment of `tmux set-environment` calls for chained remote commands.
 
@@ -3507,8 +3527,7 @@ def cmd_new(args) -> int:
 
         # Build agent command
         agent = build_agent_command(session_type, roles if roles else None)
-
-    
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
         agent_cmd = agent.command
 
@@ -3678,6 +3697,7 @@ def cmd_new(args) -> int:
     # Build agent command
     model_override = getattr(args, 'model', None)
     agent = build_agent_command(session_type, roles if roles else None, model=model_override)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
     agent_cmd = agent.command
 
@@ -4181,6 +4201,7 @@ def cmd_spawn(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles if roles else None)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
     agent_cmd = agent.command
 
@@ -4567,6 +4588,7 @@ def cmd_recreate(args) -> int:
 
         # Build agent command using the standard function
         agent = build_agent_command(session_type_str)
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
         agent_cmd = agent.command
         env_fragment = build_session_env_shell_fragment(session_name, agent.env)
 
@@ -4671,6 +4693,7 @@ def cmd_recreate(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
     agent_cmd = agent.command
 
@@ -4754,6 +4777,7 @@ def cmd_worktree(args) -> int:
             'force': False, 'bare': False, 'restricted': False, 'prompted': False,
             'type': getattr(args, 'type', None), 'roles': getattr(args, 'roles', None),
             'instructions': None, 'persist': False,
+            'env': getattr(args, 'env', None),
         })())
 
     # If worktree already exists, reattach
@@ -4946,6 +4970,7 @@ def cmd_fork(args) -> int:
 
         # Build agent command
         agent = build_agent_command(session_type_str, roles)
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
         agent_cmd = agent.command
         env_fragment = build_session_env_shell_fragment(target_session, agent.env)
@@ -5101,6 +5126,7 @@ def cmd_fork(args) -> int:
 
         # Build agent command
         agent = build_agent_command(session_type_str, roles)
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
         # Inject secrets via tmux set-environment (keeps keys out of `ps`)
         inject_session_env(target_session, agent.env)
@@ -5217,6 +5243,7 @@ def cmd_fork(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
     agent_cmd = agent.command
 
     # Inject secrets via tmux set-environment (keeps keys out of `ps`)
@@ -9988,6 +10015,7 @@ def main() -> int:
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
     new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
     new_parser.add_argument("--persist", action="store_true", help="Write --type/--roles to .agentwire.yml (default: session-level override only)")
+    new_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable, keeps secrets out of `ps`)")
     new_parser.add_argument("--json", action="store_true", help="Output as JSON")
     new_parser.set_defaults(func=cmd_new)
 
@@ -10022,6 +10050,7 @@ def main() -> int:
     spawn_parser.add_argument("--roles", default="worker", help="Comma-separated roles (default: worker)")
     spawn_parser.add_argument("--no-wait", action="store_true", help="Don't wait for worker to be ready (default: wait up to 30s)")
     spawn_parser.add_argument("--timeout", type=int, default=30, help="Seconds to wait for worker ready (default: 30)")
+    spawn_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var onto parent session (repeatable)")
     spawn_parser.add_argument("--json", action="store_true", help="Output as JSON")
     spawn_parser.set_defaults(func=cmd_spawn)
 
@@ -10057,6 +10086,7 @@ def main() -> int:
     recreate_parser.add_argument("-s", "--session", required=True, help="Session name (project/branch or project/branch@machine)")
     # Session type
     recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
+    recreate_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     recreate_parser.add_argument("--json", action="store_true", help="Output as JSON")
     recreate_parser.set_defaults(func=cmd_recreate)
 
@@ -10067,6 +10097,7 @@ def main() -> int:
     # Session type
     fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
     fork_parser.add_argument("--commit", metavar="REF", help="Fork from this commit/ref instead of HEAD (e.g. abc123, main~5)")
+    fork_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     fork_parser.add_argument("--json", action="store_true", help="Output as JSON")
     fork_parser.set_defaults(func=cmd_fork)
 
@@ -10080,6 +10111,7 @@ def main() -> int:
     wt_parser.add_argument("--project", "-p", help="Path to git repo (default: from config or cwd)")
     wt_parser.add_argument("--type", help="Session type override")
     wt_parser.add_argument("--roles", help="Comma-separated role names")
+    wt_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     wt_parser.add_argument("--json", action="store_true", help="Output as JSON")
     wt_parser.set_defaults(func=cmd_worktree)
 

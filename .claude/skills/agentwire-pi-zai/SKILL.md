@@ -31,6 +31,9 @@ agentwire new -s fast --type pi-zai --model glm-4.7-flash
 
 # Persist type to .agentwire.yml (opt-in)
 agentwire new -s project --type pi-zai --persist
+
+# Add custom env vars (repeatable, injected via tmux set-environment)
+agentwire new -s project --type pi-zai --env OPENAI_KEY=sk-... --env DEBUG=1
 ```
 
 ## Three Variants

@@ -195,3 +195,43 @@ class TestSessionEnvInjection:
         assert "A 1" in frag
         assert "B 2" in frag
         assert frag.count("set-environment") == 2
+
+
+class TestParseEnvArgs:
+    def test_none_returns_empty(self):
+        from agentwire.__main__ import parse_env_args
+        assert parse_env_args(None) == {}
+        assert parse_env_args([]) == {}
+
+    def test_single_pair(self):
+        from agentwire.__main__ import parse_env_args
+        assert parse_env_args(["FOO=bar"]) == {"FOO": "bar"}
+
+    def test_multiple_pairs(self):
+        from agentwire.__main__ import parse_env_args
+        result = parse_env_args(["A=1", "B=2", "C=3"])
+        assert result == {"A": "1", "B": "2", "C": "3"}
+
+    def test_value_with_equals_sign_preserved(self):
+        from agentwire.__main__ import parse_env_args
+        # Values can contain `=` (e.g. base64 payloads) — only split on the first.
+        assert parse_env_args(["TOKEN=abc=def=xyz"]) == {"TOKEN": "abc=def=xyz"}
+
+    def test_empty_value_allowed(self):
+        from agentwire.__main__ import parse_env_args
+        assert parse_env_args(["DEBUG="]) == {"DEBUG": ""}
+
+    def test_missing_equals_exits(self):
+        from agentwire.__main__ import parse_env_args
+        with pytest.raises(SystemExit):
+            parse_env_args(["BROKEN"])
+
+    def test_empty_key_exits(self):
+        from agentwire.__main__ import parse_env_args
+        with pytest.raises(SystemExit):
+            parse_env_args(["=value"])
+
+    def test_later_value_wins(self):
+        from agentwire.__main__ import parse_env_args
+        # If the same key appears twice, last one wins (standard dict semantics).
+        assert parse_env_args(["K=1", "K=2"]) == {"K": "2"}
