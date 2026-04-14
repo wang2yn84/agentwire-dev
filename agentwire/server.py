@@ -1277,7 +1277,7 @@ class AgentWireServer:
         Gathers idle session data and sends it to the agentwire-notifications session,
         which crafts a natural TTS message and speaks it via say().
         """
-        NAG_INTERVAL = 60  # seconds between scans (testing: 60, prod: 300)
+        NAG_INTERVAL = 120  # seconds between scans
         NAG_IDLE_THRESHOLD = 120  # seconds idle before including in nag (2 min minimum)
         NAG_SESSION = "agentwire-notifications"
         SERVICE_PREFIX = "agentwire-"
