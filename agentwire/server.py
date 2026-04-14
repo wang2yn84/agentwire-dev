@@ -1216,6 +1216,122 @@ class AgentWireServer:
                 logger.debug(f"[Monitor] Error in monitor loop: {e}")
                 await asyncio.sleep(2)  # Back off on errors
 
+    async def idle_nag_loop(self):
+        """Background task: periodically check for idle sessions with open browser windows.
+
+        Gathers idle session data and sends it to the agentwire-notifications session,
+        which crafts a natural TTS message and speaks it via say().
+        """
+        NAG_INTERVAL = 60  # seconds between scans (testing: 60, prod: 300)
+        NAG_IDLE_THRESHOLD = 120  # seconds idle before including in nag (2 min minimum)
+        NAG_SESSION = "agentwire-notifications"
+        SERVICE_PREFIX = "agentwire-"
+        nag_counts: dict[str, int] = {}  # session -> consecutive nag count
+
+        logger.info("[IdleNag] Starting idle nag loop (interval: %ds, threshold: %ds)",
+                     NAG_INTERVAL, NAG_IDLE_THRESHOLD)
+
+        # Let the monitor warm up first
+        await asyncio.sleep(10)
+
+        while True:
+            try:
+                if not self.dashboard_clients:
+                    nag_counts.clear()
+                    await asyncio.sleep(NAG_INTERVAL)
+                    continue
+
+                # Find sessions with open browser windows that are truly idle
+                idle_sessions = []
+                for name, info in self.session_activity.items():
+                    if name.startswith(SERVICE_PREFIX):
+                        continue
+                    if name == NAG_SESSION:
+                        continue
+                    if self.session_client_counts.get(name, 0) == 0:
+                        nag_counts.pop(name, None)
+                        continue
+                    last_ts = info.get("last_output_timestamp", 0.0)
+                    idle_secs = time.time() - last_ts if last_ts else float('inf')
+                    if idle_secs > NAG_IDLE_THRESHOLD:
+                        idle_sessions.append((name, idle_secs))
+                    else:
+                        nag_counts.pop(name, None)
+
+                if not idle_sessions:
+                    await asyncio.sleep(NAG_INTERVAL)
+                    continue
+
+                # Gather session metadata
+                sessions_info = await self._get_sessions_data()
+                sessions_by_name = {s.get("name", ""): s for s in sessions_info}
+
+                # Fetch fresh output for each idle session
+                session_data = []
+                for name, idle_secs in idle_sessions:
+                    nag_counts[name] = nag_counts.get(name, 0) + 1
+                    idle_min = int(idle_secs / 60)
+
+                    # Session metadata
+                    meta = sessions_by_name.get(name, {})
+
+                    # Get a fuller snapshot of the session output
+                    output_snippet = ""
+                    try:
+                        success, output_result = await self.run_agentwire_cmd(
+                            ["output", "-s", name, "-n", "30"]
+                        )
+                        if success:
+                            output_snippet = output_result.get("output", "")[-1000:]
+                    except Exception:
+                        output_snippet = self.session_activity.get(name, {}).get("last_output", "")[-500:]
+
+                    session_data.append({
+                        "session": name,
+                        "idle_minutes": idle_min,
+                        "nag_count": nag_counts[name],
+                        "type": meta.get("type", "unknown"),
+                        "roles": meta.get("roles", []),
+                        "project_path": meta.get("path", ""),
+                        "machine": meta.get("machine") or "local",
+                        "last_output_snippet": output_snippet,
+                    })
+
+                # Send to the notifications session
+                prompt = (
+                    f"[IDLE NAG] The following {len(session_data)} session(s) have open browser windows "
+                    f"but are idle. Review each one's output to decide if it actually needs a nag "
+                    f"(waiting on input, hit an error) or should be skipped (task complete, user "
+                    f"acknowledged, sitting at a clean prompt). Only say() if something needs attention.\n\n"
+                )
+                for sd in session_data:
+                    roles_str = ", ".join(sd["roles"]) if sd["roles"] else "none"
+                    prompt += (
+                        f"### {sd['session']}\n"
+                        f"- Idle: {sd['idle_minutes']}min | Nagged: {sd['nag_count']}x\n"
+                        f"- Type: {sd['type']} | Roles: {roles_str}\n"
+                        f"- Project: {sd['project_path']} | Machine: {sd['machine']}\n"
+                    )
+                    if sd['last_output_snippet']:
+                        prompt += f"- Last output:\n```\n{sd['last_output_snippet']}\n```\n"
+                    prompt += "\n"
+
+                logger.info("[IdleNag] Sending to %s: %d idle session(s)", NAG_SESSION, len(session_data))
+                success, _ = await self.run_agentwire_cmd([
+                    "send", "-s", NAG_SESSION, prompt
+                ])
+                if not success:
+                    logger.warning("[IdleNag] Failed to send to %s — is the session running?", NAG_SESSION)
+
+                await asyncio.sleep(NAG_INTERVAL)
+
+            except asyncio.CancelledError:
+                logger.info("[IdleNag] Idle nag loop stopped")
+                break
+            except Exception as e:
+                logger.debug("[IdleNag] Error: %s", e)
+                await asyncio.sleep(NAG_INTERVAL)
+
     async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         """Handle WebSocket connections for a session."""
         name = request.match_info["name"]
@@ -4280,6 +4396,9 @@ async def run_server(config: Config):
 
     # Start session monitor for all-sessions dashboard indicators
     monitor_task = asyncio.create_task(server.monitor_all_sessions())
+
+    # Start idle nag loop (TTS reminders for idle sessions with open windows)
+    idle_nag_task = asyncio.create_task(server.idle_nag_loop())
 
     # Sessions are now fetched dynamically from tmux + .agentwire.yml
     # No cache to rebuild or periodically refresh
