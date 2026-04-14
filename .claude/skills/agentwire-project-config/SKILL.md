@@ -28,13 +28,15 @@ session:
 
 | Field | Values | Description |
 |-------|--------|-------------|
-| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `claude-restricted` | Session permission level. **Use `claude-auto` for overnight/unattended work** — same capability as `claude-bypass` but with AI classifier blocking dangerous actions. Requires Team/Enterprise plan. |
+| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `claude-restricted`, `pi-zai`, `pi-zai-restricted`, `pi-zai-readonly` | Session permission level. **Use `claude-auto` for overnight/unattended work** — same capability as `claude-bypass` but with AI classifier blocking dangerous actions. Requires Team/Enterprise plan. |
 | `roles` | List of role names | Roles to load (from bundled or `~/.agentwire/roles/`) |
 | `voice` | Voice name | TTS voice for this project |
 | `parent` | Session name | Parent session for hierarchical notifications |
 | `shell` | `/bin/sh`, `/bin/bash`, etc. | Default shell for task commands |
 | `tasks` | Task definitions | Scheduled workload configurations |
 | `safety` | `{allowed_paths: [...]}` | Per-project damage control allowlist |
+
+For Z.AI sessions (`pi-zai*`), see the `agentwire-pi-zai` skill.
 
 ## Task Schema
 

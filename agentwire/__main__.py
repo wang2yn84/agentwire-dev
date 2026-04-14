@@ -87,9 +87,9 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
     """Build the agent command for a session.
 
     Args:
-        session_type: Session type (e.g., "claude-bypass", "claude-auto", "bare")
+        session_type: Session type (e.g., "claude-bypass", "claude-auto", "pi-zai", "bare")
         roles: Optional list of roles to apply
-        model: Optional model override (e.g., "haiku", "sonnet", "opus")
+        model: Optional model override (e.g., "haiku", "sonnet", "opus", "glm-5")
 
     Returns:
         AgentCommand with the command string and metadata
@@ -100,6 +100,49 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
 
     # Merge roles if provided
     merged = merge_roles(roles) if roles else None
+
+    # === Pi coding agent via Z.AI GLM ===
+    if session_type.startswith("pi-zai"):
+        config = load_config()
+        zai = config.get("zai", {})
+        pi_config = config.get("pi", {})
+
+        # Pi reads ZAI_API_KEY from env. Unlike Claude Code, pi has native
+        # Z.AI provider support (--provider zai), so we don't override URLs.
+        env_prefix = f"ZAI_API_KEY={shlex.quote(zai.get('api_key', ''))} "
+        pi_binary = pi_config.get("binary", "pi")
+        default_model = pi_config.get("default_model", "glm-5")
+
+        parts = [env_prefix + pi_binary, "--provider", "zai"]
+        parts.extend(["--model", model or default_model])
+
+        # Permission variants (pi has no permission system to bypass; variants
+        # translate to pi's --tools whitelist instead)
+        temp_file = None
+        if session_type == "pi-zai-restricted":
+            parts.extend(["--tools", "read,grep,find,bash"])
+        elif session_type == "pi-zai-readonly":
+            parts.extend(["--tools", "read,grep,find"])
+        elif merged and merged.tools:
+            # Translate Claude tool names to pi's lowercase tool names.
+            # Pi only supports: read, bash, edit, write, grep, find, ls
+            pi_valid = {"read", "bash", "edit", "write", "grep", "find", "ls"}
+            pi_tools = [t.lower() for t in merged.tools if t.lower() in pi_valid]
+            if pi_tools:
+                parts.extend(["--tools", ",".join(pi_tools)])
+
+        # Role-based system prompt (skipped for restricted/readonly — those are curated contexts)
+        if merged and merged.instructions and session_type not in ("pi-zai-restricted", "pi-zai-readonly"):
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            f.write(merged.instructions)
+            f.close()
+            temp_file = f.name
+            parts.append(f'--append-system-prompt "$(<{temp_file})"')
+
+        return AgentCommand(
+            command=" ".join(parts),
+            temp_file=temp_file,
+        )
 
     # === Claude Code ===
     if session_type.startswith("claude"):
@@ -6069,6 +6112,23 @@ def cmd_doctor(args) -> int:
         print("  [..] claude: not found (optional, use --bare sessions or other agents)")
         print("     Install: https://github.com/anthropics/claude-code")
 
+    # Check Pi coding agent (optional, for pi-zai session types)
+    pi_path = shutil.which("pi")
+    if pi_path:
+        try:
+            # Pi prints --version to stderr, so merge with stdout
+            result = subprocess.run(
+                [pi_path, "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pi_version = (result.stdout + result.stderr).strip()
+            print(f"  [ok] pi: {pi_path} (v{pi_version})")
+        except Exception:
+            print(f"  [ok] pi: {pi_path}")
+    else:
+        print("  [..] pi: not found (optional, required for pi-zai session types)")
+        print("     Install: npm install -g @mariozechner/pi-coding-agent")
+
     # 3. Check AgentWire scripts
     print("\nChecking AgentWire scripts...")
 
@@ -9854,7 +9914,7 @@ def main() -> int:
     new_parser.add_argument("-p", "--path", help="Working directory (default: ~/projects/<name>)")
     new_parser.add_argument("-f", "--force", action="store_true", help="Replace existing session")
     # Session type
-    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
+    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
     new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
@@ -9889,7 +9949,7 @@ def main() -> int:
     spawn_parser.add_argument("-s", "--session", help="Target session (default: auto-detect)")
     spawn_parser.add_argument("--cwd", help="Working directory (default: current)")
     spawn_parser.add_argument("--branch", "-b", help="Create worktree on this branch for isolated commits")
-    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted)")
+    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly)")
     spawn_parser.add_argument("--roles", default="worker", help="Comma-separated roles (default: worker)")
     spawn_parser.add_argument("--no-wait", action="store_true", help="Don't wait for worker to be ready (default: wait up to 30s)")
     spawn_parser.add_argument("--timeout", type=int, default=30, help="Seconds to wait for worker ready (default: 30)")
@@ -9927,7 +9987,7 @@ def main() -> int:
     recreate_parser = subparsers.add_parser("recreate", help="Destroy and recreate session with fresh worktree")
     recreate_parser.add_argument("-s", "--session", required=True, help="Session name (project/branch or project/branch@machine)")
     # Session type
-    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
+    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
     recreate_parser.add_argument("--json", action="store_true", help="Output as JSON")
     recreate_parser.set_defaults(func=cmd_recreate)
 
@@ -9936,7 +9996,7 @@ def main() -> int:
     fork_parser.add_argument("-s", "--source", required=True, help="Source session (project or project/branch)")
     fork_parser.add_argument("-t", "--target", required=True, help="Target session (must include branch: project/new-branch)")
     # Session type
-    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
+    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
     fork_parser.add_argument("--commit", metavar="REF", help="Fork from this commit/ref instead of HEAD (e.g. abc123, main~5)")
     fork_parser.add_argument("--json", action="store_true", help="Output as JSON")
     fork_parser.set_defaults(func=cmd_fork)
