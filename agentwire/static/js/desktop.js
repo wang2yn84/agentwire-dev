@@ -20,6 +20,7 @@ import { projectsSection } from './sidebar/projects-section.js';
 import { schedulerSection } from './sidebar/scheduler-section.js';
 import { servicesSection } from './sidebar/services-section.js';
 import { socialsSection } from './sidebar/socials-section.js';
+import { notificationsPanel } from './notifications-panel.js';
 
 // State - track open windows
 const sessionWindows = new Map();  // sessionId -> SessionWindow instance
@@ -180,6 +181,14 @@ async function init() {
                 tileManager._tileWindow(w.id, w.zone);
             }
         }
+    });
+
+    // Initialize notifications panel
+    notificationsPanel.init();
+
+    // Click on a toast -> open the notifications session as interactive terminal
+    document.addEventListener('open-notification-session', () => {
+        openSessionTerminal('agentwire-notifications', 'terminal');
     });
 
     // Set initial voice indicator state

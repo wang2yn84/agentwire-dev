@@ -136,6 +136,7 @@ class AgentWireServer:
         self.session_activity: dict[str, dict] = {}  # Global activity tracking for all sessions
         self.dashboard_clients: set = set()  # WebSocket clients for dashboard updates
         self.session_client_counts: dict[str, int] = {}  # Attached tmux client counts per session
+        self.active_notifications: dict[str, dict] = {}  # id -> notification for persistence across refresh
         self.machine_status_checker = CachedStatusChecker(ttl_seconds=30)  # Progressive loading for machines
         self.remote_sessions_checker = CachedStatusChecker(ttl_seconds=20)  # Progressive loading for remote sessions
         self.projects_checker = CachedStatusChecker(ttl_seconds=30)  # Progressive loading for projects
@@ -214,6 +215,10 @@ class AgentWireServer:
         self.app.router.add_post("/api/desktop/window/tile", self.api_desktop_tile)
         self.app.router.add_post("/api/desktop/window/minimize-all", self.api_desktop_minimize_all)
         self.app.router.add_post("/api/desktop/layout", self.api_desktop_layout)
+        # Desktop notifications
+        self.app.router.add_post("/api/desktop/notification", self.api_desktop_notification)
+        self.app.router.add_post("/api/desktop/notification/dismiss", self.api_desktop_notification_dismiss)
+        self.app.router.add_get("/api/desktop/notifications", self.api_desktop_notifications_list)
         # Scheduler monitoring endpoints
         self.app.router.add_get("/api/scheduler/live", self.api_scheduler_live)
         self.app.router.add_get("/api/scheduler/events", self.api_scheduler_events)
@@ -946,6 +951,56 @@ class AgentWireServer:
             "windows": windows,
         })
         return web.json_response({"success": True})
+
+    # =========================================================================
+    # Desktop Notifications API
+    # =========================================================================
+
+    async def api_desktop_notification(self, request):
+        """POST /api/desktop/notification — post a toast notification to the portal."""
+        data = await request.json()
+        text = data.get("text", "")
+        if not text:
+            return web.json_response({"success": False, "error": "text required"}, status=400)
+
+        import uuid
+        notification_id = data.get("id") or str(uuid.uuid4())[:8]
+        session = data.get("session")
+        priority = data.get("priority", "normal")
+
+        notification = {
+            "id": notification_id,
+            "text": text,
+            "session": session,
+            "priority": priority,
+            "timestamp": time.time(),
+        }
+
+        self.active_notifications[notification_id] = notification
+
+        await self.broadcast_dashboard("notification", notification)
+
+        return web.json_response({"success": True, "id": notification_id})
+
+    async def api_desktop_notification_dismiss(self, request):
+        """POST /api/desktop/notification/dismiss — dismiss a notification."""
+        data = await request.json()
+        notification_id = data.get("id")
+        if not notification_id:
+            return web.json_response({"success": False, "error": "id required"}, status=400)
+
+        self.active_notifications.pop(notification_id, None)
+
+        await self.broadcast_dashboard("notification_dismiss", {"id": notification_id})
+
+        return web.json_response({"success": True})
+
+    async def api_desktop_notifications_list(self, request):
+        """GET /api/desktop/notifications — list active notifications (for page load restore)."""
+        return web.json_response({
+            "success": True,
+            "notifications": list(self.active_notifications.values()),
+        })
 
     async def api_artifacts_upload(self, request):
         """POST /api/artifacts/upload — write HTML content to the artifacts directory."""

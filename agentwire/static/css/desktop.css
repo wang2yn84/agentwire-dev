@@ -3768,3 +3768,108 @@ body.sidebar-pinned .sidebar-tab {
     border-color: var(--orb-processing);
     color: #fff;
 }
+
+/* =========================================================================
+   Toast Notification Panel
+   ========================================================================= */
+
+.notification-panel {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 1500;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 8px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    pointer-events: none;
+    scrollbar-width: none;
+}
+
+.notification-panel::-webkit-scrollbar {
+    display: none;
+}
+
+.notification-toast {
+    pointer-events: auto;
+    width: 340px;
+    background: var(--chrome);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    opacity: 0;
+    transform: translateX(100%);
+    transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.notification-toast.visible {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.notification-toast.dismissing {
+    animation: toast-dismiss 200ms ease forwards;
+}
+
+@keyframes toast-dismiss {
+    to {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+}
+
+.notification-toast.high {
+    border-color: var(--error);
+}
+
+.notification-toast-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.notification-session-badge {
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(74, 222, 128, 0.1);
+    padding: 1px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+}
+
+.notification-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: auto;
+}
+
+.notification-dismiss {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.notification-dismiss:hover {
+    color: var(--text);
+}
+
+.notification-toast-body {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.4;
+    cursor: pointer;
+    word-wrap: break-word;
+}
+
+.notification-toast-body:hover {
+    color: #fff;
+}
