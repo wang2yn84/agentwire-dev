@@ -277,6 +277,27 @@ def tmux_session_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def wait_for_shell_prompt(target: str, timeout: float = 2.0) -> None:
+    """Poll tmux capture-pane until the shell has drawn a prompt.
+
+    Prevents a race where send-keys fires before the shell is ready, causing
+    the command to appear in the pre-prompt buffer and again after the prompt
+    renders (looks like it ran twice).
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and any(
+            c in result.stdout for c in ("$", "%", "#", "❯", "➜", ">")
+        ):
+            return
+        time.sleep(0.05)
+
+
 def _get_session_project_path(session: str) -> Path | None:
     """Get a session's project path from its tmux working directory.
 
@@ -5691,6 +5712,7 @@ def cmd_dev(args) -> int:
 
     # Start agent with agentwire config
     if agent_cmd:
+        wait_for_shell_prompt(session_name)
         subprocess.run([
             "tmux", "send-keys", "-t", session_name, agent_cmd, "Enter",
         ])
