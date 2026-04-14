@@ -16,15 +16,17 @@ agentwire portal start --dev
 
 # After structural changes (pyproject.toml, new files)
 agentwire rebuild
+
+# After code changes: ALWAYS do both
+agentwire rebuild && agentwire portal restart --dev
 ```
+
+Rebuild alone = stale static files. Restart alone = stale Python. The MCP server runs as a separate process started by Claude Code — session restart required after rebuild to pick up MCP changes.
 
 ## CLI is the Single Source of Truth
 
-**Always use `agentwire` CLI for session management.** The CLI is the authoritative interface - the web portal wraps CLI commands via `run_agentwire_cmd()`.
+All session/machine logic lives in CLI commands (`agentwire/__main__.py`). The portal (`agentwire/server.py`) is a thin wrapper that:
 
-### Architecture Principle
-
-All session/machine logic lives in CLI commands (`__main__.py`). The portal (`server.py`) is a thin wrapper that:
 1. Calls CLI via `run_agentwire_cmd(["command", "args"])`
 2. Parses JSON output (`--json` flag)
 3. Adds WebSocket/real-time features
@@ -34,882 +36,30 @@ All session/machine logic lives in CLI commands (`__main__.py`). The portal (`se
 2. Portal calls CLI, doesn't duplicate logic
 3. Never bypass CLI with direct tmux/subprocess calls
 
-### CLI Commands
-
-```bash
-# Session management
-agentwire new -s name           # not: tmux new-session
-agentwire send -s name "prompt" # not: tmux send-keys
-agentwire send-keys -s name key1 key2  # raw keys with pauses
-agentwire output -s name        # not: tmux capture-pane
-agentwire info -s name          # session metadata (cwd, panes) as JSON
-agentwire kill -s name          # not: tmux kill-session
-agentwire list                  # not: tmux list-sessions
-agentwire recreate -s name      # destroy and recreate with fresh worktree
-agentwire worktree name         # new branch + worktree + session
-agentwire worktree name -b develop  # from specific base branch
-agentwire worktree name -c      # from repo's current branch
-agentwire worktree name -e      # checkout existing branch (no new branch)
-agentwire worktree name --ref v2.0  # detached at tag/commit
-agentwire fork -s name          # fork session into new worktree
-agentwire fork -s name -t project/branch --commit abc123  # fork from specific commit
-
-# Pane commands (for workers within same session)
-agentwire spawn --roles worker  # spawn worker pane
-agentwire send --pane 1 "task"  # send to pane
-agentwire output --pane 1       # read pane output
-agentwire kill --pane 1         # kill pane
-agentwire jump --pane 1         # focus pane
-agentwire split -s name         # add terminal pane(s)
-agentwire detach -s name        # move pane to its own session
-agentwire resize -s name        # resize window to fit largest client
-
-# Portal management
-agentwire portal start          # start in tmux
-agentwire portal stop           # stop portal
-agentwire portal restart        # stop + start
-agentwire portal status         # check health
-
-# TTS/STT servers
-agentwire tts start|stop|status # TTS server management
-agentwire stt start|stop|status # STT server management
-
-# Voice
-agentwire say "text"            # speak (auto-routes to browser or local)
-agentwire say -s name "text"    # speak to specific session
-agentwire reply "text"           # reply to channel user (Discord/Slack/Telegram)
-agentwire notify-parent "text"   # notify parent session (worker→orchestrator)
-agentwire notify-parent --to name "text" # notify specific session
-agentwire listen start|stop|cancel  # voice recording
-
-# Voice cloning
-agentwire voiceclone start      # start recording voice sample
-agentwire voiceclone stop name  # stop and save as voice clone
-agentwire voiceclone list       # list available voices
-agentwire voiceclone delete name # delete a voice clone
-
-# Artifact windows (agent visual canvas)
-agentwire open <url> --title "T"  # open URL or local file as artifact window
-agentwire open dashboard.html     # open from ~/.agentwire/artifacts/
-
-# Channels (communication integrations)
-agentwire channels list         # list all registered channels
-agentwire channels list --json  # JSON output
-
-# Email (send-only channel)
-agentwire email --to addr --subject "Subject" --body "Body"
-agentwire email --body "msg" # uses default_to from config
-agentwire email --attach file.pdf --body "See attached"
-
-# Quo SMS (send-only channel, no deps)
-agentwire quo --body "msg" --to "+1234567890"
-
-# SMS via Twilio (send-only channel, requires twilio)
-agentwire sms --body "msg" --to "+1234567890"
-
-# Webhook (send-only channel)
-agentwire webhook --body "msg" --url "https://hooks.example.com"
-
-# Telegram bridge (service channel)
-agentwire telegram start       # start bot in tmux
-agentwire telegram stop        # stop bot
-agentwire telegram serve       # run bot in foreground
-agentwire telegram status      # check bot status
-
-# Discord bridge (service channel, requires discord.py)
-agentwire discord start|serve|stop|status
-
-# Slack bridge (service channel, requires slack-bolt)
-agentwire slack start|serve|stop|status
-
-# Machine management
-agentwire machine list
-agentwire machine add <id> --host <host> --user <user>
-agentwire machine remove <id>
-
-# SSH tunnels (for remote services)
-agentwire tunnels up            # create all required tunnels
-agentwire tunnels down          # tear down all tunnels
-agentwire tunnels status        # show tunnel health
-agentwire tunnels check         # verify tunnels are working
-
-# Lock management (for scheduled tasks)
-agentwire lock list             # list all locks
-agentwire lock clean            # remove stale locks
-agentwire lock remove <session> # force-remove a specific lock
-
-# Project discovery
-agentwire projects list         # discover projects from projects_dir
-agentwire projects list --json  # JSON output for scripting
-
-# Session history
-agentwire history list          # list conversation history
-agentwire history show <id>     # show session details
-agentwire history resume <id>   # resume session (always forks)
-
-# Roles management
-agentwire roles list            # list available roles
-agentwire roles show <name>     # show role details
-
-# Scheduled workloads
-agentwire ensure -s name --task task  # run named task reliably
-agentwire task list [session]         # list tasks for session/project
-agentwire task show session/task      # show task definition
-agentwire task validate session/task  # validate task syntax
-
-# Safety & diagnostics
-agentwire safety check "cmd"    # test if command would be blocked
-agentwire safety status         # show pattern counts and recent blocks
-agentwire safety logs           # query audit logs
-agentwire safety install        # install damage control hooks
-agentwire hooks install         # install permission hook (Claude Code only)
-agentwire hooks uninstall       # remove permission hook (Claude Code only)
-agentwire hooks status          # check hook installation status
-agentwire network status        # complete network health check
-agentwire doctor                # auto-diagnose and fix issues
-
-# Notifications
-agentwire notify event          # notify portal of state changes (session/pane events)
-
-# MCP Server
-agentwire mcp                   # expose agentwire as MCP server
-
-# Scheduler
-agentwire scheduler start|serve|stop|status # manage scheduler daemon
-agentwire scheduler board                   # show task board with overdue scores
-agentwire scheduler live                    # show live scheduler state
-agentwire scheduler events                  # show recent scheduler events
-agentwire scheduler history                 # show recent run history
-agentwire scheduler run task                # force-run a task now
-agentwire scheduler enable|disable task     # enable/disable a task
-agentwire scheduler report [--since 8h] [--artifact]  # generate morning report HTML
-agentwire scheduler dashboard               # open scheduler dashboard
-
-# Overnight session queue
-agentwire overnight prepare --from <session> --task "desc"  # queue session
-agentwire overnight list [--all]            # list queue items
-agentwire overnight status                  # orchestrator state
-agentwire overnight cancel <id>             # cancel item
-agentwire overnight priority <id> <n>       # update priority
-agentwire overnight start|serve|stop        # manage orchestrator daemon
-agentwire overnight report                  # morning report
-
-# Setup & Development
-agentwire init                  # interactive setup wizard
-agentwire generate-certs        # generate SSL certificates
-agentwire dev                   # start/attach to dev session
-agentwire rebuild               # clear uv cache and reinstall
-agentwire uninstall             # uninstall the tool
-```
-
-Session formats: `name`, `project/branch` (worktree), `name@machine` (remote)
-Pane targeting: `--pane N` auto-detects session from `$TMUX_PANE`
-
-For CLI details: `agentwire --help` or `agentwire <cmd> --help`
+Full CLI command reference lives in the `agentwire-cli` skill.
 
 ## MCP Server (For Agents)
 
 **Agents running in agentwire sessions should use MCP tools instead of CLI commands.**
 
-The agentwire MCP server provides tools that wrap CLI functionality. Use these instead of `Bash: agentwire <cmd>`:
+The `agentwire-mcp-tools` skill has the full reference (87 tools covering sessions, panes, voice, tasks, channels, scheduler, overnight queue, desktop UI). Rule of thumb: MCP for agents, CLI for humans/scripts.
 
-### Session Management (9 tools)
+**Note:** MCP tools don't support git worktree creation. For isolated commits with worktrees, use the CLI `agentwire spawn --branch <name>` directly.
 
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire list` | `sessions_list()` |
-| `agentwire new -s name` | `session_create(name="...")` |
-| `agentwire send -s name "msg"` | `session_send(session="...", message="...")` |
-| `agentwire output -s name` | `session_output(session="...")` |
-| `agentwire info -s name` | `session_info(session="...")` |
-| `agentwire kill -s name` | `session_kill(session="...")` |
-| `agentwire send-keys -s name key1 key2` | `session_send_keys(session="...", keys=["..."])` |
-| `agentwire recreate -s name` | `session_recreate(session="...")` |
-| `agentwire fork -s name -t project/branch` | `session_fork(session="...", target="...")` |
-| `agentwire fork -s name -t project/branch --commit abc` | `session_fork(session="...", target="...", commit="abc")` |
-
-### Pane Management (9 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire spawn --roles worker` | `pane_spawn(roles="worker")` |
-| `agentwire send --pane 1 "msg"` | `pane_send(pane=1, message="...")` |
-| `agentwire output --pane 1` | `pane_output(pane=1)` |
-| `agentwire kill --pane 1` | `pane_kill(pane=1)` |
-| `agentwire list` (in tmux) | `panes_list()` |
-| `agentwire split -n 2` | `pane_split(count=2)` |
-| `agentwire detach --pane 1 -s target` | `pane_detach(session="src", pane=1, target="target")` |
-| `agentwire jump --pane 1` | `pane_jump(pane=1)` |
-| `agentwire resize` | `pane_resize()` |
-
-### Voice & TTS (12 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire say "text"` | `say(text="...")` |
-| `agentwire reply "text"` | `reply(text="...")` |
-| `agentwire notify-parent "text"` | `notify(text="...", to="...")` |
-| `agentwire listen start` | `listen_start()` |
-| `agentwire listen stop` | `listen_stop()` |
-| `agentwire listen cancel` | `listen_cancel()` |
-| `agentwire voiceclone start` | `voiceclone_start()` |
-| `agentwire voiceclone stop name` | `voiceclone_stop(name="...")` |
-| `agentwire voiceclone cancel` | `voiceclone_cancel()` |
-| `agentwire voiceclone list` | `voiceclone_list()` |
-| `agentwire voiceclone delete name` | `voiceclone_delete(name="...")` |
-| (portal API) | `transcribe(audio_base64="...", format="webm")` |
-| `agentwire voiceclone list` | `voices_list()` |
-
-### Tasks & Locks (7 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire ensure -s x --task y` | `task_run(session="x", task="y")` |
-| `agentwire task list x` | `task_list(session="x")` |
-| `agentwire task show x/y` | `task_show(session="x", task="y")` |
-| `agentwire task validate x/y` | `task_validate(session="x", task="y")` |
-| `agentwire lock list` | `lock_list()` |
-| `agentwire lock clean` | `lock_clean()` |
-| `agentwire lock remove session` | `lock_remove(session="...")` |
-
-### Operations (10 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire projects list` | `projects_list()` |
-| `agentwire roles list` | `roles_list()` |
-| `agentwire roles show name` | `role_show(name="...")` |
-| `agentwire machine list` | `machines_list()` |
-| `agentwire machine add id --host h --user u` | `machine_add(machine_id="...", host="...", user="...")` |
-| `agentwire machine remove id` | `machine_remove(machine_id="...")` |
-| `agentwire history list` | `history_list()` |
-| `agentwire history show id` | `history_show(session_id="...")` |
-| `agentwire history resume id -p path` | `history_resume(session_id="...", project="...")` |
-| `agentwire email --body "..." --to addr` | `email_send(body="...", to="...", attachments=["..."], plain_text=False)` |
-
-### Channels (7 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire channels list` | `channels_list()` |
-| `agentwire quo --body "..." --to "+1..."` | `quo_send(body="...", to="+1...")` |
-| `agentwire sms --body "..." --to "+1..."` | `sms_send(body="...", to="+1...")` |
-| `agentwire webhook --body "..." --url "..."` | `webhook_send(text="...", url="...")` |
-| `agentwire discord status` | `discord_status()` |
-| `agentwire slack status` | `slack_status()` |
-| `agentwire email --body "..." --to addr` | `email_send(body="...", to="...", attachments=["..."])` |
-
-### Notifications & Network (5 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire notify event` | `session_notify(event="...")` |
-| `agentwire tunnels up` | `tunnels_up()` |
-| `agentwire tunnels down` | `tunnels_down()` |
-| `agentwire tunnels status` | `tunnels_status()` |
-| `agentwire network status` | `network_status()` |
-
-### Status (3 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire portal status` | `portal_status()` |
-| `agentwire tts status` | `tts_status()` |
-| `agentwire stt status` | `stt_status()` |
-
-### Scheduler (8 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire scheduler status` | `scheduler_status()` |
-| `agentwire scheduler board` | `scheduler_board()` |
-| `agentwire scheduler live --json` | `scheduler_live()` |
-| `agentwire scheduler events --json` | `scheduler_events(tail=20, task="")` |
-| `agentwire scheduler run task` | `scheduler_run(task="...")` |
-| `agentwire scheduler report --since 8h` | `scheduler_report(since="8h", artifact=False)` |
-| `agentwire scheduler enable task` | `scheduler_enable(task="...")` |
-| `agentwire scheduler disable task` | `scheduler_disable(task="...")` |
-| `agentwire scheduler history` | `scheduler_history(limit=20)` |
-
-### Overnight Session Queue (6 tools)
-
-| CLI Command | MCP Tool |
-|-------------|----------|
-| `agentwire overnight prepare --from s --task d` | `overnight_prepare(session="...", description="...", priority=50)` |
-| `agentwire overnight list` | `overnight_list()` |
-| `agentwire overnight status` | `overnight_status()` |
-| `agentwire overnight cancel id` | `overnight_cancel(item_id="...")` |
-| `agentwire overnight priority id n` | `overnight_priority(item_id="...", priority=N)` |
-| `agentwire overnight report` | `overnight_report()` |
-
-### Desktop/Portal UI (10 tools)
-
-| Action | MCP Tool |
-|--------|----------|
-| List open windows | `desktop_windows_list()` |
-| Open session window | `desktop_open_session(session="...", mode="monitor")` |
-| Open panel | `desktop_open_panel(panel_type="sessions")` |
-| Open artifact window (URL/file) | `desktop_open_artifact(url="...", title="...")` |
-| Write HTML + open as artifact | `desktop_write_artifact(filename="...", html_content="...", title="...")` |
-| Post toast notification | `portal_notify(text="...", session="...", priority="normal")` |
-| Close window | `desktop_close_window(window_id="...")` |
-| Focus window | `desktop_focus_window(window_id="...")` |
-| Tile window | `desktop_tile_window(window_id="...", zone="left")` |
-| Minimize all | `desktop_minimize_all()` |
-| Multi-window layout | `desktop_layout(windows=[{id: "...", zone: "left"}])` |
-
-**87 tools total.** When to use CLI vs MCP:
-- **MCP tools** — Agents in sessions (orchestrators, workers)
-- **CLI commands** — Humans, shell scripts, automation outside of agent sessions
-
-**Note:** MCP tools don't support git worktree creation. Workers spawned via `pane_spawn` share the orchestrator's working directory. For isolated commits with worktrees, use the CLI `agentwire spawn --branch <name>` directly.
-
-## Config
-
-All in `~/.agentwire/`:
+## Config Layout (`~/.agentwire/`)
 
 | File | Purpose |
 |------|---------|
-| `config.yaml` | Main config (see structure below) |
+| `config.yaml` | Main config (see `agentwire-config` skill) |
 | `machines.json` | Remote machines registry |
-| `scripts/` | Machine-specific helper scripts (TTS management, startup, etc.) |
+| `scripts/` | Machine-specific helper scripts (TTS, startup, service wrappers). Local only, not version controlled. `~/bin/` entries should symlink here. |
 | `voices/` | Custom TTS voice samples |
 | `uploads/` | Uploaded images for cross-machine sharing |
 | `artifacts/` | Agent-generated HTML for artifact windows |
 | `wiki/` | LLM-maintained knowledge base (Karpathy LLM Wiki pattern) |
 | `logs/` | Audit logs for damage-control |
 
-Per-session config (type, roles, voice) lives in `.agentwire.yml` in each project directory.
-
-### Machine Scripts (`~/.agentwire/scripts/`)
-
-Each machine has a `~/.agentwire/scripts/` directory for machine-specific helper scripts (TTS management, startup hooks, service wrappers, etc.). This is the standard location — agents should look here first and put new scripts here.
-
-Scripts in `~/bin/` should symlink to `~/.agentwire/scripts/` so they're callable from PATH but the source of truth is in one place.
-
-These scripts are **not** managed by agentwire — they're local to each machine and not version controlled. They exist because different machines have different roles (GPU server runs TTS, Mac runs the portal, etc.) and need different glue scripts.
-
-### config.yaml Structure
-
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 8765
-  activity_threshold_seconds: 3  # Seconds before session considered idle
-  ssl:
-    cert: "~/.agentwire/cert.pem"
-    key: "~/.agentwire/key.pem"
-
-projects:
-  dir: "~/projects"
-  worktrees:
-    enabled: true
-    suffix: "-worktrees"
-
-tts:
-  backend: "runpod"  # runpod | kokoro | chatterbox | chatterbox-streaming | qwen-base-0.6b | qwen-base-1.7b | qwen-custom | qwen-design | zonos-transformer | zonos-hybrid | none
-  runpod_endpoint_id: "your-endpoint-id"
-  runpod_api_key: "your-api-key"
-  default_voice: "dotdev"
-  voices_dir: "~/.agentwire/voices"  # Custom voice samples for cloning
-  exaggeration: 0.5  # Voice expressiveness (0-1, Chatterbox)
-  cfg_weight: 0.5  # CFG weight (0-1, Chatterbox)
-  runpod_timeout: 120  # API timeout for RunPod (seconds)
-
-stt:
-  url: "http://localhost:8101"
-  timeout: 30
-  backend: "auto"       # auto (moonshine → faster-whisper fallback), moonshine, whisper
-  model: "base"         # Whisper model size (used when backend=whisper)
-  moonshine_model: "moonshine/base"  # moonshine/tiny (faster) or moonshine/base
-
-agent:
-  command: "claude --dangerously-skip-permissions"
-
-dev:
-  source_dir: "~/projects/agentwire-dev"  # agentwire source for TTS/STT venv
-
-services:  # Where services run (for multi-machine setups)
-  portal:
-    machine: null  # null = local
-    port: 8765
-    session_name: "agentwire-portal"  # tmux session name
-  tts:
-    machine: "gpu-server"  # or null for local
-    port: 8100
-    session_name: "agentwire-tts"
-  stt:
-    session_name: "agentwire-stt"
-  telegram:
-    machine: null
-    session_name: "agentwire-telegram"
-
-executables:  # Override executable paths (optional, auto-detected by default)
-  ffmpeg: "/opt/homebrew/bin/ffmpeg"
-  whisperkit-cli: "/opt/homebrew/bin/whisperkit-cli"
-  hs: "/opt/homebrew/bin/hs"
-  agentwire: "~/.local/bin/agentwire"
-
-uploads:
-  dir: "~/.agentwire/uploads"
-  max_size_mb: 10
-  cleanup_days: 7
-
-artifacts:
-  dir: "~/.agentwire/artifacts"
-  max_size_mb: 10
-
-wiki:
-  dir: "~/.agentwire/wiki"           # Wiki vault location
-
-portal:
-  url: "https://localhost:8765"
-
-channels:
-  email:
-    api_key: ""  # Resend API key (or set RESEND_API_KEY env var)
-    from_address: "Echo <echo@yourdomain.com>"
-    default_to: "user@example.com"
-    banner_image_url: "https://yourdomain.com/images/banner.png"
-    echo_image_url: "https://yourdomain.com/images/echo.png"
-    echo_small_url: "https://yourdomain.com/images/echo-small.png"
-    logo_image_url: "https://yourdomain.com/images/logo.png"
-  telegram:
-    bot_token: ""              # from @BotFather (or TELEGRAM_AGENTWIRE_BOT_TOKEN env var)
-    allowed_users: []          # Telegram user IDs (integers)
-    default_session: "main"    # fallback session for messages
-    voice_replies: true        # convert TTS to voice notes
-    forward_questions: true    # AskUserQuestion as inline keyboards
-    forward_alerts: true       # alerts to Telegram
-    session_name: "agentwire-telegram"
-  quo:
-    api_key: ""              # or QUO_API_KEY / OPENPHONE_API_KEY env var
-    from_number: "+1234567890"  # E.164 or phone number ID (PNxxx)
-    default_to: "+0987654321"
-  sms:
-    account_sid: ""          # or TWILIO_ACCOUNT_SID env var
-    auth_token: ""           # or TWILIO_AUTH_TOKEN env var
-    from_number: "+1234567890"
-    default_to: "+0987654321"
-  webhook:
-    url: "https://hooks.example.com/agentwire"
-    method: "POST"
-    headers:
-      Authorization: "Bearer xxx"
-  discord:
-    bot_token: ""            # or DISCORD_BOT_TOKEN env var
-    allowed_user_ids: []     # Discord user IDs (integers)
-    default_session: "main"
-    voice_replies: true
-    session_name: "agentwire-discord"
-    # Composable session config hierarchy (platform → scope → specific):
-    default_type: claude-bypass
-    default_roles: [agentwire]
-    default_instructions: ""      # applies to all Discord sessions
-    dm_roles: [discord-dm]
-    dm_instructions: ""           # applies to all Discord DMs
-    channel_roles: [discord-dm]
-    channel_instructions: ""      # applies to all Discord channel sessions
-    channel_map:                  # per-channel overrides (append to scope)
-      "1234567890":
-        session: "backend"
-        project: "~/projects/api"
-        type: claude-auto         # override type
-        roles: [python-expert]    # appended + deduped
-        instructions: |
-          Backend team channel. Focus on Python.
-    user_map:                     # per-user DM overrides (DM scope only)
-      "252979000000000000":
-        roles: [admin]
-        instructions: |
-          Team lead — be direct and concise.
-    # Self-configuration tip: add channel-admin to dm_roles (or default_roles)
-    # so you can set up new channels by just DMing the bot. The agent will
-    # edit this config.yaml and restart the bridge for you.
-  slack:
-    bot_token: ""            # xoxb-... or SLACK_BOT_TOKEN env var
-    app_token: ""            # xapp-... or SLACK_APP_TOKEN env var
-    allowed_user_ids: []     # Slack user IDs (strings)
-    default_session: "main"
-    session_name: "agentwire-slack"
-    # Composable session config hierarchy (same as Discord):
-    default_type: claude-bypass
-    default_roles: [agentwire]
-    default_instructions: ""      # applies to all Slack sessions
-    dm_roles: [slack-dm]
-    dm_instructions: ""           # applies to all Slack DMs
-    channel_roles: [slack-dm]
-    channel_instructions: ""      # applies to all Slack channel sessions
-    channel_map:                  # per-channel overrides
-      "C12345":
-        session: "backend"
-        type: claude-auto
-        roles: [python-expert]
-        instructions: |
-          Backend team channel. Focus on Python.
-    user_map:                     # per-user DM overrides (DM scope only)
-      "U67890":
-        roles: [admin]
-        instructions: |
-          Team lead — be direct and concise.
-
-scheduler:
-  dispatch_cooldown: 60  # Seconds between task dispatches (default: 60)
-
-worktree:
-  worktree_dir: ~/worktrees       # Where worktrees are created
-  default_base: main              # Default base branch
-  default_project: ~/projects/my-repo  # Default git repo
-
-overnight:
-  window_start: "22:00"        # Start of overnight work window
-  window_end: "07:00"          # End of overnight work window
-  timezone: "America/Toronto"  # Empty = local timezone
-  check_interval: 60           # Seconds between queue checks
-  max_concurrent: 1            # Sessions to run at once
-  session_timeout: 7200        # Max seconds per session (2h)
-  branch_prefix: "overnight/"  # Git branch prefix
-  pr_draft: true               # Create draft PRs
-  session_type: "claude-auto"  # Session type for execution
-  go_prompt: |                 # Prompt sent when dispatching
-    You have been prepared with full context for this task.
-    Begin autonomous execution now. Commit frequently.
-
-session:
-  default_role: "agentwire"  # Default role for new sessions
-```
-
-### .agentwire.yml (Project Config)
-
-Each project can have a `.agentwire.yml` in its root directory. This configures session type, roles, voice, and parent for that project.
-
-**Format is FLAT (no nesting):**
-
-```yaml
-# Session with voice and agentwire awareness
-type: claude-bypass
-roles:
-  - agentwire
-  - voice
-voice: may
-parent: main  # Notify parent session when idle (optional)
-```
-
-```yaml
-# WRONG - don't nest under "session:"
-session:
-  type: claude
-  roles: [...]  # This won't be loaded!
-```
-
-| Field | Values | Description |
-|-------|--------|-------------|
-| `type` | `claude-bypass`, `claude-auto`, `claude-prompted`, `claude-restricted` | Session permission level. **Use `claude-auto` for overnight/unattended work** — same capability as `claude-bypass` but with AI classifier blocking dangerous actions. Requires Team/Enterprise plan. |
-| `roles` | List of role names | Roles to load (from bundled or `~/.agentwire/roles/`) |
-| `voice` | Voice name | TTS voice for this project |
-| `parent` | Session name | Parent session for hierarchical notifications |
-| `shell` | `/bin/sh`, `/bin/bash`, etc. | Default shell for task commands |
-| `tasks` | Task definitions | Scheduled workload configurations |
-| `safety` | `{allowed_paths: [...]}` | Per-project damage control allowlist |
-
-### Task Schema
-
-Tasks are defined in `.agentwire.yml` for use with `agentwire ensure`:
-
-```yaml
-shell: /bin/sh  # Project-level default shell
-
-tasks:
-  morning-briefing:
-    shell: /bin/bash           # Task-level override
-    priority: 10               # Pipeline ordering (lower = higher priority, default: 99)
-    retries: 2                 # Retry on failure (default: 0)
-    retry_delay: 30            # Seconds between retries (default: 30)
-    idle_timeout: 30           # Seconds of idle before completion (default: 30)
-    exit_on_complete: true     # Exit session after completion (default: true)
-    role: task-runner          # Role override for this task (optional)
-    pre:                       # Data gathering (NO {{ }} - these PRODUCE variables)
-      weather: "curl -s wttr.in/?format=3"
-      calendar:
-        cmd: "gcal-cli today --json"
-        required: true         # Fail if empty (default: false)
-        validate: "jq . > /dev/null"  # Validation command
-        timeout: 30            # Command timeout
-    prompt: |                  # Main prompt (supports {{ variables }})
-      Weather: {{ weather }}
-      Calendar: {{ calendar }}
-      Summarize my day.
-    on_task_end: |             # Optional: after system summary
-      Read {{ summary_file }}.
-      If complete, save to ~/briefings/{{ date }}.md
-    post:                      # Commands after completion
-      - "echo 'Status: {{ status }}'"
-    output:
-      capture: 50              # Lines to capture
-      save: ~/logs/{{ task }}.log
-      notify: voice            # voice, alert, webhook ${URL}, command "..."
-
-    # Branch management (for overnight/async agent workflows)
-    starting_ref: main         # Git ref to checkout before task runs
-    work_branch: agent/task    # Branch for agent's work (default: agent/<task>-<date>)
-    pr_target: main            # PR target branch (default: starting_ref)
-    pr_draft: true             # Create as draft PR (default: true)
-
-    # Context inheritance
-    starting_session: ctx-loaded  # Fork Claude context from this session before running
-```
-
-**Built-in variables:**
-- `{{ date }}`, `{{ time }}`, `{{ datetime }}` - Current date/time
-- `{{ session }}`, `{{ task }}`, `{{ project_root }}` - Task identity
-- `{{ attempt }}` - Current attempt number (1-based)
-- `{{ status }}`, `{{ summary }}`, `{{ summary_file }}` - After completion
-- `{{ output }}` - Captured session output (in post phase)
-- `{{ work_branch }}`, `{{ pr_url }}` - Branch/PR after branch management (in post phase)
-- `{{ var_name }}` - Pre-command outputs
-
-**Exit codes:** 0=complete, 1=failed, 2=incomplete, 3=lock conflict, 4=pre failure, 5=timeout, 6=session error
-
-### Hierarchical Idle Notifications
-
-When a session goes idle, it notifies up the hierarchy via `agentwire notify-parent` (text-only, no audio):
-
-```
-parent session ← receives "[ALERT from child] ..."
-    ↑ notify-parent --to parent
-child session   ← receives "[ALERT from pane N] ..."
-    ↑ auto-notify pane 0
-worker panes
-```
-
-**Worker summary files:**
-- Workers write summaries to `.agentwire/worker-{pane}.md` before going idle
-- Summaries include: task, status, what worked, what didn't, notes for orchestrator
-- Orchestrators read these files to understand worker results
-
-**Auto-exit (workers auto-kill on idle):**
-- Worker panes (index > 0) automatically exit when idle
-- Use `parent: <session-name>` in `.agentwire.yml` for child → parent notifications
-
-**Queue system files:**
-- `~/.agentwire/queue-processor.sh` - Processes queue with 15s delays between alerts
-- `~/.agentwire/queues/{session}.jsonl` - Per-session notification queues
-
-**Worker idle sequence:**
-1. `session.idle` fires → wait 2s (let agent settle)
-2. Worker writes summary to `.agentwire/worker-{pane}.md`
-3. Queue notification to `{session}.jsonl`
-4. Start queue processor if not running
-5. Worker auto-exits
-
-**Idle notifications** are handled via `~/.claude/hooks/idle-handler.sh`.
-
-**Creating a project with roles:**
-
-```bash
-# Option 1: Create .agentwire.yml first, then create session
-echo "type: claude-bypass
-roles:
-  - agentwire
-  - voice" > ~/projects/myproject/.agentwire.yml
-
-agentwire new -s myproject -p ~/projects/myproject
-
-# Option 2: Specify roles on command line (saves to .agentwire.yml)
-agentwire new -s myproject -p ~/projects/myproject --roles agentwire,voice
-```
-
-### Role System
-
-Roles define agent behavior and are composable. Mix and match roles in `.agentwire.yml` to configure orchestrators, workers, or specialized agents.
-
-**Available roles:**
-
-| Role | Purpose |
-|------|---------|
-| `agentwire` | Core session/pane/MCP tools awareness |
-| `orchestrator` | Long-lived project orchestrator — plans, delegates, manages overnight queue |
-| `voice` | Voice communication (speak/listen) |
-| `worker` | Receive tasks, execute autonomously, report back |
-| `task-runner` | Scheduled task execution |
-| `chatbot` | Conversational personality |
-| `init` | Setup wizard behavior |
-| `slack-dm` | Slack bot — reply()-based conversation with Slack users |
-| `discord-dm` | Discord bot — reply()-based conversation with Discord users |
-| `channel-admin` | Self-configure channel setup via chat (edit config.yaml, restart bridges) |
-
-Use `agentwire roles list` to see available roles. Roles are bundled in `agentwire/roles/` and can be composed freely in `.agentwire.yml`.
-
-## Hook Installation
-
-Install the idle notification hook for the agentwire system:
-
-```bash
-# Create hooks directory
-mkdir -p ~/.claude/hooks
-
-# Install the hook (copies from agentwire source)
-agentwire hooks install
-
-# Verify installation
-agentwire doctor
-```
-
-The hook lives at `~/.claude/hooks/idle-handler.sh` and fires on `idle_prompt` notifications.
-
-### Queue Processor
-
-The idle hook uses a shared queue processor for notifications:
-
-```bash
-# Install the queue processor
-mkdir -p ~/.agentwire
-cp ~/projects/agentwire-dev/scripts/queue-processor.sh ~/.agentwire/
-chmod +x ~/.agentwire/queue-processor.sh
-```
-
-The processor sends queued alerts with 15-second gaps to prevent overwhelming orchestrators.
-
-### Diagnosing Issues
-
-```bash
-# Check all components are installed
-agentwire doctor
-
-# View hook debug logs
-tail -f /tmp/claude-hook-debug.log
-
-# View queue processor logs
-tail -f /tmp/queue-processor-debug.log
-```
-
-By default, `agentwire new --type X` is a session-level override only and never saves to `.agentwire.yml`. Use `--persist` to opt in to saving.
-
-### Scheduler Task Gates
-
-Tasks in `~/.agentwire/scheduler.yaml` can define `gate` preconditions to skip execution when changes aren't relevant:
-
-```yaml
-tasks:
-  code-quality:
-    gate:
-      git_commit: true  # Skip if HEAD unchanged since last run
-  doc-drift:
-    gate:
-      git_diff:         # Skip if no commits touched these paths
-        - docs/
-        - agentwire/
-  custom-check:
-    gate:
-      command: "test -f /tmp/ready.flag"  # Skip if command exits non-zero
-```
-
-Gates are evaluated before dispatching and skip the task (zero AI cost) if conditions fail. Multiple gates are AND'd. Gates fail open on errors. See `docs/missions/completed/master-ralph-loop.md` for details.
-
-### Scheduler Task Scheduling
-
-Each task has a `schedule` field (replaces the old `interval`). The scheduler uses `_compute_next_eligible()` as the single source of truth for when a task becomes eligible.
-
-**`schedule` field reference:**
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `every` | `str` | `30m`, `2h`, `1d` (duration) or `day`, `weekday`, `weekend`, `monday`..`sunday` (calendar) |
-| `at` | `str` | Target time `"HH:MM"` local. Only with calendar `every` values |
-| `except` | `list[str]` | Days to skip: `["saturday"]` |
-| `after` | `str` | Dependency task name |
-| `delay` | `str` | Wait after dependency: `"1h"`, `"30m"` |
-| `cooldown` | `str` | Min time between runs: `"4h"` |
-| `require_status` | `str` | `"complete"` (default) or `"any"` |
-| `not_before` | `str` | Earliest time of day: `"08:00"` |
-| `not_after` | `str` | Latest time of day: `"22:00"` |
-
-Must have at least `every` OR `after` (or both).
-
-**Examples:**
-```yaml
-# Duration-based interval
-schedule:
-  every: 4h
-
-# Time-anchored daily
-schedule:
-  every: day
-  at: "08:00"
-
-# Dependency with delay
-schedule:
-  after: upstream-task
-  delay: 1h
-  cooldown: 3h
-
-# Weekend exclusion
-schedule:
-  every: 4h
-  except: [saturday, sunday]
-```
-
-**Restart safety:** `last_dispatch` is persisted before running. Tasks dispatched within 2h are considered "in-flight" and won't be re-dispatched after restart.
-
-### Scheduler Task Priority
-
-Tasks sort by `priority` first (lower = runs first), with overdue score as tiebreaker. This ensures pipeline ordering — upstream stages run before downstream when multiple tasks are overdue.
-
-Tasks with default priority (99) sort after all prioritized tasks. Fillers always run after all regular tasks regardless of priority.
-
-### One-Time and Limited Tasks
-
-Tasks can auto-disable after a set number of runs:
-
-```yaml
-tasks:
-  tonight-scaffold:
-    # ...
-    once: true        # Run once, then auto-disable (shorthand for max_runs: 1)
-    schedule:
-      every: 1m       # Run ASAP
-
-  quarterly-report:
-    # ...
-    max_runs: 4       # Run 4 times then auto-disable
-    schedule:
-      every: day
-      at: "09:00"
-```
-
-- `once: true` — shorthand for `max_runs: 1`
-- `max_runs: N` — auto-disables task after N successful dispatches
-- Scheduler logs a `task_disabled` event with `reason: max_runs_reached`
-- Re-enabling a disabled task via `agentwire scheduler enable <name>` resets it
-
-## Overnight Session System
-
-"Prepare once, fork many, execute overnight." Human prepares sessions interactively during the day (full back-and-forth with Claude), queues them, and the orchestrator dispatches them during off-hours with draft PR creation.
-
-**User workflow:**
-```
-5:00 PM — Open session, discuss project context with Claude
-5:15 PM — agentwire overnight prepare --from piinpoint --task "refactor payment module"
-           → Queued. Session context captured.
-5:16 PM — Repeat for more tasks
-5:43 PM — Go home.
-
-10:00 PM — Orchestrator dispatches session 1 → works → PR created
-11:00 PM — Dispatches session 2 → works → PR created
-12:00 AM — All done. Voice notification sent.
-
-8:00 AM — agentwire overnight report → review draft PRs
-```
-
-**Queue directory:** `~/.agentwire/overnight/` (active items), `~/.agentwire/overnight/done/` (archived)
-
-**How it works:**
-1. `prepare` captures: Claude sessionId (for `--resume --fork-session`), git branch, HEAD commit
-2. `dispatch` creates tmux session, launches agent with forked context, creates work branch
-3. On completion: auto-commit, push, draft PR, archive, notify
-4. Orchestrator respects work window (default 22:00-07:00)
-
-**Session type:** Uses `claude-auto` by default for classifier safety net. Override with `--type`.
+Per-project config lives in `.agentwire.yml` at the project root — see `agentwire-project-config` skill for fields and task schema.
 
 ## Key Patterns
 
@@ -917,102 +67,69 @@ tasks:
 - **worker panes** spawn within the orchestrator's session (visible dashboard)
 - **Pane 0** = orchestrator, **panes 1+** = workers
 - **Damage-control hooks** block dangerous ops (`rm -rf`, `git push --force`, etc.)
-- **Smart TTS routing** - audio goes to browser if connected, local speakers if not
+- **Smart TTS routing** — audio goes to browser if connected, local speakers if not
 
 ### Worker Pane Lifecycle
 
-**Workers auto-kill after sending idle notification.** The idle hook captures output, sends alert to pane 0, then kills the worker.
+Workers auto-kill after sending idle notification. The idle hook captures output, sends alert to pane 0, then kills the worker. Manual kill if needed: `agentwire kill --pane 1`.
 
-Manual kill (if needed):
+## Hook Installation
+
+Install the idle notification hook:
+
 ```bash
-agentwire kill --pane 1
+mkdir -p ~/.claude/hooks
+agentwire hooks install
+agentwire doctor  # verify
 ```
 
-## Desktop UI Patterns
+The hook lives at `~/.claude/hooks/idle-handler.sh` and fires on `idle_prompt` notifications.
 
-### Left Sidebar (click-toggle tab handle)
+### Queue Processor
 
-The portal uses a left sidebar with a floating tab handle instead of hover hotzone. A small tab (›) peeks from the left edge — click to slide sidebar open, click again to close. Click outside or press Escape to dismiss. Pin to keep visible (reflows desktop area).
-
-**Structure:**
-- **Tab handle**: floating 20×40px button on left edge, rides sidebar when open, chevron flips direction
-- **Header**: connection status dot, session count, clock, pin toggle
-- **Open Windows section**: lists currently-open windows (drag to reorder, click to focus, × to close). Persisted in `localStorage['taskbar-state']` — restores on refresh.
-- **Accordion sections**: Sessions, Socials, Services, Machines, Projects, Artifacts, Scheduler, Config. Click header to expand/collapse. Data fetched on first expand.
-- **Footer**: global PTT button, voice indicator
-
-**Session grouping:** Sessions are split into three accordion sections based on type:
-- **Sessions**: working sessions (excludes services and socials)
-- **Socials**: DM/channel sessions (`discord-dm-*`, `slack-dm-*`, or sessions with social roles)
-- **Services**: infrastructure sessions (`agentwire-*` prefix: portal, tts, stt, telegram, discord, slack)
-
-All three share session data from `sessions-section.js` (single fetch, shared activity state, pub-sub via `onSessionsChanged`).
-
-**Keyboard:** Tab cycles forward through open windows, Shift+Tab cycles backward. Works inside terminals (captured on `window` in capture phase before xterm).
-
-**Files:** `static/js/sidebar.js` (shell + click-toggle), `static/js/sidebar/<name>-section.js` (per-section modules), `static/css/desktop.css` (sidebar-* classes).
-
-### Session Window Modes
-
-| Mode | Element | Use Case |
-|------|---------|----------|
-| **Monitor** | `<pre>` with ANSI-to-HTML | Read-only output viewing, polls `tmux capture-pane` |
-| **Terminal** | xterm.js | Interactive terminal, attaches via `tmux attach` |
-
-**Important:** Monitor mode must use a simple `<pre>` element, NOT xterm.js. xterm.js requires precise container dimensions for its fit addon to work correctly. Since monitor mode just displays captured text output, a `<pre>` element with `white-space: pre-wrap` and ANSI-to-HTML conversion is simpler and more reliable.
-
-**Per-session PTT** lives in the WinBox titlebar (next to the activity indicator), not as a floating button.
-
-### Artifact Windows
-
-Agents can display HTML content in sandboxed iframe windows on the portal desktop.
-
-**Agent workflow (MCP):**
-```python
-# Write HTML and open in one step
-desktop_write_artifact(filename="dashboard.html", html_content="<h1>Hello</h1>", title="Dashboard")
-
-# Or open an existing file or external URL
-desktop_open_artifact(url="dashboard.html", title="Dashboard")
-desktop_open_artifact(url="https://example.com", title="External")
+```bash
+mkdir -p ~/.agentwire
+cp ~/projects/agentwire-dev/scripts/queue-processor.sh ~/.agentwire/
+chmod +x ~/.agentwire/queue-processor.sh
 ```
 
-**Files served from:** `~/.agentwire/artifacts/` via `/artifacts/` route.
+Sends queued alerts with 15-second gaps to prevent overwhelming orchestrators.
 
-**Sandboxing:** Local files get `allow-scripts allow-same-origin`. External URLs get `allow-scripts allow-forms allow-popups` (no same-origin).
+### Diagnosing Issues
+
+```bash
+agentwire doctor                        # all components
+tail -f /tmp/claude-hook-debug.log      # hook debug
+tail -f /tmp/queue-processor-debug.log  # queue processor
+```
 
 ## Wiki (Knowledge Base)
 
-LLM-maintained knowledge base at `~/.agentwire/wiki/` using the Karpathy LLM Wiki pattern. Research and debugging knowledge compounds across sessions.
+LLM-maintained knowledge base at `~/.agentwire/wiki/` using the Karpathy LLM Wiki pattern. Research and debugging knowledge compounds across sessions. Use `/wiki ingest`, `/wiki query <question>`, `/wiki lint` skills. **Before researching**: agents check the wiki first. After discovering: agents write it down.
 
-```
-~/.agentwire/wiki/
-├── CLAUDE.md          # schema: entity types, conventions, operations
-├── raw/               # drop source material here (auto-ingested hourly)
-└── wiki/              # LLM-maintained pages
-    ├── technologies/  # tools, libraries, engines
-    ├── patterns/      # architecture decisions, debugging solutions
-    ├── apis/          # external API reference
-    └── research/      # market, competitors, evaluations
-```
+## Reference Skills
 
-**Three ways knowledge grows:**
-1. **Agents auto-write** — agentwire role instructs agents to update wiki pages when they discover gotchas, patterns, or solutions
-2. **Scheduler** — `wiki-ingest` task runs hourly, processes new files in `raw/` into wiki pages
-3. **Manual** — `/wiki ingest`, `/wiki query <question>`, `/wiki lint` skills from any session
+Reference detail lives in skills under `.claude/skills/` — invoke as needed:
 
-**Before researching**: agents check the wiki first. After discovering: agents write it down.
+| Skill | When to use |
+|-------|-------------|
+| `agentwire-cli` | Running or composing any `agentwire ...` shell command |
+| `agentwire-mcp-tools` | Picking the right MCP tool from inside an agent session |
+| `agentwire-config` | Editing `~/.agentwire/config.yaml` (TTS, channels, services, etc.) |
+| `agentwire-project-config` | Editing `.agentwire.yml`, defining tasks, roles, idle notifications |
+| `agentwire-scheduler` | Scheduled task gates/schedule/priority + overnight queue |
+| `agentwire-desktop-ui` | Editing portal static files (sidebar, windows, artifacts) |
 
 ## Docs
 
 - CLI: `agentwire --help` or `agentwire <cmd> --help`
-- `docs/channels.md` - Channel developer guide (adding custom channels)
+- `docs/channels.md` - Channel developer guide
 - `docs/PORTAL.md` - Portal modes and API reference
 - `docs/security/damage-control.md` - Safety hooks documentation
 - `docs/TROUBLESHOOTING.md` - Common issues and solutions
 - `docs/SHELL_ESCAPING.md` - Shell escaping guide
 - `docs/runpod-tts.md` - RunPod TTS setup
 - `docs/tts-self-hosted.md` - Self-hosted TTS
-- `docs/remote-machines.md` - Multi-machine orchestration, `~/.agentwire/machine/` agent context pattern, WSL2 setup
-- `docs/remote-access.md` - Cloudflare Tunnel setup for remote access
+- `docs/remote-machines.md` - Multi-machine orchestration, WSL2 setup
+- `docs/remote-access.md` - Cloudflare Tunnel setup
 - `docs/hammerspoon.md` - Hammerspoon push-to-talk setup for macOS
