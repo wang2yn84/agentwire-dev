@@ -2,7 +2,7 @@
 
 import argparse
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime
 import importlib.resources
 import json
@@ -81,15 +81,75 @@ class AgentCommand:
     """Result of building an agent command."""
     command: str  # The shell command to execute
     temp_file: str | None = None  # Temp file to clean up after agent starts
+    env: dict[str, str] = field(default_factory=dict)  # Secrets to inject via tmux set-environment (keeps keys out of `ps`)
+
+
+def inject_session_env(session: str, env: dict[str, str], remote_host: str | None = None) -> None:
+    """Set env vars on a tmux session so panes inherit them without exposing secrets.
+
+    Using `tmux set-environment -t <session>` keeps API keys out of the command
+    string (which would otherwise be visible in `ps auxwww` and shell history).
+    """
+    if not env:
+        return
+    for key, value in env.items():
+        if remote_host:
+            subprocess.run(
+                ["ssh", remote_host, "tmux", "set-environment", "-t",
+                 shlex.quote(session), shlex.quote(key), shlex.quote(value)],
+                check=False,
+            )
+        else:
+            subprocess.run(
+                ["tmux", "set-environment", "-t", session, key, value],
+                check=False,
+            )
+
+
+def parse_env_args(env_args: list[str] | None) -> dict[str, str]:
+    """Parse repeated `--env KEY=VAL` flags into a dict.
+
+    Raises SystemExit via argparse pattern if an entry lacks `=`.
+    """
+    if not env_args:
+        return {}
+    result: dict[str, str] = {}
+    for entry in env_args:
+        if "=" not in entry:
+            print(f"Error: --env expects KEY=VAL, got {entry!r}", file=sys.stderr)
+            sys.exit(2)
+        key, value = entry.split("=", 1)
+        if not key:
+            print(f"Error: --env KEY cannot be empty (got {entry!r})", file=sys.stderr)
+            sys.exit(2)
+        result[key] = value
+    return result
+
+
+def build_session_env_shell_fragment(session: str, env: dict[str, str]) -> str:
+    """Build a shell fragment of `tmux set-environment` calls for chained remote commands.
+
+    Returns a trailing `&& ` string ready to splice into an ssh-executed compound
+    command. Empty string if no env.
+    """
+    if not env:
+        return ""
+    parts = []
+    for key, value in env.items():
+        parts.append(
+            f"tmux set-environment -t {shlex.quote(session)} "
+            f"{shlex.quote(key)} {shlex.quote(value)}"
+        )
+    return " && ".join(parts) + " && "
 
 
 def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None, model: str | None = None) -> AgentCommand:
     """Build the agent command for a session.
 
     Args:
-        session_type: Session type (e.g., "claude-bypass", "claude-auto", "bare")
+        session_type: Session type (e.g., "claude-bypass", "claude-auto", "pi-zai", "bare")
         roles: Optional list of roles to apply
-        model: Optional model override (e.g., "haiku", "sonnet", "opus")
+        model: Optional model override (e.g., "haiku", "sonnet", "opus", "glm-5")
 
     Returns:
         AgentCommand with the command string and metadata
@@ -100,6 +160,49 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
 
     # Merge roles if provided
     merged = merge_roles(roles) if roles else None
+
+    # === Pi coding agent via Z.AI GLM ===
+    if session_type.startswith("pi-zai"):
+        config = load_config()
+        zai = config.get("zai", {})
+        pi_config = config.get("pi", {})
+
+        # Pi reads ZAI_API_KEY from env. We inject it via `tmux set-environment`
+        # (see inject_session_env) so the key never appears in `ps auxwww`.
+        pi_binary = pi_config.get("binary", "pi")
+        default_model = pi_config.get("default_model", "glm-5")
+
+        parts = [pi_binary, "--provider", "zai"]
+        parts.extend(["--model", model or default_model])
+
+        # Permission variants (pi has no permission system to bypass; variants
+        # translate to pi's --tools whitelist instead)
+        temp_file = None
+        if session_type == "pi-zai-restricted":
+            parts.extend(["--tools", "read,grep,find,bash"])
+        elif session_type == "pi-zai-readonly":
+            parts.extend(["--tools", "read,grep,find"])
+        elif merged and merged.tools:
+            # Translate Claude tool names to pi's lowercase tool names.
+            # Pi only supports: read, bash, edit, write, grep, find, ls
+            pi_valid = {"read", "bash", "edit", "write", "grep", "find", "ls"}
+            pi_tools = [t.lower() for t in merged.tools if t.lower() in pi_valid]
+            if pi_tools:
+                parts.extend(["--tools", ",".join(pi_tools)])
+
+        # Role-based system prompt (skipped for restricted/readonly — those are curated contexts)
+        if merged and merged.instructions and session_type not in ("pi-zai-restricted", "pi-zai-readonly"):
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            f.write(merged.instructions)
+            f.close()
+            temp_file = f.name
+            parts.append(f'--append-system-prompt "$(<{temp_file})"')
+
+        return AgentCommand(
+            command=" ".join(parts),
+            temp_file=temp_file,
+            env={"ZAI_API_KEY": zai.get("api_key", "")},
+        )
 
     # === Claude Code ===
     if session_type.startswith("claude"):
@@ -3424,8 +3527,7 @@ def cmd_new(args) -> int:
 
         # Build agent command
         agent = build_agent_command(session_type, roles if roles else None)
-
-    
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
         agent_cmd = agent.command
 
@@ -3446,12 +3548,15 @@ def cmd_new(args) -> int:
             except Exception as e:
                 print(f"Warning: Failed to write system prompt to remote: {e}", file=sys.stderr)
 
+        env_fragment = build_session_env_shell_fragment(session_name, agent.env)
+
         # Create session - Agent starts immediately if not bare
         if agent_cmd:
             create_cmd = (
                 f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(remote_path)} && "
                 f"tmux send-keys -t {shlex.quote(session_name)} 'cd {shlex.quote(remote_path)}' Enter && "
                 f"sleep 0.1 && "
+                f"{env_fragment}"
                 f"tmux send-keys -t {shlex.quote(session_name)} {shlex.quote(agent_cmd)} Enter"
             )
         else:
@@ -3592,8 +3697,12 @@ def cmd_new(args) -> int:
     # Build agent command
     model_override = getattr(args, 'model', None)
     agent = build_agent_command(session_type, roles if roles else None, model=model_override)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
     agent_cmd = agent.command
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(session_name, agent.env)
 
     # Start agent command if not bare
     if agent_cmd:
@@ -4092,10 +4201,17 @@ def cmd_spawn(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles if roles else None)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
     agent_cmd = agent.command
 
     try:
+        # Inject secrets onto the parent session before spawning the pane so the
+        # new pane inherits them from tmux (avoids putting keys in `ps`).
+        parent_session = session or pane_manager.get_current_session()
+        if parent_session:
+            inject_session_env(parent_session, agent.env)
+
         # Spawn pane first to get the pane index
         pane_index = pane_manager.spawn_worker_pane(
             session=session,
@@ -4472,12 +4588,15 @@ def cmd_recreate(args) -> int:
 
         # Build agent command using the standard function
         agent = build_agent_command(session_type_str)
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
         agent_cmd = agent.command
+        env_fragment = build_session_env_shell_fragment(session_name, agent.env)
 
         create_cmd = (
             f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(session_path)} && "
             f"tmux send-keys -t {shlex.quote(session_name)} 'cd {shlex.quote(session_path)}' Enter && "
             f"sleep 0.1 && "
+            f"{env_fragment}"
             f"tmux send-keys -t {shlex.quote(session_name)} {shlex.quote(agent_cmd)} Enter"
         )
 
@@ -4574,6 +4693,7 @@ def cmd_recreate(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
     agent_cmd = agent.command
 
@@ -4589,6 +4709,9 @@ def cmd_recreate(args) -> int:
         check=True
     )
     time.sleep(0.1)
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(session_name, agent.env)
 
     # Start the agent with appropriate command
     if agent_cmd:
@@ -4654,6 +4777,7 @@ def cmd_worktree(args) -> int:
             'force': False, 'bare': False, 'restricted': False, 'prompted': False,
             'type': getattr(args, 'type', None), 'roles': getattr(args, 'roles', None),
             'instructions': None, 'persist': False,
+            'env': getattr(args, 'env', None),
         })())
 
     # If worktree already exists, reattach
@@ -4846,13 +4970,16 @@ def cmd_fork(args) -> int:
 
         # Build agent command
         agent = build_agent_command(session_type_str, roles)
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
         agent_cmd = agent.command
+        env_fragment = build_session_env_shell_fragment(target_session, agent.env)
 
         create_session_cmd = (
             f"tmux new-session -d -s {shlex.quote(target_session)} -c {shlex.quote(target_path)} && "
             f"tmux send-keys -t {shlex.quote(target_session)} 'cd {shlex.quote(target_path)}' Enter && "
             f"sleep 0.1 && "
+            f"{env_fragment}"
             f"tmux send-keys -t {shlex.quote(target_session)} {shlex.quote(agent_cmd)} Enter"
         )
 
@@ -4999,6 +5126,10 @@ def cmd_fork(args) -> int:
 
         # Build agent command
         agent = build_agent_command(session_type_str, roles)
+        agent.env.update(parse_env_args(getattr(args, 'env', None)))
+
+        # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+        inject_session_env(target_session, agent.env)
 
         agent_cmd = agent.command
         if agent_cmd:
@@ -5112,7 +5243,12 @@ def cmd_fork(args) -> int:
 
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
+    agent.env.update(parse_env_args(getattr(args, 'env', None)))
     agent_cmd = agent.command
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(target_session, agent.env)
+
     if agent_cmd:
         subprocess.run(
             ["tmux", "send-keys", "-t", target_session, agent_cmd, "Enter"],
@@ -5710,6 +5846,9 @@ def cmd_dev(args) -> int:
         "tmux", "new-session", "-d", "-s", session_name, "-c", str(project_dir),
     ])
 
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(session_name, agent.env)
+
     # Start agent with agentwire config
     if agent_cmd:
         wait_for_shell_prompt(session_name)
@@ -6068,6 +6207,23 @@ def cmd_doctor(args) -> int:
     else:
         print("  [..] claude: not found (optional, use --bare sessions or other agents)")
         print("     Install: https://github.com/anthropics/claude-code")
+
+    # Check Pi coding agent (optional, for pi-zai session types)
+    pi_path = shutil.which("pi")
+    if pi_path:
+        try:
+            # Pi prints --version to stderr, so merge with stdout
+            result = subprocess.run(
+                [pi_path, "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pi_version = (result.stdout + result.stderr).strip()
+            print(f"  [ok] pi: {pi_path} (v{pi_version})")
+        except Exception:
+            print(f"  [ok] pi: {pi_path}")
+    else:
+        print("  [..] pi: not found (optional, required for pi-zai session types)")
+        print("     Install: npm install -g @mariozechner/pi-coding-agent")
 
     # 3. Check AgentWire scripts
     print("\nChecking AgentWire scripts...")
@@ -9854,11 +10010,12 @@ def main() -> int:
     new_parser.add_argument("-p", "--path", help="Working directory (default: ~/projects/<name>)")
     new_parser.add_argument("-f", "--force", action="store_true", help="Replace existing session")
     # Session type
-    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
+    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
     new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
     new_parser.add_argument("--persist", action="store_true", help="Write --type/--roles to .agentwire.yml (default: session-level override only)")
+    new_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable, keeps secrets out of `ps`)")
     new_parser.add_argument("--json", action="store_true", help="Output as JSON")
     new_parser.set_defaults(func=cmd_new)
 
@@ -9889,10 +10046,11 @@ def main() -> int:
     spawn_parser.add_argument("-s", "--session", help="Target session (default: auto-detect)")
     spawn_parser.add_argument("--cwd", help="Working directory (default: current)")
     spawn_parser.add_argument("--branch", "-b", help="Create worktree on this branch for isolated commits")
-    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted)")
+    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly)")
     spawn_parser.add_argument("--roles", default="worker", help="Comma-separated roles (default: worker)")
     spawn_parser.add_argument("--no-wait", action="store_true", help="Don't wait for worker to be ready (default: wait up to 30s)")
     spawn_parser.add_argument("--timeout", type=int, default=30, help="Seconds to wait for worker ready (default: 30)")
+    spawn_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var onto parent session (repeatable)")
     spawn_parser.add_argument("--json", action="store_true", help="Output as JSON")
     spawn_parser.set_defaults(func=cmd_spawn)
 
@@ -9927,7 +10085,8 @@ def main() -> int:
     recreate_parser = subparsers.add_parser("recreate", help="Destroy and recreate session with fresh worktree")
     recreate_parser.add_argument("-s", "--session", required=True, help="Session name (project/branch or project/branch@machine)")
     # Session type
-    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
+    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
+    recreate_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     recreate_parser.add_argument("--json", action="store_true", help="Output as JSON")
     recreate_parser.set_defaults(func=cmd_recreate)
 
@@ -9936,8 +10095,9 @@ def main() -> int:
     fork_parser.add_argument("-s", "--source", required=True, help="Source session (project or project/branch)")
     fork_parser.add_argument("-t", "--target", required=True, help="Target session (must include branch: project/new-branch)")
     # Session type
-    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, standard, worker, voice)")
+    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
     fork_parser.add_argument("--commit", metavar="REF", help="Fork from this commit/ref instead of HEAD (e.g. abc123, main~5)")
+    fork_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     fork_parser.add_argument("--json", action="store_true", help="Output as JSON")
     fork_parser.set_defaults(func=cmd_fork)
 
@@ -9951,6 +10111,7 @@ def main() -> int:
     wt_parser.add_argument("--project", "-p", help="Path to git repo (default: from config or cwd)")
     wt_parser.add_argument("--type", help="Session type override")
     wt_parser.add_argument("--roles", help="Comma-separated role names")
+    wt_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     wt_parser.add_argument("--json", action="store_true", help="Output as JSON")
     wt_parser.set_defaults(func=cmd_worktree)
 

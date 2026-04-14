@@ -498,7 +498,7 @@ def dispatch_item(item: OvernightItem, config) -> bool:
 
     Returns True if dispatch succeeded.
     """
-    from .__main__ import build_agent_command, _wait_for_agent_ready
+    from .__main__ import build_agent_command, _wait_for_agent_ready, inject_session_env
 
     project = item.project_path
     session = item.session
@@ -537,6 +537,9 @@ def dispatch_item(item: OvernightItem, config) -> bool:
         subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)
         _log_event("dispatch_failed", item_id=item.id, error=item.error)
         return False
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(session, agent.env)
 
     # Inject --resume <id> --fork-session
     if item.resume_session_id:

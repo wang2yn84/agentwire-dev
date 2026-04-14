@@ -13,12 +13,15 @@ import yaml
 
 
 class SessionType(str, Enum):
-    """Session type determines Claude execution mode."""
-    BARE = "bare"                    # No Claude, just tmux session
+    """Session type determines agent execution mode."""
+    BARE = "bare"                    # No agent, just tmux session
     CLAUDE_BYPASS = "claude-bypass"  # Claude with --dangerously-skip-permissions
     CLAUDE_AUTO = "claude-auto"      # Claude with auto mode (classifier safety net)
     CLAUDE_PROMPTED = "claude-prompted"  # Claude with permission hooks
     CLAUDE_RESTRICTED = "claude-restricted"  # Claude with only say allowed
+    PI_ZAI = "pi-zai"                      # Pi coding agent via Z.AI GLM (full tools)
+    PI_ZAI_RESTRICTED = "pi-zai-restricted"  # Pi via Z.AI, read+search+bash (no edits)
+    PI_ZAI_READONLY = "pi-zai-readonly"      # Pi via Z.AI, read-only inspection
     # Universal types (agent-agnostic, map to agent-specific types)
     STANDARD = "standard"  # Full automation -> claude-bypass
     WORKER = "worker"      # Worker pane -> claude-restricted
@@ -70,6 +73,7 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
     # If already agent-specific, return as-is
     agent_specific_types = [
         "claude-bypass", "claude-auto", "claude-prompted", "claude-restricted",
+        "pi-zai", "pi-zai-restricted", "pi-zai-readonly",
         "bare"
     ]
     if session_type in agent_specific_types:
