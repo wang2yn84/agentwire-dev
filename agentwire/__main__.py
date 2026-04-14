@@ -10121,6 +10121,33 @@ def main() -> int:
     )
     dev_parser.set_defaults(func=cmd_dev)
 
+    # === workflow command group ===
+    from agentwire.workflows.cli import (
+        cmd_workflow_list,
+        cmd_workflow_run,
+        cmd_workflow_validate,
+    )
+
+    workflow_parser = subparsers.add_parser("workflow", help="Pi workflow engine")
+    workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command")
+
+    wf_list = workflow_subparsers.add_parser("list", help="List discoverable workflows")
+    wf_list.add_argument("--json", action="store_true", help="Output as JSON")
+    wf_list.set_defaults(func=cmd_workflow_list)
+
+    wf_validate = workflow_subparsers.add_parser(
+        "validate", help="Validate a workflow YAML without running it"
+    )
+    wf_validate.add_argument("workflow", help="Workflow name or path to YAML")
+    wf_validate.set_defaults(func=cmd_workflow_validate)
+
+    wf_run = workflow_subparsers.add_parser("run", help="Execute a workflow")
+    wf_run.add_argument("workflow", help="Workflow name or path to YAML")
+    wf_run.add_argument("--dry-run", action="store_true", help="Print plan without running")
+    wf_run.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    wf_run.add_argument("--json", action="store_true", help="Output as JSON")
+    wf_run.set_defaults(func=cmd_workflow_run)
+
     # === listen command group ===
     listen_parser = subparsers.add_parser("listen", help="Voice input recording")
     listen_parser.add_argument(
