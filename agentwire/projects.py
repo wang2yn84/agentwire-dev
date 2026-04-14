@@ -197,6 +197,85 @@ done
     return projects
 
 
+def _resolve_extra_projects(extra: list[dict], machine_filter: str | None = None) -> list[dict]:
+    """Resolve explicitly configured extra project paths.
+
+    Each entry in extra is a dict with 'path' and optional 'machine' (default: 'local').
+    Reads .agentwire.yml from each path for type/roles.
+
+    Args:
+        extra: List of extra project entries from config.
+        machine_filter: Only include projects matching this machine.
+
+    Returns:
+        List of project dicts: {name, path, type, roles, machine}
+    """
+    import base64
+
+    projects = []
+    for entry in extra:
+        path = entry.get("path", "")
+        if not path:
+            continue
+        entry_machine = entry.get("machine", "local")
+
+        # Filter by machine if requested
+        if machine_filter is not None:
+            if machine_filter != entry_machine:
+                continue
+
+        if entry_machine == "local":
+            # Local: read .agentwire.yml directly
+            p = Path(path).expanduser().resolve()
+            if not p.is_dir():
+                continue
+            config_file = p / ".agentwire.yml"
+            try:
+                cfg = yaml.safe_load(config_file.read_text()) or {} if config_file.exists() else {}
+            except Exception:
+                cfg = {}
+            projects.append({
+                "name": entry.get("name", p.name),
+                "path": str(p),
+                "type": cfg.get("type", "claude-bypass"),
+                "roles": cfg.get("roles", []),
+                "machine": "local",
+            })
+        else:
+            # Remote: read .agentwire.yml via SSH
+            m = _get_machine_config(entry_machine)
+            if not m:
+                continue
+            cmd = f'''
+if [ -d "{path}" ]; then
+  if [ -f "{path}/.agentwire.yml" ]; then
+    cat "{path}/.agentwire.yml" | base64 -w0 2>/dev/null || cat "{path}/.agentwire.yml" | base64
+  else
+    echo ""
+  fi
+fi
+'''
+            success, output = _run_ssh_command(m, cmd)
+            cfg = {}
+            if success and output.strip():
+                try:
+                    config_yaml = base64.b64decode(output.strip()).decode("utf-8")
+                    cfg = yaml.safe_load(config_yaml) or {}
+                except Exception:
+                    pass
+
+            name = entry.get("name", Path(path).name)
+            projects.append({
+                "name": name,
+                "path": path,
+                "type": cfg.get("type", "claude-bypass"),
+                "roles": cfg.get("roles", []),
+                "machine": entry_machine,
+            })
+
+    return projects
+
+
 def get_projects(machine: str | None = None) -> list[dict]:
     """Discover projects from machine's projects_dir.
 
@@ -228,6 +307,14 @@ def get_projects(machine: str | None = None) -> list[dict]:
         if m and m.get("projects_dir"):
             remote_projects = _discover_remote_projects(m)
             projects.extend(remote_projects)
+
+    # Extra projects from config (explicit paths outside projects_dir)
+    extra_projects = _resolve_extra_projects(config.projects.extra, machine)
+    # Deduplicate by (machine, path) — extras don't override discovered projects
+    seen = {(p["machine"], p["path"]) for p in projects}
+    for ep in extra_projects:
+        if (ep["machine"], ep["path"]) not in seen:
+            projects.append(ep)
 
     # Sort by machine then name
     projects.sort(key=lambda p: (p["machine"], p["name"]))

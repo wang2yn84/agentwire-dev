@@ -2457,6 +2457,29 @@ def desktop_layout(windows: list[dict]) -> str:
     return f"Failed to apply layout: {data.get('error', 'Unknown error')}"
 
 
+@mcp.tool()
+def portal_notify(text: str, session: str | None = None, priority: str = "normal") -> str:
+    """Post a toast notification to the portal desktop.
+
+    Creates a persistent visual notification in the bottom-right of the portal.
+    Clicking the toast opens the notifications session for interactive chat.
+
+    Args:
+        text: Notification message text.
+        session: Session name this notification relates to (shown as badge).
+        priority: 'normal' or 'high' (high gets accent border).
+
+    Returns:
+        Notification ID or error description.
+    """
+    body = {"text": text, "priority": priority}
+    if session:
+        body["session"] = session
+    data = _portal_request("POST", "/api/desktop/notification", body)
+    if data.get("success"):
+        return f"Notification posted (id: {data.get('id')})."
+    return f"Failed to post notification: {data.get('error', 'Unknown error')}"
+
 
 
 # =============================================================================

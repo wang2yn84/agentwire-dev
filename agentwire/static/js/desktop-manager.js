@@ -336,6 +336,15 @@ class DesktopManager {
                 this.emit('agent_progress', msg);
                 break;
 
+            // Desktop notifications (from MCP agents via portal API)
+            case 'notification':
+                this.emit('notification', msg);
+                break;
+
+            case 'notification_dismiss':
+                this.emit('notification_dismiss', { id: msg.id });
+                break;
+
             default:
                 // Unknown message types are silently ignored
         }

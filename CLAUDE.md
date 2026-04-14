@@ -351,13 +351,14 @@ The agentwire MCP server provides tools that wrap CLI functionality. Use these i
 | Open panel | `desktop_open_panel(panel_type="sessions")` |
 | Open artifact window (URL/file) | `desktop_open_artifact(url="...", title="...")` |
 | Write HTML + open as artifact | `desktop_write_artifact(filename="...", html_content="...", title="...")` |
+| Post toast notification | `portal_notify(text="...", session="...", priority="normal")` |
 | Close window | `desktop_close_window(window_id="...")` |
 | Focus window | `desktop_focus_window(window_id="...")` |
 | Tile window | `desktop_tile_window(window_id="...", zone="left")` |
 | Minimize all | `desktop_minimize_all()` |
 | Multi-window layout | `desktop_layout(windows=[{id: "...", zone: "left"}])` |
 
-**86 tools total.** When to use CLI vs MCP:
+**87 tools total.** When to use CLI vs MCP:
 - **MCP tools** — Agents in sessions (orchestrators, workers)
 - **CLI commands** — Humans, shell scripts, automation outside of agent sessions
 
