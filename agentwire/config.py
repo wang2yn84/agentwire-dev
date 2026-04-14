@@ -74,6 +74,7 @@ class ProjectsConfig:
 
     dir: Path = field(default_factory=lambda: Path.home() / "projects")
     worktrees: WorktreesConfig = field(default_factory=WorktreesConfig)
+    extra: list = field(default_factory=list)
 
     def __post_init__(self):
         self.dir = _expand_path(self.dir) or Path.home() / "projects"
@@ -355,6 +356,7 @@ def _dict_to_config(data: dict) -> Config:
     projects = ProjectsConfig(
         dir=projects_data.get("dir", "~/projects"),
         worktrees=worktrees,
+        extra=projects_data.get("extra", []),
     )
 
     # TTS
