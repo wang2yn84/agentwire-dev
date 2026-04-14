@@ -181,9 +181,9 @@ pi:
 
 ### "No models available. Set API keys in environment variables."
 
-`ZAI_API_KEY` isn't set. Check `~/.agentwire/config.yaml` has the `zai.api_key` field filled in. AgentWire passes it to pi via env var prefix in the launch command.
+`ZAI_API_KEY` isn't set on the tmux session. Check `~/.agentwire/config.yaml` has the `zai.api_key` field filled in. AgentWire injects the key via `tmux set-environment -t <session>` at creation time, so it's available to pi as an env var but doesn't appear in `ps auxwww` or shell history.
 
-> **Security note:** the key is embedded in the command string (`ZAI_API_KEY=xxx pi ...`), so it's visible in `ps auxwww` and ends up in shell history. This matches the pattern the removed claudeGLM wrapper used — acceptable on single-user dev machines, but don't run pi-zai sessions on multi-user hosts without first moving the key to `tmux set-environment` or a sourced file. See `agentwire-pi-zai` skill for details.
+If you spawn pi manually (outside of `agentwire new`), you'll need to `export ZAI_API_KEY=...` yourself first.
 
 ### Pi shows changelog on startup
 

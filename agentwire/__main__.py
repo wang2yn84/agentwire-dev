@@ -2,7 +2,7 @@
 
 import argparse
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime
 import importlib.resources
 import json
@@ -81,6 +81,46 @@ class AgentCommand:
     """Result of building an agent command."""
     command: str  # The shell command to execute
     temp_file: str | None = None  # Temp file to clean up after agent starts
+    env: dict[str, str] = field(default_factory=dict)  # Secrets to inject via tmux set-environment (keeps keys out of `ps`)
+
+
+def inject_session_env(session: str, env: dict[str, str], remote_host: str | None = None) -> None:
+    """Set env vars on a tmux session so panes inherit them without exposing secrets.
+
+    Using `tmux set-environment -t <session>` keeps API keys out of the command
+    string (which would otherwise be visible in `ps auxwww` and shell history).
+    """
+    if not env:
+        return
+    for key, value in env.items():
+        if remote_host:
+            subprocess.run(
+                ["ssh", remote_host, "tmux", "set-environment", "-t",
+                 shlex.quote(session), shlex.quote(key), shlex.quote(value)],
+                check=False,
+            )
+        else:
+            subprocess.run(
+                ["tmux", "set-environment", "-t", session, key, value],
+                check=False,
+            )
+
+
+def build_session_env_shell_fragment(session: str, env: dict[str, str]) -> str:
+    """Build a shell fragment of `tmux set-environment` calls for chained remote commands.
+
+    Returns a trailing `&& ` string ready to splice into an ssh-executed compound
+    command. Empty string if no env.
+    """
+    if not env:
+        return ""
+    parts = []
+    for key, value in env.items():
+        parts.append(
+            f"tmux set-environment -t {shlex.quote(session)} "
+            f"{shlex.quote(key)} {shlex.quote(value)}"
+        )
+    return " && ".join(parts) + " && "
 
 
 def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None, model: str | None = None) -> AgentCommand:
@@ -107,13 +147,12 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         zai = config.get("zai", {})
         pi_config = config.get("pi", {})
 
-        # Pi reads ZAI_API_KEY from env. Unlike Claude Code, pi has native
-        # Z.AI provider support (--provider zai), so we don't override URLs.
-        env_prefix = f"ZAI_API_KEY={shlex.quote(zai.get('api_key', ''))} "
+        # Pi reads ZAI_API_KEY from env. We inject it via `tmux set-environment`
+        # (see inject_session_env) so the key never appears in `ps auxwww`.
         pi_binary = pi_config.get("binary", "pi")
         default_model = pi_config.get("default_model", "glm-5")
 
-        parts = [env_prefix + pi_binary, "--provider", "zai"]
+        parts = [pi_binary, "--provider", "zai"]
         parts.extend(["--model", model or default_model])
 
         # Permission variants (pi has no permission system to bypass; variants
@@ -142,6 +181,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         return AgentCommand(
             command=" ".join(parts),
             temp_file=temp_file,
+            env={"ZAI_API_KEY": zai.get("api_key", "")},
         )
 
     # === Claude Code ===
@@ -3489,12 +3529,15 @@ def cmd_new(args) -> int:
             except Exception as e:
                 print(f"Warning: Failed to write system prompt to remote: {e}", file=sys.stderr)
 
+        env_fragment = build_session_env_shell_fragment(session_name, agent.env)
+
         # Create session - Agent starts immediately if not bare
         if agent_cmd:
             create_cmd = (
                 f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(remote_path)} && "
                 f"tmux send-keys -t {shlex.quote(session_name)} 'cd {shlex.quote(remote_path)}' Enter && "
                 f"sleep 0.1 && "
+                f"{env_fragment}"
                 f"tmux send-keys -t {shlex.quote(session_name)} {shlex.quote(agent_cmd)} Enter"
             )
         else:
@@ -3637,6 +3680,9 @@ def cmd_new(args) -> int:
     agent = build_agent_command(session_type, roles if roles else None, model=model_override)
 
     agent_cmd = agent.command
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(session_name, agent.env)
 
     # Start agent command if not bare
     if agent_cmd:
@@ -4139,6 +4185,12 @@ def cmd_spawn(args) -> int:
     agent_cmd = agent.command
 
     try:
+        # Inject secrets onto the parent session before spawning the pane so the
+        # new pane inherits them from tmux (avoids putting keys in `ps`).
+        parent_session = session or pane_manager.get_current_session()
+        if parent_session:
+            inject_session_env(parent_session, agent.env)
+
         # Spawn pane first to get the pane index
         pane_index = pane_manager.spawn_worker_pane(
             session=session,
@@ -4516,11 +4568,13 @@ def cmd_recreate(args) -> int:
         # Build agent command using the standard function
         agent = build_agent_command(session_type_str)
         agent_cmd = agent.command
+        env_fragment = build_session_env_shell_fragment(session_name, agent.env)
 
         create_cmd = (
             f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(session_path)} && "
             f"tmux send-keys -t {shlex.quote(session_name)} 'cd {shlex.quote(session_path)}' Enter && "
             f"sleep 0.1 && "
+            f"{env_fragment}"
             f"tmux send-keys -t {shlex.quote(session_name)} {shlex.quote(agent_cmd)} Enter"
         )
 
@@ -4632,6 +4686,9 @@ def cmd_recreate(args) -> int:
         check=True
     )
     time.sleep(0.1)
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(session_name, agent.env)
 
     # Start the agent with appropriate command
     if agent_cmd:
@@ -4891,11 +4948,13 @@ def cmd_fork(args) -> int:
         agent = build_agent_command(session_type_str, roles)
 
         agent_cmd = agent.command
+        env_fragment = build_session_env_shell_fragment(target_session, agent.env)
 
         create_session_cmd = (
             f"tmux new-session -d -s {shlex.quote(target_session)} -c {shlex.quote(target_path)} && "
             f"tmux send-keys -t {shlex.quote(target_session)} 'cd {shlex.quote(target_path)}' Enter && "
             f"sleep 0.1 && "
+            f"{env_fragment}"
             f"tmux send-keys -t {shlex.quote(target_session)} {shlex.quote(agent_cmd)} Enter"
         )
 
@@ -5043,6 +5102,9 @@ def cmd_fork(args) -> int:
         # Build agent command
         agent = build_agent_command(session_type_str, roles)
 
+        # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+        inject_session_env(target_session, agent.env)
+
         agent_cmd = agent.command
         if agent_cmd:
             # Inject --resume <id> --fork-session right after the 'claude' binary
@@ -5156,6 +5218,10 @@ def cmd_fork(args) -> int:
     # Build agent command
     agent = build_agent_command(session_type_str, roles)
     agent_cmd = agent.command
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(target_session, agent.env)
+
     if agent_cmd:
         subprocess.run(
             ["tmux", "send-keys", "-t", target_session, agent_cmd, "Enter"],
@@ -5752,6 +5818,9 @@ def cmd_dev(args) -> int:
     subprocess.run([
         "tmux", "new-session", "-d", "-s", session_name, "-c", str(project_dir),
     ])
+
+    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
+    inject_session_env(session_name, agent.env)
 
     # Start agent with agentwire config
     if agent_cmd:

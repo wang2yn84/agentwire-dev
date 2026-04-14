@@ -105,7 +105,7 @@ Each JSONL line records one event: model, user message, assistant message with t
 - **GLM identity hallucination** — GLM models often claim to be Claude (Z.AI trained on Claude outputs). Don't rely on self-reports; verify via the JSONL event stream (`"provider":"zai"`, Z.AI-formatted response IDs).
 - **Pi pre-1.0** — v0.66.1 is the tested baseline. Breaking changes possible between minors.
 - **Binary location via nvm** — pi installs at `~/.nvm/versions/node/<ver>/bin/pi`. Set `pi.binary` if not on PATH.
-- **API key in command string** — `ZAI_API_KEY={key}` prefixes the command, so the key is visible in `ps auxwww` and shell history. Matches the pattern the removed claudeGLM wrapper used.
+- **API key via tmux set-environment** — `ZAI_API_KEY` is injected onto the tmux session with `tmux set-environment -t <session>` at creation time, so it doesn't appear in `ps auxwww` or shell history. Worker panes inherit automatically. If you spawn pi manually outside an agentwire session, you'll need to export `ZAI_API_KEY` yourself.
 
 ## See Also
 

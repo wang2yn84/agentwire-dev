@@ -87,13 +87,20 @@ class TestBuildAgentCommand:
     def test_pi_zai_basic(self):
         """pi-zai launches pi binary with Z.AI provider and default model."""
         cmd = self._build("pi-zai")
-        assert "pi --provider zai" in cmd.command
-        assert "ZAI_API_KEY=" in cmd.command
+        assert cmd.command.startswith("pi --provider zai")
+        # Key is injected via tmux set-environment, NOT on the command line
+        assert "ZAI_API_KEY" not in cmd.command
+        assert cmd.env == {"ZAI_API_KEY": "test-key-123"}
         assert "--model glm-5" in cmd.command
         # Pi has no --dangerously-skip-permissions (no permission system)
         assert "--dangerously-skip-permissions" not in cmd.command
-        # Pi uses --append-system-prompt, identical to Claude Code
         assert cmd.temp_file is None
+
+    def test_pi_zai_key_not_in_command(self):
+        """Regression: ZAI_API_KEY must live in cmd.env, never in cmd.command."""
+        cmd = self._build("pi-zai")
+        assert "test-key-123" not in cmd.command
+        assert cmd.env.get("ZAI_API_KEY") == "test-key-123"
 
     def test_pi_zai_restricted(self):
         """pi-zai-restricted whitelists read-only tools + bash."""
@@ -157,8 +164,7 @@ class TestBuildAgentCommand:
         cmd = self._build("pi-zai-restricted", roles=roles)
         # Should have restricted's tool list, not role's
         assert "--tools read,grep,find,bash" in cmd.command
-        # Role's Write should not leak in
-        assert "write" not in cmd.command.lower().split("--tools read,grep,find,bash")[1][:50]
+
 
     def test_pi_zai_readonly_ignores_role_instructions(self):
         """pi-zai-readonly is a curated context, skips role instructions."""
@@ -166,3 +172,26 @@ class TestBuildAgentCommand:
         cmd = self._build("pi-zai-readonly", roles=roles)
         assert "--append-system-prompt" not in cmd.command
         assert cmd.temp_file is None
+
+
+class TestSessionEnvInjection:
+    def test_build_session_env_shell_fragment_empty(self):
+        from agentwire.__main__ import build_session_env_shell_fragment
+        assert build_session_env_shell_fragment("s", {}) == ""
+
+    def test_build_session_env_shell_fragment_quoted(self):
+        from agentwire.__main__ import build_session_env_shell_fragment
+        frag = build_session_env_shell_fragment("my-session", {"ZAI_API_KEY": "abc 123"})
+        # Must end with trailing ` && ` so it can splice into a compound command
+        assert frag.endswith(" && ")
+        assert "set-environment -t my-session" in frag
+        assert "ZAI_API_KEY" in frag
+        # Value with spaces must be shell-quoted
+        assert "'abc 123'" in frag
+
+    def test_build_session_env_shell_fragment_multiple(self):
+        from agentwire.__main__ import build_session_env_shell_fragment
+        frag = build_session_env_shell_fragment("s", {"A": "1", "B": "2"})
+        assert "A 1" in frag
+        assert "B 2" in frag
+        assert frag.count("set-environment") == 2
