@@ -104,11 +104,12 @@ class NodeResult:
     """Outcome of executing a single node."""
 
     node_id: str
-    status: str  # "success" | "failure" | "timeout"
+    status: str  # "success" | "failure" | "timeout" | "skipped"
     final_text: str  # Final assistant message text
     events: list[dict] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
     tokens_used: dict = field(default_factory=dict)
     duration_ms: int = 0
     exit_code: int = 0
+    attempts: int = 1  # how many pi invocations happened (1 = no retries)
     error: str | None = None

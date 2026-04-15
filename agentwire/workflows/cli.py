@@ -159,13 +159,15 @@ def cmd_workflow_run(args) -> int:
                     "status": r.status,
                     "final_text": r.final_text,
                     "duration_ms": r.duration_ms,
+                    "attempts": r.attempts,
                     "tokens": r.tokens_used,
                     "error": r.error,
                 }
                 for r in result.node_results
             ],
         }, indent=2))
-        return 0 if result.status == "success" else 1
+        # partial workflows exit 0 — they completed, just not cleanly.
+        return 0 if result.status in ("success", "partial") else 1
 
     print(f"\n=== Workflow {result.workflow!r} → {result.status} ===")
     print(f"  run_id: {result.run_id}")
@@ -174,8 +176,15 @@ def cmd_workflow_run(args) -> int:
         print(f"  error: {result.error}")
 
     for node_result in result.node_results:
+        attempts_note = (
+            f" [attempts={node_result.attempts}]" if node_result.attempts > 1 else ""
+        )
         print(f"\n  --- node[{node_result.node_id}] → {node_result.status} "
-              f"({node_result.duration_ms}ms) ---")
+              f"({node_result.duration_ms}ms){attempts_note} ---")
+        if node_result.status == "skipped":
+            if node_result.error:
+                print(f"  reason: {node_result.error}")
+            continue
         if node_result.tool_calls:
             tools = ", ".join(tc["name"] for tc in node_result.tool_calls)
             print(f"  tools used: {tools}")
@@ -188,4 +197,4 @@ def cmd_workflow_run(args) -> int:
         if node_result.error:
             print(f"  error: {node_result.error}")
 
-    return 0 if result.status == "success" else 1
+    return 0 if result.status in ("success", "partial") else 1
