@@ -10123,8 +10123,10 @@ def main() -> int:
 
     # === workflow command group ===
     from agentwire.workflows.cli import (
+        cmd_workflow_history,
         cmd_workflow_list,
         cmd_workflow_run,
+        cmd_workflow_show,
         cmd_workflow_validate,
     )
 
@@ -10155,6 +10157,33 @@ def main() -> int:
     wf_run.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     wf_run.add_argument("--json", action="store_true", help="Output as JSON")
     wf_run.set_defaults(func=cmd_workflow_run)
+
+    wf_history = workflow_subparsers.add_parser(
+        "history", help="List past workflow runs"
+    )
+    wf_history.add_argument(
+        "--workflow", metavar="NAME", help="Filter by workflow name"
+    )
+    wf_history.add_argument(
+        "--limit", type=int, default=20, help="Max runs to show (default: 20)"
+    )
+    wf_history.add_argument("--json", action="store_true", help="Output as JSON")
+    wf_history.set_defaults(func=cmd_workflow_history)
+
+    wf_show = workflow_subparsers.add_parser(
+        "show", help="Inspect a past workflow run"
+    )
+    wf_show.add_argument("run_id", help="Run ID (from `workflow history`)")
+    wf_show.add_argument(
+        "--events", action="store_true",
+        help="Dump raw event JSONL for all nodes",
+    )
+    wf_show.add_argument(
+        "--node", metavar="ID",
+        help="Filter events to one node id (implies --events)",
+    )
+    wf_show.add_argument("--json", action="store_true", help="Output as JSON")
+    wf_show.set_defaults(func=cmd_workflow_show)
 
     # === listen command group ===
     listen_parser = subparsers.add_parser("listen", help="Voice input recording")

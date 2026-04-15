@@ -25,6 +25,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from agentwire.workflows import storage
 from agentwire.workflows.context import Context
 from agentwire.workflows.definitions import InputSpec, WorkflowDef, topological_sort
 from agentwire.workflows.node import ActionNode, NodeResult
@@ -346,7 +347,7 @@ def run_workflow(
 
     duration_ms = int((time.monotonic() - started_mono) * 1000)
 
-    return WorkflowRun(
+    run_result = WorkflowRun(
         workflow=workflow.name,
         run_id=run_id,
         status=overall_status,
@@ -356,3 +357,8 @@ def run_workflow(
         context=context,
         error=overall_error,
     )
+
+    if runs_dir is not None:
+        storage.write_run(runs_dir, run_id, run_result, context)
+
+    return run_result
