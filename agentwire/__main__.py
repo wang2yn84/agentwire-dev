@@ -10143,6 +10143,14 @@ def main() -> int:
 
     wf_run = workflow_subparsers.add_parser("run", help="Execute a workflow")
     wf_run.add_argument("workflow", help="Workflow name or path to YAML")
+    wf_run.add_argument(
+        "--input", action="append", metavar="KEY=VALUE",
+        help="Workflow input (repeatable). Overrides --input-file."
+    )
+    wf_run.add_argument(
+        "--input-file", metavar="PATH",
+        help="JSON file with inputs (object mapping name → value)"
+    )
     wf_run.add_argument("--dry-run", action="store_true", help="Print plan without running")
     wf_run.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     wf_run.add_argument("--json", action="store_true", help="Output as JSON")

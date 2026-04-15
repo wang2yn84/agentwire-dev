@@ -1,20 +1,20 @@
 """Workflow YAML loader + schema validator.
 
-MVP: supports `name`, `description`, `version`, and a `nodes` map. Each node
-builds into an ActionNode. Multi-node DAGs are declared legally here (so
-future PRs don't break existing files) but only single-node workflows
-actually execute in the MVP runner.
+Supports `name`, `description`, `version`, `inputs` (CLI-supplied
+variables), and a `nodes` map. Each node builds into an ActionNode with
+optional `outputs` extraction specs. DAG dependencies via `depends_on`
+are validated here (cycle detection) and executed by the runner.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
-from agentwire.workflows.node import ActionNode
-
+from agentwire.workflows.node import ActionNode, OutputSpec
 
 # Where workflow YAML files are discovered by `agentwire workflow list` / run.
 # Order matters: first match wins.
@@ -26,6 +26,36 @@ DISCOVERY_DIRS = [
 
 
 @dataclass
+class InputSpec:
+    """Workflow-level input: a CLI-supplied variable bound into the context."""
+
+    name: str
+    type: str = "string"     # "string" | "int" | "float" | "bool" | "json"
+    required: bool = True
+    default: Any = None
+    description: str = ""
+
+    def coerce(self, raw: str | Any) -> Any:
+        """Turn a CLI --input value (always a string) into the declared type."""
+        if raw is None:
+            return None
+        if self.type == "string":
+            return str(raw)
+        if self.type == "int":
+            return int(raw)
+        if self.type == "float":
+            return float(raw)
+        if self.type == "bool":
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
+        if self.type == "json":
+            import json as _json
+            return _json.loads(raw) if isinstance(raw, str) else raw
+        raise ValueError(f"input[{self.name}]: unknown type {self.type!r}")
+
+
+@dataclass
 class WorkflowDef:
     """Parsed workflow definition."""
 
@@ -33,6 +63,7 @@ class WorkflowDef:
     nodes: list[ActionNode]
     description: str = ""
     version: int = 1
+    inputs: list[InputSpec] = field(default_factory=list)
     source_path: Path | None = None
 
     def validate(self) -> list[str]:
@@ -54,7 +85,84 @@ class WorkflowDef:
                     errors.append(
                         f"node[{node.id}].depends_on references unknown node: {dep}"
                     )
+        # Cycle detection (only meaningful once refs resolve)
+        if not errors:
+            cycle = _find_cycle(self.nodes)
+            if cycle:
+                errors.append(f"dependency cycle detected: {' -> '.join(cycle)}")
+        # Duplicate input names
+        seen_inputs: set[str] = set()
+        for inp in self.inputs:
+            if inp.name in seen_inputs:
+                errors.append(f"duplicate input name: {inp.name}")
+            seen_inputs.add(inp.name)
         return errors
+
+
+_UNVISITED, _IN_PROGRESS, _DONE = 0, 1, 2
+
+
+def _find_cycle(nodes: list[ActionNode]) -> list[str] | None:
+    """Return the first cycle found as a list of node ids, or None if acyclic."""
+    graph = {n.id: list(n.depends_on) for n in nodes}
+    color = {nid: _UNVISITED for nid in graph}
+    parent: dict[str, str | None] = {nid: None for nid in graph}
+
+    def dfs(start: str) -> list[str] | None:
+        stack = [start]
+        while stack:
+            nid = stack[-1]
+            if color[nid] == _UNVISITED:
+                color[nid] = _IN_PROGRESS
+            advanced = False
+            for dep in graph.get(nid, []):
+                if color.get(dep) == _UNVISITED:
+                    parent[dep] = nid
+                    stack.append(dep)
+                    advanced = True
+                    break
+                if color.get(dep) == _IN_PROGRESS:
+                    # Reconstruct cycle path: dep ... nid -> dep
+                    cycle = [dep]
+                    cur: str | None = nid
+                    while cur is not None and cur != dep:
+                        cycle.append(cur)
+                        cur = parent.get(cur)
+                    cycle.append(dep)
+                    return list(reversed(cycle))
+            if not advanced:
+                color[nid] = _DONE
+                stack.pop()
+        return None
+
+    for nid in graph:
+        if color[nid] == _UNVISITED:
+            result = dfs(nid)
+            if result:
+                return result
+    return None
+
+
+def topological_sort(nodes: list[ActionNode]) -> list[ActionNode]:
+    """Kahn's algorithm. Assumes validate() already ran (no cycles, deps resolve)."""
+    by_id = {n.id: n for n in nodes}
+    indegree = {n.id: len(n.depends_on) for n in nodes}
+    dependents: dict[str, list[str]] = {n.id: [] for n in nodes}
+    for n in nodes:
+        for dep in n.depends_on:
+            dependents[dep].append(n.id)
+
+    # Use insertion order among tied nodes (YAML node ordering = authoring intent)
+    ready = [n.id for n in nodes if indegree[n.id] == 0]
+    ordered: list[ActionNode] = []
+    while ready:
+        nid = ready.pop(0)
+        ordered.append(by_id[nid])
+        for child in dependents[nid]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+    return ordered
 
 
 def _node_from_dict(node_id: str, data: dict) -> ActionNode:
@@ -93,7 +201,47 @@ def _node_from_dict(node_id: str, data: dict) -> ActionNode:
             raise ValueError(f"node[{node_id}].extra_env must be a mapping")
         kwargs["extra_env"] = {str(k): str(v) for k, v in env.items()}
 
+    if "outputs" in data:
+        outputs_raw = data["outputs"]
+        if not isinstance(outputs_raw, list):
+            raise ValueError(f"node[{node_id}].outputs must be a list")
+        specs: list[OutputSpec] = []
+        for idx, entry in enumerate(outputs_raw):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"node[{node_id}].outputs[{idx}] must be a mapping, "
+                    f"got {type(entry).__name__}"
+                )
+            spec_name = entry.get("name")
+            if not spec_name:
+                raise ValueError(f"node[{node_id}].outputs[{idx}] missing 'name'")
+            specs.append(OutputSpec(
+                name=str(spec_name),
+                source=str(entry.get("source", "text")),
+                pattern=str(entry.get("pattern", "")),
+                required=bool(entry.get("required", True)),
+            ))
+        kwargs["outputs"] = specs
+
     return ActionNode(**kwargs)
+
+
+def _input_from_dict(input_name: str, data: Any) -> InputSpec:
+    """Build an InputSpec. Accepts either a mapping or a bare type string."""
+    if isinstance(data, str):
+        return InputSpec(name=input_name, type=data)
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"input[{input_name}] must be a mapping or type string, "
+            f"got {type(data).__name__}"
+        )
+    return InputSpec(
+        name=input_name,
+        type=str(data.get("type", "string")),
+        required=bool(data.get("required", True)),
+        default=data.get("default"),
+        description=str(data.get("description", "")),
+    )
 
 
 def load_workflow(path: Path) -> WorkflowDef:
@@ -114,11 +262,20 @@ def load_workflow(path: Path) -> WorkflowDef:
     for node_id, node_data in raw_nodes.items():
         nodes.append(_node_from_dict(str(node_id), node_data))
 
+    raw_inputs = data.get("inputs", {})
+    inputs: list[InputSpec] = []
+    if raw_inputs:
+        if not isinstance(raw_inputs, dict):
+            raise ValueError(f"{path}: 'inputs' must be a mapping of name → spec")
+        for input_name, input_data in raw_inputs.items():
+            inputs.append(_input_from_dict(str(input_name), input_data))
+
     return WorkflowDef(
         name=name,
         nodes=nodes,
         description=description,
         version=version,
+        inputs=inputs,
         source_path=path,
     )
 
