@@ -120,11 +120,13 @@ Reference detail lives in skills under `.claude/skills/` — invoke as needed:
 | `agentwire-scheduler` | Scheduled task gates/schedule/priority + overnight queue |
 | `agentwire-desktop-ui` | Editing portal static files (sidebar, windows, artifacts) |
 | `agentwire-pi-zai` | Setting up Z.AI sessions via pi coding agent |
+| `agentwire-workflows` | Authoring or debugging pi workflow YAMLs (`agentwire workflow ...`) |
 
 ## Docs
 
 - CLI: `agentwire --help` or `agentwire <cmd> --help`
 - `docs/pi-zai.md` - Pi coding agent + Z.AI session types
+- `docs/workflows.md` - Pi workflow engine user guide
 - `docs/missions/pi-harness-overview.md` - Pi integration roadmap across phases
 - `docs/channels.md` - Channel developer guide
 - `docs/PORTAL.md` - Portal modes and API reference

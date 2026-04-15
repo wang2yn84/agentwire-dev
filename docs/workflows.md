@@ -1,0 +1,317 @@
+> Living document. Update this, don't create new versions.
+
+# Pi Workflows
+
+Programmable automation for the pi coding agent. A workflow is a YAML file that chains one or more pi invocations into a DAG with templated prompts, structured inputs, and output extraction between nodes.
+
+**When to reach for workflows**
+
+| Use case | Tool |
+|---|---|
+| One-off interactive prompt | `claude` or `pi -p` |
+| Recurring prompt on a schedule | `agentwire scheduler` (see `agentwire-scheduler` skill) |
+| Multi-step logic with conditional branches, variables flowing between steps, retries | **workflows** |
+
+Workflows compose *small reliable nodes* instead of praying a single giant prompt does the right thing.
+
+---
+
+## Anatomy of a workflow YAML
+
+```yaml
+name: my-workflow                    # unique name, falls back to filename stem
+description: Short human summary.
+version: 1                           # schema version, always 1 today
+
+inputs:                              # CLI-supplied variables, optional
+  target:
+    type: string                     # string | int | float | bool | json
+    required: true
+    description: What we're targeting
+  verbose:
+    type: bool
+    default: false
+
+nodes:                               # at least one required
+  analyze:
+    prompt: |                        # Jinja2 template — required
+      Look at {{ inputs.target }}. Return JSON: {"issues": [...]}
+    model: glm-4.7-flash             # any provider/model pi supports
+    provider: zai                    # default zai
+    tools: [read, grep]              # subset of {read, bash, edit, write, grep, find, ls}
+    thinking: "low"                  # off|minimal|low|medium|high|xhigh
+    timeout: 300                     # seconds per attempt (default 300)
+    retries: 2                       # extra attempts on failure|timeout (default 0)
+    retry_delay: 10                  # seconds between attempts (default 10)
+    on_error: continue               # fail|continue|branch (default fail)
+    outputs:                         # extract named vars for downstream nodes
+      - name: issues
+        source: jsonpath
+        pattern: $.issues[*]
+
+  report:
+    depends_on: [analyze]            # DAG edge — can be string or list
+    when: "analyze.issues|length > 0"  # Jinja expression; skip if false
+    prompt: |
+      Found these issues:
+      {% for issue in analyze.issues %}  - {{ issue }}
+      {% endfor %}
+      Write a 3-bullet summary.
+```
+
+Bundled examples live in `agentwire/workflows/examples/` and are always discoverable. User-authored workflows go in `~/.agentwire/workflows/defs/` and override examples of the same name.
+
+---
+
+## CLI reference
+
+```bash
+# Discover
+agentwire workflow list
+agentwire workflow list --json
+
+# Validate without running
+agentwire workflow validate my-workflow
+agentwire workflow validate /path/to/custom.yaml
+
+# Execute
+agentwire workflow run my-workflow
+agentwire workflow run my-workflow --input target=src/api.ts
+agentwire workflow run my-workflow --input target=src/api.ts --input verbose=true
+agentwire workflow run my-workflow --input-file inputs.json
+agentwire workflow run my-workflow --dry-run            # plan only, no pi calls
+agentwire workflow run my-workflow --verbose            # show plan + inputs
+agentwire workflow run my-workflow --json               # structured result
+
+# Inspect past runs
+agentwire workflow history
+agentwire workflow history --workflow my-workflow --limit 5
+agentwire workflow history --json
+
+agentwire workflow show <run-id>                        # summary
+agentwire workflow show <run-id> --node analyze         # just that node's events
+agentwire workflow show <run-id> --events               # all nodes' events, prefixed
+agentwire workflow show <run-id> --json                 # raw metadata
+```
+
+`--input KEY=VALUE` is repeatable. `--input` wins over `--input-file` on conflicts.
+
+`workflow run` exits **0** on `success` or `partial`, **1** on `failure`.
+
+---
+
+## MCP tools
+
+Agents running inside agentwire sessions can drive workflows via MCP:
+
+| Tool | Purpose |
+|---|---|
+| `workflow_list` | List discoverable workflows |
+| `workflow_validate(name_or_path)` | Parse + validate YAML |
+| `workflow_run(name, inputs={}, dry_run=False)` | Execute; returns full run result dict |
+| `workflow_history(workflow=None, limit=20)` | List past runs |
+| `workflow_show(run_id)` | Fetch one run's metadata |
+
+`workflow_run` uses a 600s subprocess timeout — plenty for most pipelines. If yours exceeds that, split it into multiple workflows.
+
+---
+
+## Templating
+
+Prompts and node fields are rendered as [Jinja2](https://jinja.palletsprojects.com/) templates with `StrictUndefined` — typos raise `UndefinedError` loudly instead of becoming silent empty strings.
+
+Available in the namespace:
+- `inputs.X` — workflow-level inputs
+- `<node_id>.<output_name>` — extracted outputs of any upstream node
+
+```jinja
+{{ inputs.file }}
+{{ analyze.issues[0] }}
+{% for issue in analyze.issues %}  - {{ issue }}
+{% endfor %}
+{% if verify.status == 'pass' %}✓ passed{% endif %}
+```
+
+If a node doesn't declare explicit `outputs:`, its entire final assistant message is exposed as `{{ node_id.text }}`.
+
+---
+
+## Output extraction
+
+Each node can declare `outputs:` that extract named values from its final assistant message. Three sources are supported:
+
+### `source: text`
+```yaml
+outputs:
+  - name: reply
+    source: text                    # whole final message, trimmed
+```
+
+### `source: regex`
+```yaml
+outputs:
+  - name: ticket
+    source: regex
+    pattern: "TICKET-(\\d+)"        # group 1 if present, else full match
+```
+
+### `source: jsonpath`
+Expects the node's final message to be a JSON object (with or without a ```json fence).
+
+```yaml
+outputs:
+  - name: issues
+    source: jsonpath
+    pattern: $.issues[*]            # supports $.a, $.a.b, $.a[*], $.a[*].b, $.a[0]
+```
+
+Set `required: false` to keep the node successful even if extraction fails (the extracted value becomes `None` and surfaces in `NodeResult.error` as a soft failure).
+
+---
+
+## Conditionals: `when:`
+
+A node's `when:` is a Jinja **expression** (no `{{ }}` braces). It's evaluated against the current context in a sandboxed environment. Falsy → the node is skipped, and *all its transitive dependents are skipped too*.
+
+```yaml
+restate:
+  depends_on: [verify]
+  when: "verify.status == 'pass'"   # note: no braces
+
+rollback:
+  depends_on: [verify]
+  when: "verify.status == 'fail'"
+```
+
+Both branches evaluate independently; one skips, the other runs.
+
+An undefined variable in `when:` raises, same as in `prompt:`. Use `|default(...)` filters for optional paths.
+
+---
+
+## Retries + error handling
+
+```yaml
+flaky:
+  retries: 2            # up to 3 attempts total
+  retry_delay: 10       # seconds between attempts
+  on_error: continue    # fail | continue | branch
+```
+
+`retries` triggers on status in `{failure, timeout}`. Template and extraction errors are deterministic and not retried.
+
+`on_error` runs *after retries are exhausted*:
+
+- **`fail` (default)** — halt the workflow. All later nodes appear as `skipped (not reached)`.
+- **`continue`** — the node's outputs become `None` (or `{text: ""}` if none declared). Dependents still run and see those Nones. Workflow ends in `partial` status.
+- **`branch`** — skip normal dependents, but `on_error_goto` target still runs.
+  ```yaml
+  try_thing:
+    on_error: branch
+    on_error_goto: rollback       # must reference an existing node
+  ```
+
+Workflow status:
+- `success` — every node succeeded
+- `partial` — ≥1 node skipped or failed-continue, nothing halted
+- `failure` — a node with `on_error: fail` failed (execution halted)
+
+`partial` exits 0. `failure` exits 1.
+
+---
+
+## Storage layout
+
+Every run leaves a directory under `~/.agentwire/workflows/runs/<run-id>/`:
+
+```
+verify-or-rollback-20260415T...-abc/
+├── metadata.json               # workflow, status, inputs, node summaries
+├── context.json                # final Context: inputs + per-node outputs
+└── nodes/
+    ├── verify.events.jsonl     # raw pi JSONL stream for that node
+    ├── restate.events.jsonl
+    └── rollback.events.jsonl
+```
+
+`metadata.json` is the source of truth for `workflow history` and `workflow show`. Runs missing `metadata.json` (crashed mid-execution) are silently hidden from listings.
+
+```json
+{
+  "schema_version": 1,
+  "workflow": "verify-or-rollback",
+  "run_id": "verify-or-rollback-20260415T080302-e7e2ff62",
+  "status": "partial",
+  "started_at": 1776254582.37,
+  "duration_ms": 4203,
+  "error": null,
+  "inputs": {"target": "fail"},
+  "nodes": [
+    {"id": "verify", "status": "success", "attempts": 1,
+     "duration_ms": 2701, "tokens": {...}, "error": null},
+    ...
+  ]
+}
+```
+
+No retention policy yet — if `runs/` grows too large, clear it manually.
+
+---
+
+## Writing good pi prompts
+
+Pi is a one-shot, stateless agent per node. These tips keep nodes cheap and reliable:
+
+- **Constrain tools.** If a node only reads files, set `tools: [read]`. Excess tools invite unnecessary calls.
+- **Dial thinking.** `thinking: "off"` for structured/obvious tasks, `"medium"` for analysis, `"high"+` only for deep reasoning. Each level up costs more tokens.
+- **Ask for JSON explicitly.** "Return ONLY a JSON object (no prose, no code fences) in this shape: …" works far better than assuming a schema.
+- **Use flash tier for cheap nodes.** `model: glm-4.7-flash` is free on Z.AI's flash tier and plenty for non-reasoning work.
+- **Set timeouts for network-bound nodes.** `timeout: 60` for a `gh` command; default 300 for thinking tasks.
+
+---
+
+## Debugging
+
+### A node fails or produces the wrong output
+
+```bash
+# See the raw pi event stream for one node
+agentwire workflow show <run-id> --node analyze
+
+# See everything with node prefixes
+agentwire workflow show <run-id> --events
+```
+
+### Downstream template raises UndefinedError
+
+`StrictUndefined` surfaces typos. Check the failing node's declared `outputs:` names match what the downstream template references. The run's `context.json` shows what was actually in scope.
+
+### Output extraction failed
+
+If you declared `source: jsonpath` but the model wrapped its response in ```json fences, the extractor handles that — but if the JSON itself is malformed, extraction fails. Lower `thinking` and tighten the prompt to make the output more deterministic.
+
+### Retries never fired
+
+`retries` trigger on `failure` or `timeout` only. Template errors and output extraction errors are deterministic and won't retry — fix the YAML or the prompt.
+
+### MCP tool doesn't appear
+
+MCP tools ship in the same package. After any code change:
+```bash
+agentwire rebuild && agentwire portal restart --dev
+```
+Then restart your Claude session — the MCP server runs as a separate process started by Claude Code.
+
+---
+
+## FAQ
+
+**Can I run workflows in parallel?** Not yet. Nodes run sequentially in topological order. Parallel fan-out is Phase 4.
+
+**Can one workflow trigger another?** Not directly. You can invoke `agentwire workflow run` from a `bash`-tool prompt inside a node, but that's a composition hack. First-class sub-workflows are deferred.
+
+**What about untrusted workflow YAMLs?** The `when:` sandbox is `ImmutableSandboxedEnvironment` — dunders and most dangerous builtins are blocked — but workflow YAMLs are currently treated as trusted local code. Don't run YAMLs you haven't reviewed.
+
+**Can I see per-attempt events when a node retries?** Not yet. Only the final attempt's event log is kept on disk. If you need per-attempt observability, log from inside your prompt (pi will echo).
+
+**How do I share workflows across machines?** Copy the YAML file into `~/.agentwire/workflows/defs/` on each machine. No sync yet.
