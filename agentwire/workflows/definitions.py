@@ -90,6 +90,18 @@ class WorkflowDef:
             cycle = _find_cycle(self.nodes)
             if cycle:
                 errors.append(f"dependency cycle detected: {' -> '.join(cycle)}")
+        # on_error=branch requires on_error_goto pointing at a real node
+        for node in self.nodes:
+            if node.on_error == "branch":
+                if not node.on_error_goto:
+                    errors.append(
+                        f"node[{node.id}].on_error=branch requires on_error_goto"
+                    )
+                elif node.on_error_goto not in seen_ids:
+                    errors.append(
+                        f"node[{node.id}].on_error_goto references unknown node: "
+                        f"{node.on_error_goto}"
+                    )
         # Duplicate input names
         seen_inputs: set[str] = set()
         for inp in self.inputs:
