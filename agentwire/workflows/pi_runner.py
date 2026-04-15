@@ -18,7 +18,6 @@ import yaml
 
 from agentwire.workflows.node import ActionNode, NodeResult
 
-
 CONFIG_PATH = Path.home() / ".agentwire" / "config.yaml"
 
 

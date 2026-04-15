@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from agentwire.workflows.definitions import (
     discover_workflows,
@@ -18,8 +19,37 @@ from agentwire.workflows.definitions import (
 )
 from agentwire.workflows.runner import run_workflow
 
-
 RUNS_DIR = Path.home() / ".agentwire" / "workflows" / "runs"
+
+
+def _parse_input_pairs(pairs: list[str] | None) -> tuple[dict[str, Any], list[str]]:
+    """Parse --input key=value flags into a dict. Last wins on duplicates."""
+    result: dict[str, Any] = {}
+    errors: list[str] = []
+    for pair in pairs or []:
+        if "=" not in pair:
+            errors.append(f"--input expects KEY=VALUE, got: {pair!r}")
+            continue
+        key, _, value = pair.partition("=")
+        key = key.strip()
+        if not key:
+            errors.append(f"--input missing key: {pair!r}")
+            continue
+        result[key] = value
+    return result, errors
+
+
+def _load_input_file(path: str | None) -> tuple[dict[str, Any], list[str]]:
+    if not path:
+        return {}, []
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception as e:
+        return {}, [f"--input-file {path!r}: {e}"]
+    if not isinstance(data, dict):
+        return {}, [f"--input-file {path!r}: must be a JSON object"]
+    return data, []
 
 
 def cmd_workflow_list(args) -> int:
@@ -92,16 +122,29 @@ def cmd_workflow_run(args) -> int:
 
     dry_run = getattr(args, "dry_run", False)
 
+    # Collect inputs: --input-file first (base), then --input overrides.
+    file_inputs, file_errors = _load_input_file(getattr(args, "input_file", None))
+    cli_inputs, pair_errors = _parse_input_pairs(getattr(args, "input", None))
+    input_errors = file_errors + pair_errors
+    if input_errors:
+        for err in input_errors:
+            print(f"Error: {err}", file=sys.stderr)
+        return 1
+    merged_inputs: dict[str, Any] = {**file_inputs, **cli_inputs}
+
     if getattr(args, "verbose", False):
         print(f"Running workflow {workflow.name!r} ({len(workflow.nodes)} node(s))...")
         if dry_run:
             print("  (dry-run)")
+        if merged_inputs:
+            print(f"  inputs: {merged_inputs}")
 
-    try:
-        result = run_workflow(workflow, runs_dir=RUNS_DIR, dry_run=dry_run)
-    except NotImplementedError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 2
+    result = run_workflow(
+        workflow,
+        runs_dir=RUNS_DIR,
+        dry_run=dry_run,
+        inputs=merged_inputs,
+    )
 
     if getattr(args, "json", False):
         print(json.dumps({
