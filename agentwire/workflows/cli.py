@@ -4,15 +4,19 @@ Subcommands:
   list     - discover and print available workflows
   validate - parse + validate a workflow without running it
   run      - execute a workflow end-to-end
+  history  - list past runs
+  show     - inspect a past run (metadata, per-node events)
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
+from agentwire.workflows import storage
 from agentwire.workflows.definitions import (
     discover_workflows,
     resolve_workflow,
@@ -20,6 +24,25 @@ from agentwire.workflows.definitions import (
 from agentwire.workflows.runner import run_workflow
 
 RUNS_DIR = Path.home() / ".agentwire" / "workflows" / "runs"
+
+
+def _fmt_duration(ms: int | None) -> str:
+    """Compact human-ish duration: 120ms / 3.2s / 1m04s."""
+    if not ms:
+        return "0ms"
+    if ms < 1000:
+        return f"{ms}ms"
+    seconds = ms / 1000.0
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    mins, secs = divmod(int(seconds), 60)
+    return f"{mins}m{secs:02d}s"
+
+
+def _fmt_started_at(ts: float | None) -> str:
+    if not ts:
+        return "-"
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
 
 
 def _parse_input_pairs(pairs: list[str] | None) -> tuple[dict[str, Any], list[str]]:
@@ -198,3 +221,108 @@ def cmd_workflow_run(args) -> int:
             print(f"  error: {node_result.error}")
 
     return 0 if result.status in ("success", "partial") else 1
+
+
+def cmd_workflow_history(args) -> int:
+    """`agentwire workflow history` — list past runs."""
+    workflow = getattr(args, "workflow", None)
+    limit = getattr(args, "limit", 20) or 20
+    runs = storage.list_runs(RUNS_DIR, workflow=workflow, limit=limit)
+
+    if getattr(args, "json", False):
+        print(json.dumps(runs, indent=2))
+        return 0
+
+    if not runs:
+        if workflow:
+            print(f"No runs found for workflow {workflow!r}.")
+        else:
+            print("No runs found.")
+            print(f"  (searched {RUNS_DIR})")
+        return 0
+
+    # Fixed-width columns for quick scanning. run_id is long; truncate gracefully.
+    print(f"  {'run_id':<52}  {'workflow':<24}  {'status':<8}  {'duration':>8}  started")
+    print(f"  {'-' * 52}  {'-' * 24}  {'-' * 8}  {'-' * 8}  {'-' * 19}")
+    for run in runs:
+        rid = run.get("run_id", "")
+        if len(rid) > 52:
+            rid = rid[:49] + "..."
+        name = run.get("workflow", "")
+        if len(name) > 24:
+            name = name[:21] + "..."
+        status = run.get("status", "")
+        duration = _fmt_duration(run.get("duration_ms"))
+        started = _fmt_started_at(run.get("started_at"))
+        print(f"  {rid:<52}  {name:<24}  {status:<8}  {duration:>8}  {started}")
+
+    return 0
+
+
+def cmd_workflow_show(args) -> int:
+    """`agentwire workflow show <run-id>` — inspect a past run."""
+    run_id = args.run_id
+    node_filter = getattr(args, "node", None)
+    want_events = getattr(args, "events", False)
+    want_json = getattr(args, "json", False)
+
+    meta = storage.load_run(RUNS_DIR, run_id)
+    if meta is None:
+        print(f"Error: run {run_id!r} not found.", file=sys.stderr)
+        print(f"  (searched {RUNS_DIR / run_id})", file=sys.stderr)
+        return 1
+
+    # --node <id> or --events ⇒ dump event JSONL
+    if node_filter or want_events:
+        events = storage.load_events(RUNS_DIR, run_id, node_id=node_filter)
+        if want_json:
+            print(json.dumps(
+                [{"node": nid, "event": evt} for nid, evt in events],
+                indent=2,
+            ))
+            return 0
+        # Raw JSONL — one line per event. Prefix with [node-id] when showing all.
+        for nid, evt in events:
+            line = json.dumps(evt)
+            if node_filter:
+                print(line)
+            else:
+                print(f"[{nid}] {line}")
+        return 0
+
+    if want_json:
+        print(json.dumps(meta, indent=2))
+        return 0
+
+    print(f"Workflow: {meta.get('workflow', '?')}")
+    print(f"Run ID:   {meta.get('run_id', run_id)}")
+    print(f"Status:   {meta.get('status', '?')}")
+    print(f"Started:  {_fmt_started_at(meta.get('started_at'))}")
+    print(f"Duration: {_fmt_duration(meta.get('duration_ms'))}")
+    if meta.get("error"):
+        print(f"Error:    {meta['error']}")
+    inputs = meta.get("inputs") or {}
+    if inputs:
+        print(f"Inputs:   {json.dumps(inputs)}")
+
+    nodes = meta.get("nodes") or []
+    if nodes:
+        print("\nNodes:")
+        for n in nodes:
+            nid = n.get("id", "?")
+            status = n.get("status", "?")
+            dur = _fmt_duration(n.get("duration_ms"))
+            attempts = n.get("attempts", 1)
+            attempts_note = f" attempts={attempts}" if attempts > 1 else ""
+            tokens = n.get("tokens") or {}
+            token_note = ""
+            if tokens:
+                token_note = (
+                    f", in={tokens.get('input', 0)} out={tokens.get('output', 0)} "
+                    f"cost=${tokens.get('cost', 0):.4f}"
+                )
+            print(f"  {nid:<20} → {status:<8} ({dur}{attempts_note}{token_note})")
+            if n.get("error"):
+                print(f"    reason: {n['error']}")
+
+    return 0

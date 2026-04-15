@@ -1,9 +1,8 @@
 """AgentWire workflow engine.
 
-Ships DAG execution, Jinja2 templating, and output extraction. See
-`docs/missions/pi-workflow-engine.md` for the full roadmap — retries,
-`when` conditionals, on_error branching, storage, and MCP tools land
-in subsequent PRs.
+Ships DAG execution, Jinja2 templating, output extraction, retries,
+`when` conditionals, on_error branching, and persistent run storage.
+See `docs/missions/pi-workflow-engine.md` for the roadmap.
 """
 
 from agentwire.workflows.context import Context
@@ -11,6 +10,7 @@ from agentwire.workflows.definitions import InputSpec, WorkflowDef, load_workflo
 from agentwire.workflows.node import ActionNode, NodeResult, OutputSpec
 from agentwire.workflows.pi_runner import run_node
 from agentwire.workflows.runner import run_workflow
+from agentwire.workflows.storage import list_runs, load_run, write_run
 
 __all__ = [
     "ActionNode",
@@ -19,7 +19,10 @@ __all__ = [
     "NodeResult",
     "OutputSpec",
     "WorkflowDef",
+    "list_runs",
+    "load_run",
     "load_workflow",
     "run_node",
     "run_workflow",
+    "write_run",
 ]
