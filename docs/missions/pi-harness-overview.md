@@ -52,8 +52,8 @@ Each phase is its own mission doc. Execute sequentially — each validates the n
 | # | Mission | Doc | Status |
 |---|---------|-----|--------|
 | 1 | Pi Session Type | `pi-session-type.md` | **complete (2026-04-13)** |
-| 2 | Pi Workflow Engine | `pi-workflow-engine.md` | planned |
-| 3 | Scheduler Workflows | `pi-scheduler-workflows.md` | planned |
+| 2 | Pi Workflow Engine | `pi-workflow-engine.md` | **complete (2026-04-14, v1.22.0)** |
+| 3 | Scheduler Workflows | `pi-scheduler-workflows.md` | **complete (2026-04-16)** |
 | 4 | Advanced Workflow Patterns | `pi-workflow-advanced.md` | planned |
 | 5 | Workflow Desktop UI | `pi-workflow-ui.md` | planned |
 

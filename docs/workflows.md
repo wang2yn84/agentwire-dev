@@ -9,7 +9,8 @@ Programmable automation for the pi coding agent. A workflow is a YAML file that 
 | Use case | Tool |
 |---|---|
 | One-off interactive prompt | `claude` or `pi -p` |
-| Recurring prompt on a schedule | `agentwire scheduler` (see `agentwire-scheduler` skill) |
+| Recurring prompt on a schedule | `agentwire scheduler` with a `task:` (single Claude prompt) — see `agentwire-scheduler` skill |
+| Recurring multi-step DAG on a schedule | `agentwire scheduler` with a `workflow:` reference — the scheduler dispatches the workflow in-process |
 | Multi-step logic with conditional branches, variables flowing between steps, retries | **workflows** |
 
 Workflows compose *small reliable nodes* instead of praying a single giant prompt does the right thing.

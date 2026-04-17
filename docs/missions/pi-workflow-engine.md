@@ -5,8 +5,8 @@
 Build a programmable workflow system where pi invocations are nodes in a directed graph. Each node is a one-shot `pi -p --mode json` call with structured inputs and outputs. Nodes chain into DAGs for complex automation that's impossible with today's single-prompt scheduler tasks.
 
 **Phase of:** `pi-harness-overview.md`
-**Status:** planned
-**Estimated effort:** 2–3 weeks
+**Status:** complete (code shipped 2026-04-14, v1.22.0)
+**Estimated effort:** 2–3 weeks (actual: ~1 week)
 **Depends on:** Phase 1 (validates pi invocation path, config, install)
 **Blocks:** Phase 3 (scheduler workflows), Phase 4 (advanced patterns), Phase 5 (UI)
 
