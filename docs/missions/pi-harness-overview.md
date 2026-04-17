@@ -53,9 +53,12 @@ Each phase is its own mission doc. Execute sequentially — each validates the n
 |---|---------|-----|--------|
 | 1 | Pi Session Type | `pi-session-type.md` | **complete (2026-04-13)** |
 | 2 | Pi Workflow Engine | `pi-workflow-engine.md` | **complete (2026-04-14, v1.22.0)** |
-| 3 | Scheduler Workflows | `pi-scheduler-workflows.md` | **complete (2026-04-16)** |
-| 4 | Advanced Workflow Patterns | `pi-workflow-advanced.md` | planned |
-| 5 | Workflow Desktop UI | `pi-workflow-ui.md` | planned |
+| 3 | Scheduler Workflows | `pi-scheduler-workflows.md` | **complete (2026-04-16, v1.23.0)** |
+| 6 | Agent-SDK Workflow Runner (parallel to pi) | `anthropic-sdk-runner.md` | **next** |
+| 4 | Advanced Workflow Patterns | `pi-workflow-advanced.md` | planned — **gated on Phase 6 reaching parity** |
+| 5 | Workflow Desktop UI | `pi-workflow-ui.md` | planned — **gated on Phase 6 reaching parity** |
+
+**Reorder note (2026-04-16)**: After Anthropic confirmed subscription-mode Agent SDK usage is supported, Phase 6 was added and prioritized ahead of 4 and 5. Advanced patterns (parallelism, loops, HITL, cost caps) and the desktop UI need to work uniformly across runners — building them on pi alone would force a retrofit later. See `anthropic-sdk-runner.md` for the rationale.
 
 **Completion target:** Phases 1–3 by 2026-05-15. Phase 4–5 as needed.
 
@@ -66,11 +69,13 @@ Phase 1 (Session Type)
   │
   ├──► Phase 2 (Workflow Engine) ──► Phase 3 (Scheduler Workflows)
                                          │
-                                         ├──► Phase 4 (Advanced Patterns)
-                                         └──► Phase 5 (Desktop UI)
+                                         └──► Phase 6 (Agent-SDK Runner, parallel to pi)
+                                                │
+                                                ├──► Phase 4 (Advanced Patterns — runner-agnostic)
+                                                └──► Phase 5 (Desktop UI — runner-agnostic)
 ```
 
-Phase 1 validates pi works in our stack. Phase 2 builds the engine pi powers. Phases 3–5 extend the engine.
+Phase 1 validates pi works in our stack. Phase 2 builds the engine. Phase 3 wires the engine into the scheduler. Phase 6 adds a second runner (Anthropic SDK) alongside pi so higher-level features can be built on a runner-agnostic abstraction. Phases 4–5 extend the engine on top of that abstraction.
 
 ## Key Non-Goals
 
