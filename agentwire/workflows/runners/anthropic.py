@@ -3,8 +3,10 @@
 Uses subscription auth — the same credentials the `claude` CLI uses from
 `~/.claude/.credentials.json`. Tool execution is owned by Claude Code itself;
 this runner configures `allowed_tools` + `permission_mode="bypassPermissions"`
-+ `setting_sources=["user"]` so damage-control hooks fire automatically via
-`~/.claude/hooks/*`. Pi's tool path is not touched by any of this.
++ `setting_sources=["user"]` so PreToolUse hooks referenced from
+`~/.claude/settings.json` fire automatically — including AgentWire's
+damage-control hooks at `~/.agentwire/hooks/damage-control/*`. Pi's tool path
+is not touched by any of this.
 
 The runner is sync on the outside (to match `NodeRunner` Protocol) and async
 on the inside (claude-agent-sdk is async-only). `asyncio.run()` bridges them.
@@ -17,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -26,6 +29,35 @@ from agentwire.workflows.runners import anthropic_events as ev
 from agentwire.workflows.runners.anthropic_capabilities import validate_node_settings
 
 logger = logging.getLogger("agentwire.workflows.anthropic")
+
+
+# Error-message substrings that mark a failure as transient (worth retrying
+# via the workflow-level node.retries loop). Classification only — we don't
+# add an inner retry loop here; outer retry handles all failure kinds, and
+# this prefix is purely informational so users see at a glance why a node
+# failed. PR 6 canary data will tell us whether inner backoff pays.
+_TRANSIENT_MARKERS = (
+    "overloaded", "rate_limit", "rate limit", " 429", " 529", " 503",
+)
+_AUTH_MARKERS = ("authentication", "unauthorized", " 401", " 403")
+_INVALID_MARKERS = ("invalid_request", " 400", "validation")
+
+
+def _classify(err_type: str, err_msg: str) -> str:
+    """Return a prefix category for an SDK-side error.
+
+    Not a retry decision — just a human-readable tag on NodeResult.error so
+    logs and morning reports can distinguish rate-limited runs from genuine
+    bugs.
+    """
+    haystack = f"{err_type} {err_msg}".lower()
+    if any(m in haystack for m in _TRANSIENT_MARKERS):
+        return "transient"
+    if any(m in haystack for m in _AUTH_MARKERS):
+        return "permanent"
+    if any(m in haystack for m in _INVALID_MARKERS):
+        return "invalid"
+    return "error"
 
 
 class AnthropicRunner:
@@ -120,8 +152,7 @@ class AnthropicRunner:
         # a Claude Code session (CLAUDECODE=1), the spawned `claude` subprocess
         # aborts with "cannot be launched inside another Claude Code session".
         # Temporarily unset it for the duration of the SDK call; restore after.
-        import os as _os
-        saved_claudecode = _os.environ.pop("CLAUDECODE", None)
+        saved_claudecode = os.environ.pop("CLAUDECODE", None)
 
         try:
             async with ClaudeSDKClient(options=options) as client:
@@ -143,12 +174,13 @@ class AnthropicRunner:
                     except Exception:
                         logger.exception("event translation failed for %s", type(message).__name__)
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
+            err_type = type(e).__name__
+            error_msg = f"{_classify(err_type, str(e))}: {err_type}: {e}"
         finally:
             if log_file:
                 log_file.close()
             if saved_claudecode is not None:
-                _os.environ["CLAUDECODE"] = saved_claudecode
+                os.environ["CLAUDECODE"] = saved_claudecode
 
         duration_ms = int((time.monotonic() - started) * 1000)
         final_text = ev.extract_final_text_from_assistants(events)
