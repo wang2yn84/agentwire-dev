@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Anthropic workflow runner** — `runner: anthropic` alongside the existing pi runner (Phase 6, PRs 1–6)
+  - Pluggable runner registry (`agentwire/workflows/runners/`) with a shared `NodeRunner` Protocol; pi kept byte-for-byte identical behind a thin shim
+  - `AnthropicRunner` uses `claude-agent-sdk>=0.1.43` with subscription auth — no `ANTHROPIC_API_KEY` required, inherits `~/.claude/.credentials.json` (subscription-covered, no per-run billing)
+  - Tool execution is owned by Claude Code itself: `setting_sources=["user"]` loads `~/.claude/settings.json` so AgentWire's damage-control PreToolUse hooks fire on every Bash call (verified end-to-end by a live integration test that chmod 777's a sentinel file — hook blocks, file mode unchanged)
+  - Per-runner tool namespaces: pi stays lowercase (`read`, `bash`, `edit`, …), anthropic uses CamelCase (`Read`, `Bash`, `Edit`, …); parse-time validation rejects cross-namespace mixups
+  - Anthropic-only fields validated at parse time: `model` (required), `effort` (low|medium|high|max|xhigh — with Opus/Opus-4.7 gating), `thinking_config` (adaptive|enabled|disabled), `task_budget_tokens` (Opus 4.7 beta, min 20000), `max_thinking_tokens`, `max_budget_usd`
+  - Error classification: anthropic runner tags `NodeResult.error` with `transient:` / `permanent:` / `invalid:` / `error:` prefixes so rate-limited runs are distinguishable from genuine bugs
+- **Live event streaming under `--verbose`** — `agentwire workflow run … -v` now streams per-event output for anthropic nodes: `[node] → tool_use Read …`, `← tool_result (ok/err)`, `▓ text`, `✓ turn 42+18 tok`, `■ agent_end 3.1s`
+- **Runner recorded in metadata** — `metadata.json` bumped to `schema_version: 2` with run-level and per-node `runner` fields; `workflow show` renders a `Runner:` line + per-node tag + `Totals:` aggregation; `workflow history` gains a `runner` column
+- **`--runner {pi,anthropic}` CLI override** — `agentwire workflow run` accepts `--runner` to flip every node's runner for one invocation; runner/field mismatches surface as normal validation errors
+- **Canary live** — `daily-book-report` (daily 13:30) flipped to anthropic on 2026-04-17 (Sonnet 4.6 for fetch, Opus 4.7 for compose_and_send). Findings tracked in `docs/missions/anthropic-sdk-runner.md`
+- **Damage-control honors session bypass modes** — `permission_mode: "bypassPermissions"` and `"auto"` now skip `ask:true` escalations for write-tier commands; hard blocks still fire. Fixes `--dangerously-skip-permissions` and autonomous-mode sessions being prompted per Bash call
+
+### Documentation
+
+- New "Runners" section in `docs/workflows.md` covering per-runner fields, `--runner` usage, and live-event output
+- `agentwire-workflows` skill updated — no longer claims pi-only; links to full Runners reference
+
 ## [1.23.0] - 2026-04-16
 
 ### Added
