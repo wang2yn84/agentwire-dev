@@ -30,7 +30,7 @@ from agentwire.workflows.context import Context
 from agentwire.workflows.definitions import InputSpec, WorkflowDef, topological_sort
 from agentwire.workflows.node import ActionNode, NodeResult
 from agentwire.workflows.outputs import OutputExtractionError, extract_outputs
-from agentwire.workflows.pi_runner import run_node
+from agentwire.workflows.runners import get_runner
 
 
 @dataclass
@@ -117,7 +117,7 @@ def _run_one_node_with_retries(
     runs_dir: Path | None,
     run_id: str,
 ) -> NodeResult:
-    """Invoke pi; retry on failure|timeout per node.retries / retry_delay."""
+    """Invoke the node's runner; retry on failure|timeout per node.retries / retry_delay."""
     attempts = 0
     result: NodeResult | None = None
     event_log_path: Path | None = None
@@ -125,10 +125,11 @@ def _run_one_node_with_retries(
         event_log_path = runs_dir / run_id / "nodes" / f"{node.id}.events.jsonl"
 
     rendered_node = replace(node, prompt=rendered_prompt)
+    runner = get_runner(node.runner)
 
     while True:
         attempts += 1
-        result = run_node(
+        result = runner.run(
             rendered_node,
             workflow_cwd=context.cwd,
             event_log_path=event_log_path,
