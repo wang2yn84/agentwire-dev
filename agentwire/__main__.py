@@ -10619,7 +10619,12 @@ def main() -> int:
     scheduler_parser = subparsers.add_parser(
         "scheduler",
         help="Manage the task scheduler",
-        description="Centralized daemon that dispatches tasks across projects on a shared cadence.",
+        description=(
+            "Centralized daemon that dispatches tasks across projects on a shared cadence. "
+            "Tasks in ~/.agentwire/scheduler.yaml are either ensure tasks (task: + session:) "
+            "or workflow tasks (workflow: + inputs:) — the scheduler routes each automatically. "
+            "See docs/scheduled-workloads.md."
+        ),
     )
     scheduler_subparsers = scheduler_parser.add_subparsers(dest="scheduler_command")
 

@@ -72,12 +72,30 @@ Runs without `metadata.json` (crashed mid-run) are silently hidden from `history
 - **`when: "{{ x == 'y' }}"`** — wrong. `when:` is a Jinja *expression*, not a template. Write `when: "x == 'y'"`.
 - **Adding MCP tool doesn't appear** — requires `agentwire rebuild && agentwire portal restart --dev` *plus* a Claude session restart.
 
+## Scheduler integration
+
+Workflows can be wired into `~/.agentwire/scheduler.yaml` with `workflow:` + `inputs:` fields (instead of `task:`). The scheduler dispatches them in-process via `run_workflow()` — no tmux, no ensure subprocess.
+
+```yaml
+tasks:
+  nightly-doc-drift:
+    schedule: { every: day, at: "23:00" }
+    workflow: doc-drift-check
+    inputs:
+      paths: "docs/,{{ project }}"  # {{ task }}, {{ project }}, {{ session }}, {{ workflow }} expand
+```
+
+Status maps `success→complete`, `partial→incomplete`, `failure→failed`. `agentwire scheduler run <name> --dry-run` works for workflow tasks. The morning report renders per-node status badges.
+
+Full reference in `docs/workflows.md` → "Scheduler integration" section.
+
 ## When to pick which tool
 
 | Need | Tool |
 |---|---|
 | Single interactive prompt | `claude` / `pi -p` |
-| Recurring prompt on a schedule | `agentwire-scheduler` skill |
+| Recurring single Claude prompt on a schedule | `agentwire-scheduler` skill with `task:` |
+| Recurring multi-step DAG on a schedule | `agentwire-scheduler` skill with `workflow:` (this skill for the DAG itself) |
 | Multi-step logic, variables between steps, conditionals, retries | workflows |
 
 ## Full reference
