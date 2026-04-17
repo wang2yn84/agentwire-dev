@@ -203,6 +203,7 @@ def _make_workflow_run(runs_dir, **overrides):
                 final_text="hi",
                 duration_ms=50,
                 attempts=1,
+                runner="pi",
             ),
         ],
     )
@@ -225,6 +226,9 @@ class TestStorage:
         assert rows[0]["run_id"] == run.run_id
         assert rows[0]["inputs"] == {"x": 1}
         assert rows[0]["nodes"][0]["id"] == "a"
+        assert rows[0]["nodes"][0]["runner"] == "pi"
+        assert rows[0]["runner"] == "pi"
+        assert rows[0]["schema_version"] == 2
 
     def test_list_runs_sorted_newest_first(self, tmp_path):
         runs_dir = tmp_path / "runs"

@@ -163,3 +163,4 @@ class NodeResult:
     exit_code: int = 0
     attempts: int = 1  # how many runner invocations happened (1 = no retries)
     error: str | None = None
+    runner: str = ""  # populated by the workflow loop from node.runner after run()

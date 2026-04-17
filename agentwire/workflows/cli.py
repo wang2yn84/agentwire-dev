@@ -14,7 +14,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from agentwire.workflows import storage
 from agentwire.workflows.definitions import (
@@ -128,6 +128,45 @@ def cmd_workflow_validate(args) -> int:
     return 0
 
 
+def _make_verbose_printer() -> Callable[[dict], None]:
+    """Return a per-event printer for --verbose runs.
+
+    Anthropic runner events land here live via the NodeRunner `on_event`
+    callback. Pi runner doesn't invoke the callback (see runners/pi.py),
+    so pi nodes stay silent under --verbose.
+    """
+    def _print(ev: dict) -> None:
+        etype = ev.get("type")
+        nid = ev.get("node_id") or "?"
+        if etype == "message_end":
+            msg = ev.get("message") or {}
+            role = msg.get("role")
+            for block in msg.get("content") or []:
+                btype = block.get("type")
+                if btype == "tool_use":
+                    name = block.get("name", "?")
+                    inp = block.get("input") or {}
+                    args = " ".join(f"{k}={v!r}" for k, v in list(inp.items())[:2])
+                    print(f"  [{nid}] → tool_use {name} {args}")
+                elif btype == "tool_result":
+                    content = block.get("content", "")
+                    is_err = block.get("is_error", False)
+                    tag = "err" if is_err else "ok"
+                    snippet = str(content)[:60].replace("\n", " ")
+                    print(f"  [{nid}] ← tool_result ({tag}) {snippet}")
+                elif btype == "text" and role == "assistant":
+                    t = (block.get("text") or "").strip()
+                    if t:
+                        print(f"  [{nid}] ▓ {t[:80]}")
+        elif etype == "turn_end":
+            u = ev.get("usage") or {}
+            print(f"  [{nid}] ✓ turn {u.get('input', 0)}+{u.get('output', 0)} tok")
+        elif etype == "agent_end":
+            ms = ev.get("duration_ms", 0)
+            print(f"  [{nid}] ■ agent_end {ms/1000:.1f}s")
+    return _print
+
+
 def cmd_workflow_run(args) -> int:
     """`agentwire workflow run <name-or-path>` — execute a workflow."""
     try:
@@ -167,6 +206,7 @@ def cmd_workflow_run(args) -> int:
         runs_dir=RUNS_DIR,
         dry_run=dry_run,
         inputs=merged_inputs,
+        on_event=_make_verbose_printer() if getattr(args, "verbose", False) else None,
     )
 
     if getattr(args, "json", False):
@@ -179,6 +219,7 @@ def cmd_workflow_run(args) -> int:
             "nodes": [
                 {
                     "id": r.node_id,
+                    "runner": r.runner,
                     "status": r.status,
                     "final_text": r.final_text,
                     "duration_ms": r.duration_ms,
@@ -242,19 +283,20 @@ def cmd_workflow_history(args) -> int:
         return 0
 
     # Fixed-width columns for quick scanning. run_id is long; truncate gracefully.
-    print(f"  {'run_id':<52}  {'workflow':<24}  {'status':<8}  {'duration':>8}  started")
-    print(f"  {'-' * 52}  {'-' * 24}  {'-' * 8}  {'-' * 8}  {'-' * 19}")
+    print(f"  {'run_id':<52}  {'workflow':<18}  {'runner':<9}  {'status':<8}  {'duration':>8}  started")
+    print(f"  {'-' * 52}  {'-' * 18}  {'-' * 9}  {'-' * 8}  {'-' * 8}  {'-' * 19}")
     for run in runs:
         rid = run.get("run_id", "")
         if len(rid) > 52:
             rid = rid[:49] + "..."
         name = run.get("workflow", "")
-        if len(name) > 24:
-            name = name[:21] + "..."
+        if len(name) > 18:
+            name = name[:15] + "..."
+        rnr = (run.get("runner") or "?")[:9]
         status = run.get("status", "")
         duration = _fmt_duration(run.get("duration_ms"))
         started = _fmt_started_at(run.get("started_at"))
-        print(f"  {rid:<52}  {name:<24}  {status:<8}  {duration:>8}  {started}")
+        print(f"  {rid:<52}  {name:<18}  {rnr:<9}  {status:<8}  {duration:>8}  {started}")
 
     return 0
 
@@ -297,6 +339,7 @@ def cmd_workflow_show(args) -> int:
     print(f"Workflow: {meta.get('workflow', '?')}")
     print(f"Run ID:   {meta.get('run_id', run_id)}")
     print(f"Status:   {meta.get('status', '?')}")
+    print(f"Runner:   {meta.get('runner') or '?'}")
     print(f"Started:  {_fmt_started_at(meta.get('started_at'))}")
     print(f"Duration: {_fmt_duration(meta.get('duration_ms'))}")
     if meta.get("error"):
@@ -310,6 +353,7 @@ def cmd_workflow_show(args) -> int:
         print("\nNodes:")
         for n in nodes:
             nid = n.get("id", "?")
+            rnr = (n.get("runner") or "?")
             status = n.get("status", "?")
             dur = _fmt_duration(n.get("duration_ms"))
             attempts = n.get("attempts", 1)
@@ -321,8 +365,14 @@ def cmd_workflow_show(args) -> int:
                     f", in={tokens.get('input', 0)} out={tokens.get('output', 0)} "
                     f"cost=${tokens.get('cost', 0):.4f}"
                 )
-            print(f"  {nid:<20} → {status:<8} ({dur}{attempts_note}{token_note})")
+            print(f"  {nid:<20} ({rnr:<9}) → {status:<8} ({dur}{attempts_note}{token_note})")
             if n.get("error"):
                 print(f"    reason: {n['error']}")
+
+        total_in = sum((n.get("tokens") or {}).get("input", 0) for n in nodes)
+        total_out = sum((n.get("tokens") or {}).get("output", 0) for n in nodes)
+        total_cost = sum((n.get("tokens") or {}).get("cost", 0.0) for n in nodes)
+        if total_in or total_out or total_cost:
+            print(f"\nTotals: in={total_in} out={total_out} cost=${total_cost:.4f}")
 
     return 0

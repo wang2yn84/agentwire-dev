@@ -23,7 +23,7 @@ import time
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from agentwire.workflows import storage
 from agentwire.workflows.context import Context
@@ -116,6 +116,7 @@ def _run_one_node_with_retries(
     context: Context,
     runs_dir: Path | None,
     run_id: str,
+    on_event: Callable[[dict], None] | None = None,
 ) -> NodeResult:
     """Invoke the node's runner; retry on failure|timeout per node.retries / retry_delay."""
     attempts = 0
@@ -127,12 +128,21 @@ def _run_one_node_with_retries(
     rendered_node = replace(node, prompt=rendered_prompt)
     runner = get_runner(node.runner)
 
+    # Wrap so every event carries node_id — anthropic_events.py doesn't stamp
+    # it, and keeping it out of the runner API matches how workflow_cwd /
+    # event_log_path flow in rather than being read from the node.
+    wrapped: Callable[[dict], None] | None = None
+    if on_event is not None:
+        def wrapped(ev: dict, _nid: str = node.id) -> None:
+            on_event({**ev, "node_id": _nid})
+
     while True:
         attempts += 1
         result = runner.run(
             rendered_node,
             workflow_cwd=context.cwd,
             event_log_path=event_log_path,
+            on_event=wrapped,
         )
         if result.status == "success":
             break
@@ -144,6 +154,7 @@ def _run_one_node_with_retries(
 
     assert result is not None
     result.attempts = attempts
+    result.runner = node.runner
     return result
 
 
@@ -152,6 +163,7 @@ def run_workflow(
     runs_dir: Path | None = None,
     dry_run: bool = False,
     inputs: dict[str, Any] | None = None,
+    on_event: Callable[[dict], None] | None = None,
 ) -> WorkflowRun:
     """Execute a workflow end-to-end."""
     errors = workflow.validate()
@@ -268,7 +280,8 @@ def run_workflow(
 
         # 4. Run pi with retry loop.
         result = _run_one_node_with_retries(
-            node, rendered_prompt, context, runs_dir, run_id
+            node, rendered_prompt, context, runs_dir, run_id,
+            on_event=on_event,
         )
         results_by_id[node.id] = result
 
