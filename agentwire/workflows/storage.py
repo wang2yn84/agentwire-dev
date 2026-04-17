@@ -25,10 +25,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 METADATA_FILE = "metadata.json"
 CONTEXT_FILE = "context.json"
 NODES_DIR = "nodes"
+
+
+def _summarize_runner(node_results) -> str:
+    """Run-level runner tag: single runner name, 'mixed', or '' for no results."""
+    runners = {r.runner for r in node_results if r.runner}
+    if not runners:
+        return ""
+    if len(runners) == 1:
+        return next(iter(runners))
+    return "mixed"
 
 
 def write_run(
@@ -54,6 +64,7 @@ def write_run(
         "workflow": run.workflow,
         "run_id": run.run_id,
         "status": run.status,
+        "runner": _summarize_runner(run.node_results),
         "started_at": run.started_at,
         "duration_ms": run.duration_ms,
         "error": run.error,
@@ -61,6 +72,7 @@ def write_run(
         "nodes": [
             {
                 "id": r.node_id,
+                "runner": r.runner,
                 "status": r.status,
                 "attempts": r.attempts,
                 "duration_ms": r.duration_ms,

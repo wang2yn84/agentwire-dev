@@ -26,7 +26,8 @@ class PiRunner:
     ) -> NodeResult:
         # `on_event` is accepted for Protocol conformance but pi emits events
         # only after the subprocess exits (JSONL parsed post-hoc). Live streaming
-        # is an Anthropic-runner feature; for pi we ignore the callback.
+        # is an Anthropic-runner feature; retrofitting pi is deferred — the PR 4
+        # --verbose path gives live output for anthropic nodes only.
         return _pi_run_node(
             node,
             workflow_cwd=workflow_cwd,
