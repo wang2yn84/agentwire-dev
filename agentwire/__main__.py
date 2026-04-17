@@ -8744,9 +8744,10 @@ def cmd_scheduler_board(args) -> int:
 
 def cmd_scheduler_run(args) -> int:
     """Force-run a specific task now."""
-    from .scheduler import dispatch_task, load_board, save_board
+    from .scheduler import _render_workflow_inputs, dispatch_task, load_board, save_board
 
     json_mode = getattr(args, 'json', False)
+    dry_run = getattr(args, 'dry_run', False)
     name = args.name
 
     try:
@@ -8759,6 +8760,40 @@ def cmd_scheduler_run(args) -> int:
             False, json_mode,
             f"Task '{name}' not found in board. Available: {', '.join(board.tasks.keys())}",
         )
+
+    task = board.tasks[name]
+
+    if dry_run:
+        if not task.workflow:
+            return _output_result(
+                False, json_mode,
+                f"--dry-run only applies to workflow tasks; '{name}' runs via ensure.",
+            )
+        from agentwire.workflows.definitions import resolve_workflow
+        from agentwire.workflows.runner import run_workflow
+        try:
+            wf = resolve_workflow(task.workflow)
+        except Exception as e:
+            return _output_result(False, json_mode, f"Could not load workflow '{task.workflow}': {e}")
+        rendered_inputs = _render_workflow_inputs(task.inputs, task)
+        run = run_workflow(wf, runs_dir=None, inputs=rendered_inputs, dry_run=True)
+        if json_mode:
+            _output_json({
+                "success": True,
+                "task": name,
+                "dry_run": True,
+                "workflow": wf.name,
+                "inputs": rendered_inputs,
+                "nodes": [r.node_id for r in run.node_results],
+                "status": run.status,
+            })
+            return 0
+        print(f"Dry-run: {name} → workflow '{wf.name}'")
+        if rendered_inputs:
+            print(f"  inputs: {rendered_inputs}")
+        for r in run.node_results:
+            print(f"  - {r.node_id}: {r.final_text}")
+        return 0
 
     if not json_mode:
         print(f"Running: {name}")
@@ -8835,12 +8870,14 @@ def cmd_scheduler_history(args) -> int:
     if json_mode:
         history = []
         for name, state in board.state.items():
+            task = board.tasks.get(name)
             history.append({
                 "task": name,
                 "last_run": state.last_run.isoformat() if state.last_run else None,
                 "last_status": state.last_status,
                 "last_duration": state.last_duration,
                 "run_count": state.run_count,
+                "workflow": (task.workflow if task else "") or None,
             })
         _output_json({"success": True, "history": history})
         return 0
@@ -8867,6 +8904,7 @@ def cmd_scheduler_history(args) -> int:
 def cmd_scheduler_report(args) -> int:
     """Generate a morning report HTML artifact of recent task runs."""
     import re as _re
+    from html import escape as html_escape
     from .scheduler import _parse_duration, format_interval, load_board, read_events
 
     json_mode = getattr(args, 'json', False)
@@ -8886,7 +8924,7 @@ def cmd_scheduler_report(args) -> int:
 
     # Load events in the window
     try:
-        events = read_events(limit=500)
+        events = read_events(tail=500)
     except Exception:
         events = []
 
@@ -8912,6 +8950,9 @@ def cmd_scheduler_report(args) -> int:
             "timestamp": ts.strftime("%Y-%m-%d %H:%M"),
             "work_branch": "",
             "pr_url": "",
+            "workflow": ev.get("workflow", ""),
+            "run_id": ev.get("run_id", ""),
+            "nodes": ev.get("nodes") or [],
         }
         runs.append(run)
 
@@ -8935,20 +8976,48 @@ def cmd_scheduler_report(args) -> int:
         color = colors.get(status, "#78909c")
         return f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:12px;font-size:0.85em">{status}</span>'
 
+    def node_badges(nodes: list) -> str:
+        if not nodes:
+            return ""
+        node_colors = {
+            "success": "#00c853",
+            "failure": "#ff5252",
+            "timeout": "#ff7043",
+            "skipped": "#78909c",
+        }
+        pieces = []
+        for n in nodes:
+            nid = html_escape(str(n.get("id", "?")))
+            nstatus = str(n.get("status", "?"))
+            color = node_colors.get(nstatus, "#556")
+            pieces.append(
+                f'<span style="background:{color};color:#fff;padding:1px 6px;border-radius:8px;font-size:0.75em;margin-right:3px">{nid}</span>'
+            )
+        return "".join(pieces)
+
     rows_html = ""
     for r in runs:
         duration_str = format_interval(r["duration"]) if r["duration"] else "-"
         pr_link = f'<a href="{r["pr_url"]}" target="_blank" style="color:#00d4ff">{r["pr_url"][:40]}...</a>' if r.get("pr_url") else "-"
-        branch_str = r.get("work_branch") or "-"
+        branch_col = ""
+        if r.get("workflow"):
+            wf_label = html_escape(r["workflow"])
+            run_id = html_escape(r.get("run_id", ""))
+            badges = node_badges(r["nodes"])
+            run_hint = f' <span style="color:#556;font-size:0.75em">({run_id[:20]}…)</span>' if run_id else ""
+            branch_col = f'<code style="font-size:0.85em">workflow:{wf_label}</code>{run_hint}<div style="margin-top:4px">{badges}</div>'
+        else:
+            branch_col = f'<code style="font-size:0.85em">{r.get("work_branch") or "-"}</code>'
+        summary_text = r["summary"][:120] if r["summary"] else "-"
         rows_html += f"""
         <tr>
           <td style="font-weight:600">{r["task"]}</td>
           <td>{status_badge(r["status"])}</td>
           <td>{r["timestamp"]}</td>
           <td>{duration_str}</td>
-          <td><code style="font-size:0.85em">{branch_str}</code></td>
+          <td>{branch_col}</td>
           <td>{pr_link}</td>
-          <td style="color:#aaa;font-size:0.85em">{r["summary"][:120] if r["summary"] else "-"}</td>
+          <td style="color:#aaa;font-size:0.85em">{summary_text}</td>
         </tr>"""
 
     if not rows_html:
@@ -10580,6 +10649,8 @@ def main() -> int:
     sched_run = scheduler_subparsers.add_parser("run", help="Force-run a task now")
     sched_run.add_argument("name", help="Task name from board")
     sched_run.add_argument("--json", action="store_true", help="Output JSON")
+    sched_run.add_argument("--dry-run", action="store_true",
+                           help="For workflow tasks: print the execution plan without running")
     sched_run.set_defaults(func=cmd_scheduler_run)
 
     # scheduler enable <name>

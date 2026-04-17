@@ -2,11 +2,11 @@
 
 # Mission: Phase 3 — Scheduler Workflows
 
-Integrate the pi workflow engine (Phase 2) with the existing scheduler so scheduled tasks can be workflows instead of single prompts. Migrate existing scheduler tasks one-by-one as workflows prove out.
+Integrate the pi workflow engine (Phase 2) with the existing scheduler so scheduled tasks can be workflows instead of single prompts.
 
 **Phase of:** `pi-harness-overview.md`
-**Status:** planned
-**Estimated effort:** 1 week
+**Status:** complete (code shipped 2026-04-16)
+**Estimated effort:** 1 week (actual: 1 day)
 **Depends on:** Phase 1, Phase 2
 **Blocks:** Phase 4 (advanced patterns use scheduler as a driver)
 
@@ -110,20 +110,16 @@ Scheduler report HTML needs new sections:
 - Per-node breakdown when a workflow fails
 - Cost rollup across workflow tasks
 
-### 5. Migration of Existing Tasks
+### 5. Task Migration — Skipped
 
-Existing tasks to evaluate for workflow migration:
+Existing scheduler tasks were **not migrated**. Decision (2026-04-16): recreate
+workflow-backed tasks from scratch rather than carry over old monolithic prompts.
+Rationale: the old tasks had well-documented quality issues (`console-cleanup`
+too aggressive, `design-audit` broken by headless Chrome, etc.) that are best
+addressed by re-authoring instead of mechanically converting.
 
-| Current Task | Workflow Candidate | Benefit |
-|--------------|-------------------|---------|
-| `code-quality` | `code-quality-sweep` workflow | Multi-file, can parallelize in Phase 4 |
-| `doc-drift` | `doc-drift-check` workflow | Already conceptually multi-step |
-| `performance-audit` | `performance-audit` workflow | Separate measure → compare → report phases |
-| `design-audit` | `design-audit` workflow | Currently fails because Chrome headless issue — workflow can branch around failure |
-| `console-cleanup` | `console-cleanup` workflow | Currently too aggressive — workflow adds verify step |
-| `wiki-ingest` | `wiki-ingest` workflow | Parallel per raw file, good Phase 4 candidate |
-
-**Migration rule:** Don't migrate all at once. Pick one, convert, run for a week, compare quality/cost, decide.
+New workflow tasks should be added directly to `~/.agentwire/scheduler.yaml`
+using the shape in §1. Existing ensure tasks continue to work unchanged.
 
 ### 6. Scheduler Workflow Commands
 
