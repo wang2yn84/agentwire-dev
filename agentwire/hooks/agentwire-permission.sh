@@ -15,6 +15,25 @@ set -e
 # Read JSON from stdin
 input=$(cat)
 
+# Honor session-level permission bypass — when Claude Code was launched with
+# --dangerously-skip-permissions (permission_mode: "bypassPermissions") or is
+# running in autonomous mode (permission_mode: "auto"), the user has explicitly
+# opted out of permission friction. Short-circuit with an immediate allow so
+# the portal is never consulted. Python used for JSON parsing — no jq dep,
+# matches the stack the damage-control hooks run on.
+permission_mode=$(printf '%s' "$input" | python3 -c "import json,sys
+try:
+    print(json.load(sys.stdin).get('permission_mode',''))
+except Exception:
+    pass" 2>/dev/null || true)
+
+case "$permission_mode" in
+    bypassPermissions|auto)
+        echo '{"decision":"allow","message":"bypass mode: permission auto-approved"}'
+        exit 0
+        ;;
+esac
+
 # Find .agentwire.yml in current or parent directories
 find_agentwire_config() {
     local dir="$PWD"
