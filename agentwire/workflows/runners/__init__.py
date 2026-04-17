@@ -53,6 +53,13 @@ def available_runners() -> list[str]:
 def _register_builtins() -> None:
     from agentwire.workflows.runners.pi import PiRunner
     register_runner(PiRunner())
+    try:
+        from agentwire.workflows.runners.anthropic import AnthropicRunner
+        register_runner(AnthropicRunner())
+    except Exception:
+        # claude-agent-sdk optional at import time — validation still flags
+        # `runner: anthropic` as unknown if the runner isn't registered.
+        pass
 
 
 _register_builtins()

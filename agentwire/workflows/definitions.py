@@ -200,17 +200,38 @@ def _node_from_dict(
         kwargs["runner"] = str(workflow_default_runner)
 
     for key in (
-        "provider", "model", "thinking", "when", "on_error",
-        "on_error_goto", "workdir",
+        "provider", "model", "when", "on_error",
+        "on_error_goto", "workdir", "effort",
     ):
         if key in data:
             kwargs[key] = data[key]
+
+    # `thinking` is polymorphic: pi uses a short string ("off"|"medium"|...),
+    # anthropic runner uses a mapping ({type: adaptive, ...}). Route accordingly.
+    if "thinking" in data:
+        raw = data["thinking"]
+        if isinstance(raw, str):
+            kwargs["thinking"] = raw
+        elif isinstance(raw, dict):
+            kwargs["thinking_config"] = dict(raw)
+        else:
+            raise ValueError(
+                f"node[{node_id}].thinking must be a string (pi) or mapping (anthropic), "
+                f"got {type(raw).__name__}"
+            )
 
     if "tools" in data:
         tools = data["tools"]
         if not isinstance(tools, list):
             raise ValueError(f"node[{node_id}].tools must be a list")
         kwargs["tools"] = [str(t) for t in tools]
+
+    if "max_thinking_tokens" in data:
+        kwargs["max_thinking_tokens"] = int(data["max_thinking_tokens"])
+    if "max_budget_usd" in data:
+        kwargs["max_budget_usd"] = float(data["max_budget_usd"])
+    if "task_budget_tokens" in data:
+        kwargs["task_budget_tokens"] = int(data["task_budget_tokens"])
 
     if "depends_on" in data:
         deps = data["depends_on"]
