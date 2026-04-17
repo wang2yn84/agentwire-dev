@@ -5,7 +5,7 @@ description: Pi workflow engine — YAML-defined DAGs of pi invocations chained 
 
 # Pi workflow engine — quick reference
 
-Workflows live in `agentwire/workflows/examples/` (bundled) or `~/.agentwire/workflows/defs/` (user). Each node is a one-shot `pi -p --mode json` invocation.
+Workflows live in `agentwire/workflows/examples/` (bundled) or `~/.agentwire/workflows/defs/` (user). Each node runs against one of two backends via `runner:` — `pi` (subprocess per node, default) or `anthropic` (`claude-agent-sdk` in-process, subscription auth). Both return the same `NodeResult` shape. See `docs/workflows.md` → "Runners" for the full per-runner field table; quick reference below is pi-focused.
 
 ## Minimum viable YAML
 
@@ -28,15 +28,16 @@ nodes:
 - **Retries** — `retries: N` (default 0), `retry_delay: S` (default 10). Triggered on status in `{failure, timeout}` only. Template/extraction errors never retry.
 - **on_error** (after retries exhausted) — `fail` (halt) | `continue` (downstream gets `None` outputs, workflow → partial) | `branch` (requires `on_error_goto`; skip normal dependents, rescue target).
 - **Skipping** — `when:` false OR upstream skipped/branched → node is `skipped`; dependents propagated unless rescued by a branch `on_error_goto`.
-- **Tools** — subset of `{read, bash, edit, write, grep, find, ls}`. Default `[read, bash, edit, write]`. Empty list → `--no-tools`.
-- **Thinking** — `off | minimal | low | medium | high | xhigh`. Default `medium`. Use `off` for flash-tier cheap nodes.
+- **Tools (pi)** — subset of `{read, bash, edit, write, grep, find, ls}`. Default `[read, bash, edit, write]`. Empty list → `--no-tools`.
+- **Thinking (pi)** — `off | minimal | low | medium | high | xhigh`. Default `medium`. Use `off` for flash-tier cheap nodes.
+- **Anthropic runner** — uses `model` (required, e.g. `claude-opus-4-7`), `effort` (low|medium|high|max|xhigh), `thinking_config` (dict), CamelCase tools (`Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `WebFetch`, `WebSearch`). See `docs/workflows.md` → Runners for the full table.
 
 ## CLI
 
 ```bash
 agentwire workflow list [--json]
 agentwire workflow validate <name-or-path>
-agentwire workflow run <name> [--input KEY=VAL]... [--input-file FILE] [--dry-run] [--verbose] [--json]
+agentwire workflow run <name> [--input KEY=VAL]... [--input-file FILE] [--runner pi|anthropic] [--dry-run] [--verbose] [--json]
 agentwire workflow history [--workflow NAME] [--limit N] [--json]
 agentwire workflow show <run-id> [--events] [--node ID] [--json]
 ```
@@ -58,9 +59,9 @@ Agents should prefer MCP tools over shelling out.
 ## Storage
 
 Runs live at `~/.agentwire/workflows/runs/<run-id>/`:
-- `metadata.json` — workflow, status, inputs, node summaries (schema_version: 1)
+- `metadata.json` — workflow, status, inputs, node summaries (schema_version: 2 — includes `runner` at run level and per node)
 - `context.json` — final inputs + per-node extracted outputs
-- `nodes/<id>.events.jsonl` — raw pi JSONL stream
+- `nodes/<id>.events.jsonl` — raw event stream (pi JSONL for pi runner, pi-shaped translated events for anthropic)
 
 Runs without `metadata.json` (crashed mid-run) are silently hidden from `history`.
 

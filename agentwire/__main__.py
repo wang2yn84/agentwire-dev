@@ -10222,6 +10222,10 @@ def main() -> int:
         "--input-file", metavar="PATH",
         help="JSON file with inputs (object mapping name → value)"
     )
+    wf_run.add_argument(
+        "--runner", choices=["pi", "anthropic"], default=None,
+        help="Override runner for every node in this run (YAML declarations ignored)."
+    )
     wf_run.add_argument("--dry-run", action="store_true", help="Print plan without running")
     wf_run.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     wf_run.add_argument("--json", action="store_true", help="Output as JSON")
