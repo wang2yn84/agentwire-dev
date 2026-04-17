@@ -389,3 +389,32 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
 - Pi path is byte-for-byte unchanged the entire time
 - Rollback for any production issue = flip the offending workflow's `runner:` field back to `pi` (one-line YAML edit — `pi` is the default runner so even deletion works)
 - If the Anthropic path underdelivers, we keep pi as the default indefinitely — no forced migration
+
+---
+
+## Canary Results — `daily-book-report` (flipped 2026-04-17)
+
+**Both nodes flipped** (not just `compose_and_send`). The pi version of `fetch` had been truncating its JSON re-emission of the large NYT bash output — `thinking: off` + GLM-5.1 ran out of output budget mid-string, blocking the DAG. Cleaner canary was to flip both nodes at once.
+
+| Node | Model | Thinking | Tools | Duration | Tokens in/out |
+|---|---|---|---|---|---|
+| `fetch` | `claude-sonnet-4-6` | disabled | `[Bash]` | 18s | 3 / 1610 |
+| `compose_and_send` | `claude-opus-4-7` | adaptive, `effort: high` | `[Bash, Write, Read]` | 114s | 9 / 9565 |
+
+**Subscription-covered** — SDK reports nominal API-rate cost ($0.12 + $0.50 = $0.62/run) but actual billing is $0. All runs land under `~/.claude/.credentials.json` auth, same quota pool as interactive Claude Code.
+
+**Output quality (first canary run, 2026-04-17, delivered to test recipient):**
+- Clean HTML email, dark theme, three top-5 bestseller tables (Fiction / Nonfiction / Advice) with rank, movement, weeks
+- Five Writing Articles with proper hyperlinks + dates, one Trending entry
+- "Daily Writing Spark" tied to a real pattern in *this week's* data (three new debuts in top-5 Fiction) with a concrete 15-minute micro-goal, signed off as Echo
+- Markdown report saved to `/Users/dotdev/reports/book-sales/YYYY-MM-DD.md`
+
+**Live `--verbose` output worked end-to-end** — per-event stream showed Bash tool calls, tool results, text fragments, token counts, agent-end timings for both nodes.
+
+**Observations to watch over the ≥2 week canary window:**
+- Rate-limit behavior under the 5-hour subscription quota when this runs alongside interactive Claude Code sessions
+- Consistency of the "Daily Writing Spark" across days — does Opus 4.7 always tie it to a concrete data observation?
+- Any `transient:` or `permanent:` error prefixes surfacing in morning reports
+- Output token variance — first run hit 9565 out; flag if we drift toward context-window limits
+
+**Rollback path**: `~/.agentwire/workflows/defs/daily-book-report.yaml` — delete the `runner:`/`model:`/`effort:`/`thinking_config:` lines and replace `tools: [Bash, Write, Read]` → `tools: [bash, write, read]` and add back `thinking: medium`. `pi` is the default runner, so field absence reverts.
