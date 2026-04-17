@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from agentwire.workflows.node import ActionNode, NodeResult
+from agentwire.workflows.node import DEFAULT_TOOLS, ActionNode, NodeResult
 
 CONFIG_PATH = Path.home() / ".agentwire" / "config.yaml"
 
@@ -116,10 +116,11 @@ def build_pi_command(node: ActionNode, pi_binary: str = "pi") -> list[str]:
         "--mode", "json",
         "--no-session",
     ]
-    if node.tools:
-        cmd.extend(["--tools", ",".join(node.tools)])
-    else:
-        cmd.append("--no-tools")
+    # Empty tools list means "pi's default tools" — use DEFAULT_TOOLS rather
+    # than --no-tools, matching the pre-Phase-6 default behaviour when
+    # workflows didn't explicitly declare a tool list.
+    tools = node.tools if node.tools else list(DEFAULT_TOOLS)
+    cmd.extend(["--tools", ",".join(tools)])
     return cmd
 
 
