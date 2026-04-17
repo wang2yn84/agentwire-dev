@@ -37,8 +37,10 @@ nodes:                               # at least one required
   analyze:
     prompt: |                        # Jinja2 template — required
       Look at {{ inputs.target }}. Return JSON: {"issues": [...]}
-    model: glm-4.7-flash             # any provider/model pi supports
-    provider: zai                    # default zai
+    # provider + model are optional — default to zai + glm-5.1
+    # set explicitly only when you need a different model/provider
+    model: glm-5.1                   # default: glm-5.1
+    provider: zai                    # default: zai
     tools: [read, grep]              # subset of {read, bash, edit, write, grep, find, ls}
     thinking: "low"                  # off|minimal|low|medium|high|xhigh
     timeout: 300                     # seconds per attempt (default 300)
@@ -390,7 +392,7 @@ Pi is a one-shot, stateless agent per node. These tips keep nodes cheap and reli
 - **Constrain tools.** If a node only reads files, set `tools: [read]`. Excess tools invite unnecessary calls.
 - **Dial thinking.** `thinking: "off"` for structured/obvious tasks, `"medium"` for analysis, `"high"+` only for deep reasoning. Each level up costs more tokens.
 - **Ask for JSON explicitly.** "Return ONLY a JSON object (no prose, no code fences) in this shape: …" works far better than assuming a schema.
-- **Use flash tier for cheap nodes.** `model: glm-4.7-flash` is free on Z.AI's flash tier and plenty for non-reasoning work.
+- **Default model is `glm-5.1` on provider `zai`** — you don't need to declare `model:` or `provider:` unless you want a different one. Override per-node for experiments (`model: glm-4.7-flash` for cheap throwaway work, etc.).
 - **Set timeouts for network-bound nodes.** `timeout: 60` for a `gh` command; default 300 for thinking tasks.
 
 ---

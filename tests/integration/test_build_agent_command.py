@@ -16,7 +16,7 @@ FAKE_CONFIG = {
         "timeout_ms": 3000000,
     },
     "pi": {
-        "default_model": "glm-5",
+        "default_model": "glm-5.1",
         "binary": "pi",
     },
 }
@@ -91,7 +91,7 @@ class TestBuildAgentCommand:
         # Key is injected via tmux set-environment, NOT on the command line
         assert "ZAI_API_KEY" not in cmd.command
         assert cmd.env == {"ZAI_API_KEY": "test-key-123"}
-        assert "--model glm-5" in cmd.command
+        assert "--model glm-5.1" in cmd.command
         # Pi has no --dangerously-skip-permissions (no permission system)
         assert "--dangerously-skip-permissions" not in cmd.command
         assert cmd.temp_file is None
@@ -119,10 +119,10 @@ class TestBuildAgentCommand:
         assert "write" not in cmd.command.split("--tools")[1]
 
     def test_pi_zai_model_override(self):
-        cmd = self._build("pi-zai", model="glm-5.1")
-        assert "--model glm-5.1" in cmd.command
+        cmd = self._build("pi-zai", model="glm-4.7-flash")
+        assert "--model glm-4.7-flash" in cmd.command
         # Default should not also appear
-        assert "--model glm-5 " not in cmd.command
+        assert "--model glm-5.1 " not in cmd.command
 
     def test_pi_zai_with_role_instructions(self):
         """pi-zai with role.instructions uses --append-system-prompt."""

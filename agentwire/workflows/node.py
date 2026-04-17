@@ -50,7 +50,7 @@ class ActionNode:
     prompt: str
 
     provider: str = "zai"
-    model: str = "glm-5"
+    model: str = "glm-5.1"
     tools: list[str] = field(default_factory=lambda: list(DEFAULT_TOOLS))
     thinking: str = "medium"
 

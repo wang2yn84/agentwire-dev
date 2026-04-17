@@ -19,6 +19,5 @@ nodes:
     prompt: |
       In one sentence, describe what a 'partial' workflow run means:
       some nodes failed but the workflow completed.
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"

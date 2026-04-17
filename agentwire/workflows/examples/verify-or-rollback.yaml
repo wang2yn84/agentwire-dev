@@ -16,7 +16,6 @@ nodes:
     prompt: |
       Return ONLY a JSON object (no prose, no code fences) in this exact shape:
       {"status": "{{ inputs.target }}"}
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"
     retries: 1
@@ -31,7 +30,6 @@ nodes:
     when: "verify.status == 'pass'"
     prompt: |
       Reply with exactly: "All checks passed."
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"
 
@@ -40,6 +38,5 @@ nodes:
     when: "verify.status == 'fail'"
     prompt: |
       Reply with exactly: "Rolling back changes."
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"

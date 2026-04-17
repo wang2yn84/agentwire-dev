@@ -57,7 +57,7 @@ zai:
   timeout_ms: 3000000
 
 pi:
-  default_model: "glm-5"   # glm-5 | glm-5.1 | glm-4.7 | glm-4.7-flash | ...
+  default_model: "glm-5.1"   # default. glm-5.1 | glm-5 | glm-4.7 | glm-4.7-flash | ...
   binary: "pi"             # override if not on PATH (e.g., nvm path)
 ```
 
