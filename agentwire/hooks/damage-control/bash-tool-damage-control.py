@@ -569,14 +569,15 @@ def main() -> None:
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    # Claude Code passes permission_mode in the hook input. When the session
-    # opted into bypassPermissions (`--dangerously-skip-permissions`), the
-    # user explicitly does not want ask-escalation friction — hard blocks
-    # still fire for genuine destruction patterns, but `ask:true` patterns
-    # (generated from tooldef write-tier commands and a few git ops) become
-    # allow. This prevents the hook from forcing prompts that defeat the
-    # whole point of the bypass flag.
+    # Claude Code passes `permission_mode` in the hook input. Two modes
+    # indicate the user has explicitly opted out of ask-escalation friction:
+    #   - "bypassPermissions" → --dangerously-skip-permissions
+    #   - "auto"              → autonomous /loop or similar auto mode
+    # In both, hard blocks still fire for genuine destruction patterns, but
+    # `ask:true` patterns (generated from tooldef write-tier commands + a
+    # few git ops) become allow. Only "default" and "plan" keep the prompts.
     permission_mode = input_data.get("permission_mode", "")
+    _BYPASS_MODES = {"bypassPermissions", "auto"}
 
     # Only check Bash commands
     if tool_name != "Bash":
@@ -595,7 +596,7 @@ def main() -> None:
         print(f"SECURITY: {reason}", file=sys.stderr)
         print(f"Command: {command[:100]}{'...' if len(command) > 100 else ''}", file=sys.stderr)
         sys.exit(2)
-    elif should_ask and permission_mode != "bypassPermissions":
+    elif should_ask and permission_mode not in _BYPASS_MODES:
         # Log ask pattern
         log_asked("Bash", command, reason)
         # Output JSON to trigger confirmation dialog
