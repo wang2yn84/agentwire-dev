@@ -13,7 +13,6 @@ nodes:
     prompt: |
       Return ONLY a JSON object (no prose, no code fences) in this exact shape:
       {"fact": "<one-sentence fun fact about {{ inputs.topic }}>"}
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"
     outputs:
@@ -25,6 +24,5 @@ nodes:
     depends_on: [fact]
     prompt: |
       Restate this fact in exactly five words: "{{ fact.fact }}"
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"

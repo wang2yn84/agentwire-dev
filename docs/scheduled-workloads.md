@@ -24,7 +24,7 @@ All three are orchestrated by `~/.agentwire/scheduler.yaml` and the AgentWire sc
 |---|---|---|
 | Schedule field | `task: <name>` + `session:` | `workflow: <name-or-path>` + `inputs:` |
 | Dispatch | `agentwire ensure` subprocess → tmux session → Claude Code | `run_workflow()` in-process → pi subprocesses per node |
-| Model family | Claude (subscription via session type) | Z.AI glm-5 / flash-tier pi (per-node choice) |
+| Model family | Claude (subscription via session type) | Z.AI glm-5.1 by default (any pi-supported model per node) |
 | Session needed | yes | no |
 | Project needed | yes (for branch mgmt) | optional (only for git gates / auto-commit) |
 | Multi-step logic | inside one Claude prompt | first-class DAG with retries, branches, outputs |

@@ -6,6 +6,5 @@ nodes:
   greet:
     prompt: |
       Reply with exactly one friendly greeting sentence. No code, no tools.
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"

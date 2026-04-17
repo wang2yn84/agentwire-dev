@@ -10,7 +10,6 @@ inputs:
 nodes:
   angle_technical:
     prompt: "Write one sentence about {{ inputs.topic }} from a technical angle."
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"
     outputs:
@@ -19,7 +18,6 @@ nodes:
 
   angle_historical:
     prompt: "Write one sentence about {{ inputs.topic }} from a historical angle."
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"
     outputs:
@@ -28,7 +26,6 @@ nodes:
 
   angle_practical:
     prompt: "Write one sentence about {{ inputs.topic }} from a practical-use angle."
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"
     outputs:
@@ -43,6 +40,5 @@ nodes:
       - Technical: {{ angle_technical.text }}
       - Historical: {{ angle_historical.text }}
       - Practical: {{ angle_practical.text }}
-    model: glm-4.7-flash
     tools: [read]
     thinking: "off"

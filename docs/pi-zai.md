@@ -43,7 +43,7 @@ Optionally configure pi defaults:
 
 ```yaml
 pi:
-  default_model: "glm-5"   # glm-5 | glm-5.1 | glm-5-turbo | glm-4.7 | glm-4.7-flash | ...
+  default_model: "glm-5.1"   # default. glm-5.1 | glm-5 | glm-5-turbo | glm-4.7 | glm-4.7-flash | ...
   binary: "pi"             # Override if pi is installed somewhere other than $PATH
 ```
 
@@ -57,7 +57,7 @@ Full tool access (read, bash, edit, write). Closest equivalent of `claude-bypass
 agentwire new -s myproject --type pi-zai -p ~/projects/myproject
 ```
 
-Uses the `default_model` from config (default: `glm-5`).
+Uses the `default_model` from config (default: `glm-5.1`).
 
 ### `pi-zai-restricted`
 
@@ -145,7 +145,7 @@ Pi has no `--disallowedTools` flag. It can only whitelist. If a role specifies `
 | System prompt injection | `--append-system-prompt "text"` | `--append-system-prompt "text"` |
 | Tool whitelist | `--tools Bash,Read` | `--tools bash,read` |
 | Tool blacklist | `--disallowedTools X` | Not supported |
-| Model override | `--model haiku` | `--model glm-5` |
+| Model override | `--model haiku` | `--model glm-5.1` |
 | Skip permissions | `--dangerously-skip-permissions` | Not needed (no permission system) |
 | JSON output | Not available | `--mode json` |
 | Non-interactive | Via tmux | `-p "prompt"` |

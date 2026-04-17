@@ -14,7 +14,7 @@ name: hello
 nodes:
   greet:
     prompt: "Say hi in one word."
-    model: glm-4.7-flash
+    # model defaults to glm-5.1 on provider zai — both optional
     tools: [read]
     thinking: "off"
 ```

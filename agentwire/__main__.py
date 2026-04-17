@@ -149,7 +149,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
     Args:
         session_type: Session type (e.g., "claude-bypass", "claude-auto", "pi-zai", "bare")
         roles: Optional list of roles to apply
-        model: Optional model override (e.g., "haiku", "sonnet", "opus", "glm-5")
+        model: Optional model override (e.g., "haiku", "sonnet", "opus", "glm-5.1")
 
     Returns:
         AgentCommand with the command string and metadata
@@ -170,7 +170,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         # Pi reads ZAI_API_KEY from env. We inject it via `tmux set-environment`
         # (see inject_session_env) so the key never appears in `ps auxwww`.
         pi_binary = pi_config.get("binary", "pi")
-        default_model = pi_config.get("default_model", "glm-5")
+        default_model = pi_config.get("default_model", "glm-5.1")
 
         parts = [pi_binary, "--provider", "zai"]
         parts.extend(["--model", model or default_model])

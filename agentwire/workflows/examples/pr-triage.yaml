@@ -30,6 +30,5 @@ nodes:
 
       PR view + diff:
       {{ fetch.text }}
-    model: glm-4.7-flash
     tools: [read]
     thinking: "medium"

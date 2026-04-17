@@ -32,6 +32,5 @@ nodes:
 
       Return a one-paragraph review indicating which 1–2 claims are
       most likely to become stale over time and why. Be concrete.
-    model: glm-4.7-flash
     tools: [read]
     thinking: "medium"
