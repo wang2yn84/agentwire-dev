@@ -44,10 +44,14 @@ class OutputSpec:
 
 @dataclass
 class ActionNode:
-    """A single pi invocation in a workflow."""
+    """A single runner invocation in a workflow (pi or anthropic)."""
 
     id: str
     prompt: str
+
+    # Which runner executes this node. Defaults to pi, the original Phase 2 runner.
+    # Set to "anthropic" to route through claude-agent-sdk instead.
+    runner: str = "pi"
 
     provider: str = "zai"
     model: str = "glm-5.1"
@@ -95,6 +99,14 @@ class ActionNode:
             errors.append(
                 f"node[{self.id}].on_error={self.on_error!r} "
                 "must be one of fail|continue|branch"
+            )
+        # Runner validation — delayed import to avoid circular load (runners
+        # package imports node.py at module load time).
+        from agentwire.workflows.runners import available_runners
+        valid_runners = available_runners()
+        if self.runner not in valid_runners:
+            errors.append(
+                f"node[{self.id}].runner={self.runner!r} not in {valid_runners}"
             )
         return errors
 

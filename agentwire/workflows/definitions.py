@@ -177,12 +177,27 @@ def topological_sort(nodes: list[ActionNode]) -> list[ActionNode]:
     return ordered
 
 
-def _node_from_dict(node_id: str, data: dict) -> ActionNode:
-    """Build an ActionNode from a YAML node mapping."""
+def _node_from_dict(
+    node_id: str,
+    data: dict,
+    workflow_default_runner: str | None = None,
+) -> ActionNode:
+    """Build an ActionNode from a YAML node mapping.
+
+    `workflow_default_runner` is the top-level `runner:` field on the workflow,
+    used when a node doesn't declare its own. Falls back to ActionNode's hardcoded
+    default ("pi") when neither is set.
+    """
     if not isinstance(data, dict):
         raise ValueError(f"node[{node_id}] must be a mapping, got {type(data).__name__}")
 
     kwargs: dict = {"id": node_id, "prompt": data.get("prompt", "")}
+
+    # Runner cascade: node-level → workflow-default → ActionNode default.
+    if "runner" in data:
+        kwargs["runner"] = str(data["runner"])
+    elif workflow_default_runner is not None:
+        kwargs["runner"] = str(workflow_default_runner)
 
     for key in (
         "provider", "model", "thinking", "when", "on_error",
@@ -265,6 +280,7 @@ def load_workflow(path: Path) -> WorkflowDef:
     name = data.get("name") or path.stem
     description = data.get("description", "")
     version = int(data.get("version", 1))
+    workflow_default_runner = data.get("runner")
 
     raw_nodes = data.get("nodes", {})
     if not isinstance(raw_nodes, dict):
@@ -272,7 +288,9 @@ def load_workflow(path: Path) -> WorkflowDef:
 
     nodes: list[ActionNode] = []
     for node_id, node_data in raw_nodes.items():
-        nodes.append(_node_from_dict(str(node_id), node_data))
+        nodes.append(_node_from_dict(
+            str(node_id), node_data, workflow_default_runner=workflow_default_runner
+        ))
 
     raw_inputs = data.get("inputs", {})
     inputs: list[InputSpec] = []

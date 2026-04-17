@@ -294,6 +294,25 @@ def _canned(node_id: str, status: str = "success", final_text: str = "") -> Node
     )
 
 
+class _FakeRunner:
+    """Test double that replaces PiRunner in the registry."""
+    name = "pi"
+
+    def __init__(self, side_effect):
+        self.side_effect = side_effect
+
+    def run(self, node, workflow_cwd=None, event_log_path=None, on_event=None):
+        return self.side_effect(
+            node, workflow_cwd=workflow_cwd, event_log_path=event_log_path
+        )
+
+
+def _patch_pi(side_effect):
+    """Swap the registered 'pi' runner with a fake that calls side_effect."""
+    from agentwire.workflows.runners import RUNNERS
+    return patch.dict(RUNNERS, {"pi": _FakeRunner(side_effect)})
+
+
 class TestRunnerDryRun:
     def test_dry_run_lists_all_nodes_in_topo_order(self, tmp_path):
         wf = WorkflowDef(
@@ -333,7 +352,7 @@ class TestRunnerWhen:
         def fake_run_node(node, **kw):
             return _canned(node.id, final_text="yyy")
 
-        with patch("agentwire.workflows.runner.run_node", side_effect=fake_run_node):
+        with _patch_pi(fake_run_node):
             run = run_workflow(wf, runs_dir=tmp_path)
 
         statuses = {r.node_id: r.status for r in run.node_results}
@@ -349,10 +368,7 @@ class TestRunnerWhen:
                            when="a.text == 'yes'"),
             ],
         )
-        with patch(
-            "agentwire.workflows.runner.run_node",
-            side_effect=lambda node, **kw: _canned(node.id, final_text="yes"),
-        ):
+        with _patch_pi(lambda node, **kw: _canned(node.id, final_text="yes")):
             run = run_workflow(wf, runs_dir=tmp_path)
         statuses = {r.node_id: r.status for r in run.node_results}
         assert statuses == {"a": "success", "b": "success"}
@@ -375,7 +391,7 @@ class TestRunnerOnError:
                                   final_text="", error="boom", attempts=1)
             return _canned(node.id)
 
-        with patch("agentwire.workflows.runner.run_node", side_effect=fake):
+        with _patch_pi(fake):
             run = run_workflow(wf, runs_dir=tmp_path)
 
         assert run.status == "failure"
@@ -409,7 +425,7 @@ class TestRunnerOnError:
             # The runner should render b's prompt with a.val == None
             return _canned(node.id, final_text=node.prompt)
 
-        with patch("agentwire.workflows.runner.run_node", side_effect=fake):
+        with _patch_pi(fake):
             run = run_workflow(wf, runs_dir=tmp_path)
 
         assert run.status == "partial"
@@ -437,7 +453,7 @@ class TestRunnerRetries:
             return NodeResult(node_id=node.id, status="failure",
                               final_text="", error="flaky", attempts=1)
 
-        with patch("agentwire.workflows.runner.run_node", side_effect=fake):
+        with _patch_pi(fake):
             run = run_workflow(wf, runs_dir=tmp_path)
 
         assert call_count["n"] == 3  # 1 initial + 2 retries
@@ -459,7 +475,7 @@ class TestRunnerRetries:
                                   final_text="", error="not yet", attempts=1)
             return _canned(node.id, final_text="ok")
 
-        with patch("agentwire.workflows.runner.run_node", side_effect=fake):
+        with _patch_pi(fake):
             run = run_workflow(wf, runs_dir=tmp_path)
 
         result = run.node_results[0]
