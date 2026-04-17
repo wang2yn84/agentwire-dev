@@ -7,14 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-04-16
+
 ### Added
 
+- **Workflow-backed scheduler tasks** — scheduler can now dispatch a pi workflow DAG in-process instead of shelling out to `agentwire ensure` (Phase 3 of the pi workflow roadmap)
+  - New `workflow:` + `inputs:` fields on scheduler tasks in `~/.agentwire/scheduler.yaml` (mutually exclusive with `task:`)
+  - `dispatch_task()` routes automatically: ensure path unchanged, new `_dispatch_workflow_task` calls `run_workflow()` in-process — no tmux, no Claude Code subprocess
+  - Status mapping: workflow `success→complete`, `partial→incomplete`, `failure→failed`
+  - Scheduler `{{ task }}`, `{{ project }}`, `{{ session }}`, `{{ workflow }}` variables expand in string `inputs:` values
+  - `agentwire scheduler run <name> --dry-run` prints the workflow plan without touching state
+  - `task_completed` events now carry `workflow`, `run_id`, and per-node `nodes[]` when the task is workflow-backed
+  - Morning report (`agentwire scheduler report --artifact`) renders per-node status badges + run-id breadcrumb for workflow rows
+  - `agentwire scheduler history --json` includes the `workflow` name per task
+  - Full reference: `docs/workflows.md` → "Scheduler integration"; compare/contrast: `docs/scheduled-workloads.md`
 - **Kokoro TTS engine** — CPU-only ultra-lightweight backend (`kokoro`)
   - Kokoro 82M ONNX model via `kokoro-onnx`, auto-downloads ~170 MB from HuggingFace on first use
   - No GPU required — pure ONNX CPU inference, near real-time on Apple Silicon / modern Intel CPU
   - 30+ preset voices across 8 languages (English, Spanish, French, Hindi, Italian, Japanese, Portuguese, Chinese); `af_heart` is the default and highest quality voice
   - Streaming support via `create_stream()`
   - Runs in dedicated `.venv-kokoro` with CPU-only PyTorch (~250 MB vs 2 GB+ CUDA builds)
+
+### Fixed
+
+- `cmd_scheduler_report` was calling `read_events(limit=500)` with the wrong kwarg name; the `except` silently caught the `TypeError` so morning reports quietly returned 0 events. Now calls `read_events(tail=500)`.
 
 ## [1.9.0] - 2026-03-13
 

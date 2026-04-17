@@ -117,7 +117,7 @@ Reference detail lives in skills under `.claude/skills/` — invoke as needed:
 | `agentwire-mcp-tools` | Picking the right MCP tool from inside an agent session |
 | `agentwire-config` | Editing `~/.agentwire/config.yaml` (TTS, channels, services, etc.) |
 | `agentwire-project-config` | Editing `.agentwire.yml`, defining tasks, roles, idle notifications |
-| `agentwire-scheduler` | Scheduled task gates/schedule/priority + overnight queue |
+| `agentwire-scheduler` | Scheduled task gates/schedule/priority + overnight queue + workflow-backed tasks |
 | `agentwire-desktop-ui` | Editing portal static files (sidebar, windows, artifacts) |
 | `agentwire-pi-zai` | Setting up Z.AI sessions via pi coding agent |
 | `agentwire-workflows` | Authoring or debugging pi workflow YAMLs (`agentwire workflow ...`) |
@@ -126,7 +126,8 @@ Reference detail lives in skills under `.claude/skills/` — invoke as needed:
 
 - CLI: `agentwire --help` or `agentwire <cmd> --help`
 - `docs/pi-zai.md` - Pi coding agent + Z.AI session types
-- `docs/workflows.md` - Pi workflow engine user guide
+- `docs/workflows.md` - Pi workflow engine user guide (incl. scheduler integration)
+- `docs/scheduled-workloads.md` - Ensure vs workflow scheduled tasks, `.agentwire.yml` reference
 - `docs/missions/pi-harness-overview.md` - Pi integration roadmap across phases
 - `docs/channels.md` - Channel developer guide
 - `docs/PORTAL.md` - Portal modes and API reference

@@ -259,6 +259,130 @@ No retention policy yet — if `runs/` grows too large, clear it manually.
 
 ---
 
+## Scheduler integration
+
+A scheduler task in `~/.agentwire/scheduler.yaml` can reference a workflow with `workflow:` + `inputs:` instead of declaring a `task:` that runs via `agentwire ensure`. The scheduler dispatches the workflow **in-process** — no tmux session, no Claude Code subprocess, no project required (unless you want git gates or auto-commit).
+
+### Minimum example
+
+```yaml
+# ~/.agentwire/scheduler.yaml
+tasks:
+  nightly-doc-drift:
+    schedule:
+      every: day
+      at: "23:00"
+    workflow: doc-drift-check        # name from `agentwire workflow list` OR absolute YAML path
+    inputs:
+      paths: "docs/,agentwire/"
+```
+
+### Ensure tasks vs workflow tasks
+
+| | ensure task | workflow task |
+|---|---|---|
+| Field used | `task: <name-from-.agentwire.yml>` | `workflow: <name-or-path>` |
+| Dispatch | `agentwire ensure` subprocess in a tmux session | `run_workflow()` in-process, no tmux |
+| Session field | required (`session:`) | omitted (no session is created) |
+| Project field | required | optional; required only if you use git gates or want auto-commit |
+| Model | Claude (whatever the session type is) | Whatever each workflow node specifies — per-node pi models |
+| Lifecycle hooks | `.agentwire.yml` pre/prompt/post | workflow DAG nodes with retries, branching, outputs |
+
+A task must set **either** `task:` **or** `workflow:` — not both. `inputs:` is only valid with `workflow:`.
+
+### Input templating
+
+String values in `inputs:` expand four built-in variables from the scheduler's task context:
+
+```yaml
+tasks:
+  my-wf:
+    schedule: { every: 4h }
+    workflow: summarize-project
+    inputs:
+      who: "{{ task }}"              # → "my-wf"
+      where: "{{ project }}"         # → expanded project path (if set)
+      session_hint: "{{ session }}"  # → session name (if set)
+      self: "{{ workflow }}"         # → "summarize-project"
+```
+
+Unknown variables pass through untouched so workflow-node Jinja (`{{ inputs.x }}`, `{{ upstream.y }}`) still works. This is deliberately simpler than the full Jinja engine used inside workflow nodes — `{{ task }}`, `{{ project }}`, `{{ session }}`, `{{ workflow }}` are the only scheduler-context vars recognised at this layer.
+
+### Status mapping
+
+The workflow engine's three statuses map to scheduler status:
+
+| Workflow | Scheduler | Exit intent |
+|---|---|---|
+| `success` | `complete` | Everything ran cleanly |
+| `partial` | `incomplete` | ≥1 node skipped or failed-continue; workflow didn't halt |
+| `failure` | `failed` | A node with `on_error: fail` failed and halted the workflow |
+
+Workflow-load failures (bad YAML, missing workflow) also record as `failed` with a single-line blocker in the event log.
+
+### Dry-run a workflow task
+
+```bash
+agentwire scheduler run my-wf --dry-run
+```
+
+Resolves the workflow, renders inputs, and prints the execution plan — no pi calls, no state update. Works for workflow tasks only (ensure tasks exit with a message).
+
+### What lands in the morning report
+
+Every `task_completed` event from a workflow task carries the workflow name, run id, and a compact node list:
+
+```json
+{
+  "event": "task_completed",
+  "task": "nightly-doc-drift",
+  "status": "complete",
+  "workflow": "doc-drift-check",
+  "run_id": "doc-drift-check-20260416T230000-abc...",
+  "nodes": [
+    {"id": "scan", "status": "success", "duration_ms": 4201, "attempts": 1},
+    {"id": "report", "status": "success", "duration_ms": 2104, "attempts": 1}
+  ],
+  ...
+}
+```
+
+`agentwire scheduler report --artifact` renders per-node status badges alongside each workflow row, plus a run-id breadcrumb you can pass to `agentwire workflow show <run_id>` for the full event drill-down.
+
+### Gates, priority, max_runs, once
+
+All scheduler primitives work identically for workflow tasks. A workflow task can:
+- Use `gate: { git_diff: [paths...] }` (requires `project:`)
+- Set `priority`, `cooldown`, `not_before`/`not_after`
+- Auto-disable with `max_runs: N` or `once: true`
+
+### Auto-commit caveat
+
+The scheduler's auto-commit step only runs for workflow tasks when `project:` is set. Workflow tasks without a project skip auto-commit; the expectation is that any filesystem mutations the workflow made are either intentional (pi's `bash` / `edit` / `write` tools) and will be committed by the workflow itself, or are transient and don't need capture.
+
+### End-to-end smoke
+
+```bash
+# 1. Add a workflow task to ~/.agentwire/scheduler.yaml (see minimum example above)
+# 2. Verify board parses
+agentwire scheduler board
+
+# 3. Dry-run to see the plan
+agentwire scheduler run nightly-doc-drift --dry-run
+
+# 4. Fire it
+agentwire scheduler run nightly-doc-drift
+
+# 5. Check the run
+agentwire workflow history --limit 1
+agentwire workflow show <run_id>
+
+# 6. Morning report
+agentwire scheduler report --since 1h --artifact
+```
+
+---
+
 ## Writing good pi prompts
 
 Pi is a one-shot, stateless agent per node. These tips keep nodes cheap and reliable:
