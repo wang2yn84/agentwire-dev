@@ -10,6 +10,8 @@ Add a second, Anthropic-SDK-backed node executor alongside `pi_runner.py`. Workf
 **Depends on:** Phase 2 (workflow engine), Phase 3 (scheduler integration)
 **Blocks:** Phase 4 (advanced patterns) and Phase 5 (desktop UI) — both should land on top of a runner-agnostic abstraction, so they wait until this phase reaches feature parity
 
+**SDK choice (locked 2026-04-16):** `claude-agent-sdk>=0.1.43` (already in `pyproject.toml`). Not the raw `anthropic` Messages API SDK. Rationale: `claude-agent-sdk` is the only package that uses Anthropic Claude monthly subscription auth (picks up creds from the `claude` CLI); raw `anthropic` requires an API key which we explicitly don't want. Claude Code also owns tool execution inside the SDK loop, so we inherit its tool set and our existing `~/.claude/hooks` damage-control plumbing for free.
+
 **Strategic note (2026-04-16)**: After Anthropic confirmed subscription-mode Agent SDK usage is supported, we're reordering: Phase 6 (this mission) comes next, Phase 4 + 5 are explicitly gated on it. Rationale — every Phase 4 feature (parallelism, loops, cost gates, HITL) must work uniformly across runners, and building them pi-only would force a retrofit later.
 
 ---
@@ -96,74 +98,106 @@ RUNNERS: dict[str, NodeRunner] = {
 
 ### 3. Anthropic-SDK runner
 
-`agentwire/workflows/runners/anthropic.py`:
+`agentwire/workflows/runners/anthropic.py` uses `claude-agent-sdk` with subscription auth. The SDK spawns a `claude` CLI subprocess under the hood and streams structured `Message` objects back; we translate those into pi-shaped JSONL for parity:
 
 ```python
-from anthropic import Anthropic
+import asyncio
+from claude_agent_sdk import (
+    ClaudeSDKClient, ClaudeAgentOptions,
+    AssistantMessage, UserMessage, ResultMessage, StreamEvent,
+)
 
 class AnthropicRunner:
     name = "anthropic"
 
     def run(self, node, context, event_log_path):
-        client = Anthropic()
-        tools = self._build_tools(node.tools)          # read/write/edit/bash/grep/find/ls
-        system = self._compose_system_prompt(node)     # CLAUDE.md + role prompts
-        model = self._resolve_model(node.model)        # sonnet/opus/haiku -> full id
-        
-        events = []
-        tool_calls = []
-        final_text = ""
+        return asyncio.run(self._run_async(node, context, event_log_path))
 
-        # Stream + capture events for JSONL parity
-        with client.messages.stream(
-            model=model,
-            system=system,
-            tools=tools,
-            max_tokens=4096,
-            thinking=self._thinking(node.thinking),
-            messages=[{"role": "user", "content": node.prompt}],
-        ) as stream:
-            for event in stream:
-                events.append(self._serialize_event(event))
-                # run tool calls + append tool_result messages as needed
-                ...
-            final_text = stream.get_final_text()
-        
-        # Write JSONL events to disk for parity with pi runner
+    async def _run_async(self, node, context, event_log_path):
+        options = ClaudeAgentOptions(
+            model=node.model,                            # full string e.g. "claude-opus-4-7"
+            system_prompt=self._compose_system(node),    # role prompts, CLAUDE.md auto-loaded
+            allowed_tools=self._resolve_tools(node),     # ["Read","Write","Edit","Bash","Grep","Glob"]
+            permission_mode="bypassPermissions",         # headless, no interactive prompts
+            thinking=self._thinking(node),               # ThinkingConfigAdaptive | Enabled | Disabled
+            effort=node.effort,                          # "low"|"medium"|"high"|"max" or None
+            max_thinking_tokens=node.max_thinking_tokens,
+            max_budget_usd=node.max_budget_usd,          # hard cost ceiling (works even on sub)
+            cwd=context.cwd,
+            env=node.extra_env,
+            setting_sources=["user"],                    # load ~/.claude hooks (damage-control)
+            include_partial_messages=True,               # live streaming events
+        )
+
+        events: list[dict] = []
+        tool_calls: list[dict] = []
+        final_text = ""
+        tokens: dict = {}
+
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(node.prompt)
+            async for message in client.receive_response():
+                jsonl_event = translate_to_pi_shape(message)
+                events.append(jsonl_event)
+                if self.on_event:
+                    self.on_event(jsonl_event)
+
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if block.type == "text":
+                            final_text += block.text
+                        elif block.type == "tool_use":
+                            tool_calls.append({"id": block.id, "name": block.name, "input": block.input})
+                elif isinstance(message, ResultMessage):
+                    tokens = {
+                        "input": message.usage.input_tokens,
+                        "output": message.usage.output_tokens,
+                        "cost": message.total_cost_usd or 0.0,  # $0 under sub but field is present
+                    }
+
         if event_log_path:
             self._persist_events(event_log_path, events)
-        
+
         return NodeResult(
             node_id=node.id, status="success",
             final_text=final_text, tool_calls=tool_calls,
-            tokens_used=self._tokens(events),
-            duration_ms=..., events=events,
+            tokens_used=tokens, events=events, duration_ms=...,
         )
 ```
 
-### 4. Tools — isolated per runner to protect pi
+### 4. Tools — Claude Code's built-ins, isolated via `allowed_tools`
 
-**Decision (2026-04-16):** tool implementations are NOT shared between runners. Pi's bash / read / write / edit keep going through the `pi` binary exactly as they do today — zero behavioural change to pi. The Anthropic runner has its own standalone Python tool implementations in `agentwire/workflows/runners/anthropic_tools.py`:
+**Decision (2026-04-16):** we do NOT write custom Python tool implementations. Claude Code already owns tool execution (`Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, etc.) inside the SDK's managed loop. The Anthropic runner only *selects* which of those tools are available per node:
 
-```python
-# agentwire/workflows/runners/anthropic_tools.py
-def tool_read(path: str) -> str: ...
-def tool_write(path: str, content: str) -> str: ...
-def tool_edit(path: str, old_string: str, new_string: str) -> str: ...
-def tool_bash(command: str, timeout: int = 60) -> dict:
-    # Route through the same damage-control filter the CLI uses
-    if is_blocked(command):
-        return {"error": "blocked by damage-control", "stderr": "..."}
-    ...
+```yaml
+nodes:
+  deep_reason:
+    runner: anthropic
+    tools: [Read, Grep, Glob]       # Claude tool names (CamelCase) — no Bash here
+  stealth_fix:
+    runner: anthropic
+    tools: [Read, Write, Edit, Bash] # full-access node
 ```
 
-The damage-control win applies only to the Anthropic runner — it's not retroactively forced onto pi. If we want to add damage-control to pi's bash later, that's a separate, opt-in workstream and out of this mission's scope.
+The runner maps `node.tools` → SDK `allowed_tools` at call time. Unsupported tool names (e.g., pi's lowercase `read`/`bash`) raise a parse error — the Anthropic runner speaks CamelCase.
 
-**Why isolation matters**: Phase 2 shipped the pi path working with pi's native tool set. Changing those tools risks regressions in existing workflows. Keeping them completely untouched preserves the pi path as a known-good baseline while we experiment with the SDK path.
+**Damage-control**: Claude Code runs our existing `~/.claude/hooks/*` including the damage-control hook on every `Bash` tool call. We just need `setting_sources=["user"]` in `ClaudeAgentOptions` so the SDK loads those hooks. No extra work. If a command would be blocked in an interactive `claude` session, it's blocked in the workflow node too.
+
+**Isolation from pi**: completely preserved. Pi keeps using pi's lowercase tools through the pi binary. The Anthropic runner talks to Claude's runtime via claude-agent-sdk. Zero shared tool code. Rolling back a node to pi means flipping `runner:` back and changing the tool names back to lowercase — one-line YAML edit, no Python changes.
+
+**Why this is simpler than custom Python tools**: every hour we'd spend re-implementing `tool_bash` / `tool_read` / `tool_edit` is an hour we'd spend fighting Claude Code's real implementations that already work, handle edge cases, respect hooks, and get maintained upstream.
 
 ### 5. Event serialization
 
-To keep `storage.py` / `workflow show <run_id> --events` working identically, Anthropic-SDK streams get translated into the same JSONL shape pi emits (`session`, `agent_start`, `turn_start`, `message_start`, `message_end`, `turn_end`, `agent_end`). A small translator lives in `runners/anthropic_events.py`.
+To keep `storage.py` / `workflow show <run_id> --events` working identically, SDK `Message` objects get translated into the same JSONL shape pi emits (`session`, `agent_start`, `turn_start`, `message_start`, `message_end`, `turn_end`, `agent_end`). A small translator lives in `runners/anthropic_events.py`:
+
+| SDK object | Translated pi-shape event |
+|---|---|
+| Initial `SystemMessage(subtype=init)` | `session` + `agent_start` |
+| `AssistantMessage` with text/tool_use blocks | `turn_start` + `message_end` (role=assistant) |
+| `UserMessage` with tool_result blocks | `message_end` (role=user) |
+| `StreamEvent` (partial messages) | discarded unless `--verbose` live stream needs them |
+| `ResultMessage` | `turn_end` + `agent_end` (carries tokens + cost) |
 
 Tools, thinking blocks, token usage all map one-to-one with pi's schema. Portal and `workflow show` don't need to know which runner produced the events.
 
@@ -182,7 +216,7 @@ Shipped in MVP (week 1-2):
 | Structured Python logging per node | Standard `logging` with run_id / node_id in extra |
 | Live event callback — every tool call, thinking block, text chunk | SDK streams them; expose as `AnthropicRunner(on_event=callback)` |
 | `--verbose` CLI flag: print events live as they happen | Hook the callback; `cli.py` already has the flag for pi, extend to Anthropic |
-| Cost accumulator per run | Sum `usage.input_tokens * rate + usage.output_tokens * rate` across node results |
+| Token + cost accumulator per run | `ResultMessage.usage.{input,output}_tokens` summed across nodes. Subscription runs report `total_cost_usd=0` — we track tokens as the primary metric and surface cost when present (non-sub auth). |
 
 Stretch for Phase 6 (week 4+, after canary):
 
@@ -219,16 +253,15 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
 |---|---|
 | `agentwire/workflows/runners/__init__.py` | New — runner registry |
 | `agentwire/workflows/runners/pi.py` | New — thin wrapper around existing `pi_runner.py` (pi behaviour unchanged) |
-| `agentwire/workflows/runners/anthropic.py` | New — SDK-backed node executor |
-| `agentwire/workflows/runners/anthropic_tools.py` | New — Anthropic-runner-only tool implementations (read/write/edit/bash with damage-control) |
-| `agentwire/workflows/runners/anthropic_events.py` | New — event-shape translator (SDK events → pi-shaped JSONL) |
+| `agentwire/workflows/runners/anthropic.py` | New — SDK-backed node executor using `claude-agent-sdk` |
+| `agentwire/workflows/runners/anthropic_events.py` | New — translate SDK `Message` objects → pi-shaped JSONL |
 | `agentwire/workflows/runners/anthropic_capabilities.py` | New — model → supported settings table; used by validator and runtime |
 | `agentwire/workflows/pi_runner.py` | Leave in place as a shim for one release cycle, then delete |
-| `agentwire/workflows/node.py` | Add `runner: str \| None` on `ActionNode` (default None → workflow default → "pi") |
-| `agentwire/workflows/definitions.py` | Parse top-level `runner:` + per-node `runner:`; validate against registry |
+| `agentwire/workflows/node.py` | Add `runner`, `effort`, `max_thinking_tokens`, `max_budget_usd`, `task_budget` fields on `ActionNode` |
+| `agentwire/workflows/definitions.py` | Parse top-level `runner:` + per-node `runner:` + new SDK settings; validate against registry |
 | `agentwire/workflows/runner.py` | Resolve runner from registry per node; thread event callback |
 | `agentwire/workflows/storage.py` | Record which runner produced each run in `metadata.json` |
-| `pyproject.toml` | Add `anthropic>=0.40.0` (or whatever ships current Agent SDK) to deps |
+| `pyproject.toml` | `claude-agent-sdk>=0.1.43` — already present; bump floor if newer surface needed |
 | `docs/workflows.md` | New "Runners" section — when to pick which |
 | `docs/missions/anthropic-sdk-runner.md` | This file (mission) |
 | `.claude/skills/agentwire-workflows/SKILL.md` | Mention per-node `runner:` field |
@@ -243,8 +276,8 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
 - [ ] A new `workflows/examples/claude-reasoning.yaml` showcases the Anthropic runner with `runner: anthropic`
 - [ ] `workflow show <run_id>` output is visually identical whether the run was pi or anthropic (modulo provider/model names in the metadata)
 - [ ] Portal morning report surfaces which runner each workflow used (small badge next to `workflow:` label)
-- [ ] Pi's tool path stays completely untouched (no shared Python tool code; pi binary still runs its own tools)
-- [ ] **`daily-book-report.compose_and_send` converted to `runner: anthropic`** (canary — the heaviest reasoning node on a live scheduled task) and running for at least 2 weeks without regression
+- [ ] Pi's tool path stays completely untouched — pi binary still runs its own tools, no shared runtime
+- [ ] **`daily-book-report.compose_and_send` converted to `runner: anthropic`** (canary — the heaviest reasoning node on a live scheduled task) and running via manual invocations to compare Opus 4.7 output quality vs glm-5.1; no production frequency requirement, this is a quality test
 - [ ] Basic observability landed in MVP: structured logging, live event callback, `--verbose` live event stream, per-run cost accumulator
 - [ ] Comparison happens naturally across weeks of real usage — user feedback captured in this doc, no formal A/B benchmark workflow needed
 
@@ -259,28 +292,30 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
 - Tool implementations: bash damage-control coverage (assert `rm -rf /` is blocked, assert allowed commands succeed)
 - Shared output extractors unchanged — already covered by existing tests
 
-### Integration (requires ANTHROPIC_API_KEY in env)
+### Integration (requires working `claude` CLI subscription auth on the host)
 - `run_workflow(hello-world, runner: anthropic)` → success, final_text populated
-- Tool-use roundtrip: node that must use `read` — verify tool call appears in events, tool_result is fed back
+- Tool-use roundtrip: node that must use `Read` — verify tool_use appears in events, tool_result is fed back
 - Retry on transient 529/overloaded — retries trigger, final attempt recorded
-- Thinking budgets: `thinking: high` produces thinking blocks; `thinking: off` does not
-- Cost accumulator across a 3-node workflow matches sum of per-node token costs
+- Thinking control: `thinking: { type: adaptive }` produces thinking blocks; `thinking: { type: disabled }` does not
+- Token accumulator across a 3-node workflow matches sum of per-node usage
+- Damage-control hook fires: `Bash("rm -rf /tmp/…")` blocked by `~/.claude/hooks/damage-control/*`
 
 ### Manual QA
-- **First canary**: flip `daily-book-report.compose_and_send` to `runner: anthropic` once MVP feature parity is reached. It's the heaviest reasoning node on a live scheduled task, and Vanessa sees the output daily — any regression surfaces fast.
-- Run for ≥2 weeks in production. Capture notes here on: output quality vs glm-5.1, latency, per-run cost, any reliability issues.
-- No formal benchmark workflow — comparison happens naturally across the set of workflow tasks the user runs.
+- **First canary**: flip `daily-book-report.compose_and_send` to `runner: anthropic` once MVP feature parity is reached. It's the heaviest reasoning node on a live scheduled task, so quality differences between Opus 4.7 and glm-5.1 show up clearly in the output.
+- Test via manual invocations (`agentwire workflow run daily-book-report`) rather than waiting on the scheduled 13:30 runs — frequency doesn't matter for quality comparison.
+- Capture notes here on: output quality vs glm-5.1, latency, tokens consumed, any reliability issues. No formal benchmark — natural comparison across runs.
 
 ---
 
 ## Locked decisions (not open — user-directed 2026-04-16)
 
 - **Model strings**: always use the full proper Anthropic model ID — `claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5-20251001`. No alias table, no `sonnet`/`opus`/`haiku` shorthand. Full strings in YAML, config, code, docs. Explicit, easy to update, no ambiguity about which exact model ran.
-- **Node settings on Anthropic-runner nodes** (fail-fast, no magic fallbacks). The SDK surface shipped April 16, 2026 with Opus 4.7 is:
-  - `thinking: {type: "adaptive"}` — Claude decides when and how much to think. No token budget. Opus 4.7 additionally supports `{type: "adaptive", display: "summarized"}` to restore visible thinking output.
-  - `output_config.effort: "low" | "medium" | "high" | "xhigh" | "max"` — controls thinking depth and overall token spend. `xhigh` is Opus 4.7-only, `max` is Opus-tier only, and `effort` **errors on Haiku 4.5** entirely.
-  - `output_config.task_budget: {type: "tokens", total: N}` — beta (header `task-budgets-2026-03-13`), Opus 4.7 only, minimum 20000. Hard ceiling on token spend across an agentic loop.
-  - `thinking: {type: "enabled", budget_tokens: N}` is **fully removed on Opus 4.7** (returns 400) and deprecated on Opus 4.6 / Sonnet 4.6. Gone as a concept for new code targeting 4.6/4.7 family.
+- **Node settings on Anthropic-runner nodes** (fail-fast, no magic fallbacks). The `claude-agent-sdk==0.1.43` surface exposes these as first-class `ClaudeAgentOptions` fields:
+  - `thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled | None` — adaptive is the only valid mode on Opus 4.7; enabled/budget_tokens is pre-4.6 only.
+  - `effort: "low" | "medium" | "high" | "max" | None` — **the SDK 0.1.43 enum does NOT include `"xhigh"`.** To use `xhigh` (Opus 4.7 default in Claude Code) we either pass it through `extra_args={"effort": "xhigh"}` (untyped passthrough) or wait for a newer SDK. MVP: support the four typed values; add `xhigh` via `extra_args` once validated.
+  - `max_thinking_tokens: int | None` — per-node thinking cap (in addition to adaptive mode).
+  - `max_budget_usd: float | None` — per-run dollar cap enforced by the SDK. Works under subscription auth too (reports $0 spent but still enforces if set).
+  - `task_budget` (beta) is NOT a first-class SDK field; if we want the Messages API `task_budget` semantics we pass it via `extra_args={"task-budget-tokens": N}` and declare the beta header. Treated as Opus-4.7-only.
 
   **YAML schema for Anthropic-runner nodes**:
 
@@ -289,11 +324,14 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
     deep_reason:
       runner: anthropic
       model: claude-opus-4-7             # full proper string — no aliases
+      tools: [Read, Grep, Glob, Bash]    # Claude tool names — CamelCase
 
-      # All three settings below are optional. Omitted = API default.
-      thinking: { type: adaptive }       # or { type: disabled } | { type: adaptive, display: summarized }
-      effort: xhigh                      # low | medium | high | xhigh | max
-      task_budget: { tokens: 40000 }     # Opus 4.7 only, min 20000 (beta)
+      # All settings below are optional. Omitted = SDK default.
+      thinking: { type: adaptive }       # or { type: disabled } | { type: enabled, budget_tokens: N } (pre-4.6)
+      effort: high                       # low | medium | high | max (xhigh via extra_args — see notes)
+      max_thinking_tokens: 16000         # optional thinking-only cap
+      max_budget_usd: 5.00               # hard cost ceiling for this node's run
+      task_budget_tokens: 40000          # Opus 4.7 only, min 20000 (beta — passes through extra_args)
   ```
 
   **Validation policy — strict, at parse time.** Bad combinations are caught at `agentwire workflow validate` and at `agentwire scheduler board` load, before a single node runs. No silent coercion, no "warn and continue" — errors surface with the exact setting that's wrong and why. A small capability table at `agentwire/workflows/runners/anthropic_capabilities.py` is consulted by both the validator and the runtime:
@@ -301,19 +339,20 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
   | Setting | Requires | Error if violated |
   |---|---|---|
   | `effort: max` | Opus-tier (`claude-opus-*`) | `"effort: max requires claude-opus-*, got {model}"` |
-  | `effort: xhigh` | Opus 4.7 specifically | `"effort: xhigh requires claude-opus-4-7, got {model}"` |
+  | `effort: xhigh` (via extra_args) | Opus 4.7 specifically | `"effort: xhigh requires claude-opus-4-7, got {model}"` |
   | `effort: any` | Not Haiku 4.5, not Sonnet 4.5 | `"effort param not supported on {model}, omit it"` |
-  | `task_budget` | Opus 4.7 + beta header | `"task_budget requires claude-opus-4-7 (beta: task-budgets-2026-03-13)"` |
-  | `task_budget.tokens < 20000` | Always | `"task_budget.tokens minimum is 20000, got {N}"` |
+  | `task_budget_tokens` | Opus 4.7 | `"task_budget_tokens requires claude-opus-4-7, got {model}"` |
+  | `task_budget_tokens < 20000` | Always | `"task_budget_tokens minimum is 20000, got {N}"` |
   | `thinking: {type: enabled, budget_tokens: N}` | Pre-4.6 models only | `"budget_tokens removed on {model}, use thinking: {type: adaptive} + effort instead"` |
+  | `tools: [<lowercase>]` | Never (pi uses lowercase) | `"anthropic runner expects CamelCase tools: Read/Write/Edit/Bash/Grep/Glob, got {tool}"` |
 
-  **Runtime behaviour**: if a validation rule missed something and the Anthropic API returns 400, the `NodeResult.error` carries the verbatim API error message. No retry (deterministic failure). User sees a clean stack: "YAML → validator → Anthropic API 400 → fix YAML."
+  **Runtime behaviour**: if a validation rule missed something and the SDK/API rejects the call, the `NodeResult.error` carries the verbatim error. No retry for deterministic 400s. User sees a clean stack: "YAML → validator → SDK/API error → fix YAML."
 
   **Pi-side `thinking: medium` strings are ignored by the Anthropic runner** — no translation attempted. If a workflow wants effort control on a Claude node, it declares `effort:` explicitly. Pi's short strings stay pi-only.
 
   **Why strict over lenient**: silent "warn and drop unsupported settings" is worse at scale — users who *thought* they enabled `effort: xhigh` and got free high-quality runs get surprised when they learn it was ignored. Errors at validation time (cheap, instant) are always better than errors at runtime (expensive, post-partial-work, maybe mid-DAG). The validator is the right place to catch this.
 - **No kill-switch config**. Rollback path is: flip the offending node's `runner:` field back to `pi` (or delete it — `pi` is the default). One-line YAML edit. That's the whole rollback story.
-- **Authentication**: uses the existing Anthropic Claude monthly subscription auth on this machine — the same plumbing the `claude` CLI uses. No `ANTHROPIC_API_KEY` env var, no config entry. The SDK picks up subscription auth from wherever Claude Code stores it. Exact plumbing confirmed as part of Week 1 scaffolding (non-blocking — just verify it works, no design decision).
+- **Authentication**: `claude-agent-sdk` spawns the `claude` CLI under the hood and inherits its subscription auth from `~/.claude/.credentials.json`. No `ANTHROPIC_API_KEY` env var, no config entry, no design decision. Week 1 scaffolding verifies auth flows end-to-end with a hello-world node — no code change expected.
 
 ## Open Questions
 
@@ -326,8 +365,9 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
 
 ## Risk Mitigation
 
-- **SDK churn**: Anthropic's SDK surface changes. Pin version, follow their migration guides, keep an integration test that verifies streaming semantics.
-- **Tool-use bugs are expensive**: A bad tool impl could let Claude escape the safe surface. Damage-control for bash is mandatory. Rollback for any production issue = flip the offending workflow's `runner:` back to `pi` (one-line YAML edit).
+- **SDK churn**: `claude-agent-sdk` tracks Claude Code's release cadence. Pin floor, watch breaking-change announcements, keep an integration test that verifies streaming semantics.
+- **Subscription quota**: headless workflow runs consume the same 5-hour sub window as interactive Claude Code. If the canary eats too much quota, rollback the node's `runner:` to pi.
+- **Bash damage-control**: inherited from `~/.claude/hooks` via `setting_sources=["user"]` — no custom Python tool impl means no new escape surface. Still: integration test must prove the hook fires on a blocked command.
 - **Observability overload**: Live event streams can swamp the portal. Start with server-side buffering + client-side throttling (same play we'd use in Phase 5 anyway).
 - **Subscription policy reversal**: If Anthropic ever walks back subscription SDK usage, the `pi` path is still there. Rollback = flip workflows' `runner:` field back to `pi`.
 
