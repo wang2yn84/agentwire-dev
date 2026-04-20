@@ -100,6 +100,19 @@ def _build_tmux_env_flags(env: dict[str, str]) -> list[str]:
     return flags
 
 
+def _build_tmux_env_flags_shell(env: dict[str, str]) -> str:
+    """Shell-safe `-e 'K=V' -e 'K2=V2' ` fragment for inlining in remote SSH chained commands.
+
+    Returns empty string when env is empty. Trailing space when non-empty so
+    the caller can concatenate directly into a `tmux new-session ... && ...`
+    string without extra glue.
+    """
+    if not env:
+        return ""
+    parts = [f"-e {shlex.quote(f'{k}={v}')}" for k, v in env.items()]
+    return " ".join(parts) + " "
+
+
 def inject_session_env(session: str, env: dict[str, str], remote_host: str | None = None) -> None:
     """Set env vars on an existing tmux session for FUTURE shells in that session.
 
@@ -142,23 +155,6 @@ def parse_env_args(env_args: list[str] | None) -> dict[str, str]:
             sys.exit(2)
         result[key] = value
     return result
-
-
-def build_session_env_shell_fragment(session: str, env: dict[str, str]) -> str:
-    """Build a shell fragment of `tmux set-environment` calls for chained remote commands.
-
-    Returns a trailing `&& ` string ready to splice into an ssh-executed compound
-    command. Empty string if no env.
-    """
-    if not env:
-        return ""
-    parts = []
-    for key, value in env.items():
-        parts.append(
-            f"tmux set-environment -t {shlex.quote(session)} "
-            f"{shlex.quote(key)} {shlex.quote(value)}"
-        )
-    return " && ".join(parts) + " && "
 
 
 def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None, model: str | None = None) -> AgentCommand:
@@ -3566,21 +3562,22 @@ def cmd_new(args) -> int:
             except Exception as e:
                 print(f"Warning: Failed to write system prompt to remote: {e}", file=sys.stderr)
 
-        env_fragment = build_session_env_shell_fragment(session_name, agent.env)
+        env_flags = _build_tmux_env_flags_shell(agent.env)
 
-        # Create session - Agent starts immediately if not bare
+        # Create session - Agent starts immediately if not bare.
+        # `-e K=V` on new-session places env in the session environment BEFORE
+        # the initial shell starts, so send-keys'd agent command sees it.
         if agent_cmd:
             create_cmd = (
-                f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(remote_path)} && "
+                f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(remote_path)} {env_flags}&& "
                 f"tmux send-keys -t {shlex.quote(session_name)} 'cd {shlex.quote(remote_path)}' Enter && "
                 f"sleep 0.1 && "
-                f"{env_fragment}"
                 f"tmux send-keys -t {shlex.quote(session_name)} {shlex.quote(agent_cmd)} Enter"
             )
         else:
             # Bare session - just create tmux
             create_cmd = (
-                f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(remote_path)} && "
+                f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(remote_path)} {env_flags}&& "
                 f"tmux send-keys -t {shlex.quote(session_name)} 'cd {shlex.quote(remote_path)}' Enter"
             )
 
@@ -4611,13 +4608,12 @@ def cmd_recreate(args) -> int:
         agent = build_agent_command(session_type_str)
         agent.env.update(parse_env_args(getattr(args, 'env', None)))
         agent_cmd = agent.command
-        env_fragment = build_session_env_shell_fragment(session_name, agent.env)
+        env_flags = _build_tmux_env_flags_shell(agent.env)
 
         create_cmd = (
-            f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(session_path)} && "
+            f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(session_path)} {env_flags}&& "
             f"tmux send-keys -t {shlex.quote(session_name)} 'cd {shlex.quote(session_path)}' Enter && "
             f"sleep 0.1 && "
-            f"{env_fragment}"
             f"tmux send-keys -t {shlex.quote(session_name)} {shlex.quote(agent_cmd)} Enter"
         )
 
@@ -4718,9 +4714,12 @@ def cmd_recreate(args) -> int:
 
     agent_cmd = agent.command
 
-    # Step 5: Create new session
+    # Step 5: Create new session with env vars injected at creation time so
+    # the initial shell sees them (post-hoc set-environment doesn't reach the
+    # already-running shell — see _build_tmux_env_flags docstring).
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(session_path)],
+        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(session_path),
+         *_build_tmux_env_flags(agent.env)],
         check=True
     )
 
@@ -4730,9 +4729,6 @@ def cmd_recreate(args) -> int:
         check=True
     )
     time.sleep(0.1)
-
-    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
-    inject_session_env(session_name, agent.env)
 
     # Start the agent with appropriate command
     if agent_cmd:
@@ -4994,13 +4990,12 @@ def cmd_fork(args) -> int:
         agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
         agent_cmd = agent.command
-        env_fragment = build_session_env_shell_fragment(target_session, agent.env)
+        env_flags = _build_tmux_env_flags_shell(agent.env)
 
         create_session_cmd = (
-            f"tmux new-session -d -s {shlex.quote(target_session)} -c {shlex.quote(target_path)} && "
+            f"tmux new-session -d -s {shlex.quote(target_session)} -c {shlex.quote(target_path)} {env_flags}&& "
             f"tmux send-keys -t {shlex.quote(target_session)} 'cd {shlex.quote(target_path)}' Enter && "
             f"sleep 0.1 && "
-            f"{env_fragment}"
             f"tmux send-keys -t {shlex.quote(target_session)} {shlex.quote(agent_cmd)} Enter"
         )
 
@@ -5060,20 +5055,8 @@ def cmd_fork(args) -> int:
         if check_target.returncode == 0:
             return _output_result(False, json_mode, f"Target session '{target_session}' already exists")
 
-        # Create new tmux session in same directory
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", target_session, "-c", str(fork_path)],
-            check=True
-        )
-
-        # Ensure Claude starts in correct directory
-        subprocess.run(
-            ["tmux", "send-keys", "-t", target_session, f"cd {shlex.quote(str(fork_path))}", "Enter"],
-            check=True
-        )
-        time.sleep(0.1)
-
-        # Determine session type from --type flag or source config
+        # Determine session type from --type flag or source config (before
+        # session creation, so we can inject env via `tmux new-session -e K=V`).
         agent_type = detect_default_agent_type()
         type_arg = getattr(args, 'type', None)
         source_project_config = load_project_config(fork_path)
@@ -5149,8 +5132,20 @@ def cmd_fork(args) -> int:
         agent = build_agent_command(session_type_str, roles)
         agent.env.update(parse_env_args(getattr(args, 'env', None)))
 
-        # Inject secrets via tmux set-environment (keeps keys out of `ps`)
-        inject_session_env(target_session, agent.env)
+        # Create new tmux session with env injected at creation time so the
+        # initial shell sees the vars (see _build_tmux_env_flags docstring).
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", target_session, "-c", str(fork_path),
+             *_build_tmux_env_flags(agent.env)],
+            check=True
+        )
+
+        # Ensure Claude starts in correct directory
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target_session, f"cd {shlex.quote(str(fork_path))}", "Enter"],
+            check=True
+        )
+        time.sleep(0.1)
 
         agent_cmd = agent.command
         if agent_cmd:
@@ -5226,20 +5221,8 @@ def cmd_fork(args) -> int:
     if not success:
         return _output_result(False, json_mode, f"Failed to create worktree for branch '{target_branch}'")
 
-    # Create new session
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", target_session, "-c", str(target_path)],
-        check=True
-    )
-
-    # Ensure agent starts in correct directory
-    subprocess.run(
-        ["tmux", "send-keys", "-t", target_session, f"cd {shlex.quote(str(target_path))}", "Enter"],
-        check=True
-    )
-    time.sleep(0.1)
-
-    # Determine session type from --type flag or source config
+    # Determine session type from --type flag or source config (before
+    # session creation, so we can inject env via `tmux new-session -e K=V`).
     agent_type = detect_default_agent_type()
     type_arg = getattr(args, 'type', None)
     config_path = source_path if source_path != project_path else project_path
@@ -5267,8 +5250,20 @@ def cmd_fork(args) -> int:
     agent.env.update(parse_env_args(getattr(args, 'env', None)))
     agent_cmd = agent.command
 
-    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
-    inject_session_env(target_session, agent.env)
+    # Create new session with env injected at creation time so the initial
+    # shell sees the vars (see _build_tmux_env_flags docstring).
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", target_session, "-c", str(target_path),
+         *_build_tmux_env_flags(agent.env)],
+        check=True
+    )
+
+    # Ensure agent starts in correct directory
+    subprocess.run(
+        ["tmux", "send-keys", "-t", target_session, f"cd {shlex.quote(str(target_path))}", "Enter"],
+        check=True
+    )
+    time.sleep(0.1)
 
     if agent_cmd:
         subprocess.run(
@@ -5861,14 +5856,13 @@ def cmd_dev(args) -> int:
 
     agent_cmd = agent.command
 
-    # Create session
+    # Create session with env injected at creation time so the initial
+    # shell sees the vars (see _build_tmux_env_flags docstring).
     print(f"Creating dev session '{session_name}' in {project_dir}...")
     subprocess.run([
         "tmux", "new-session", "-d", "-s", session_name, "-c", str(project_dir),
+        *_build_tmux_env_flags(agent.env),
     ])
-
-    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
-    inject_session_env(session_name, agent.env)
 
     # Start agent with agentwire config
     if agent_cmd:

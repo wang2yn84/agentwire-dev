@@ -498,7 +498,7 @@ def dispatch_item(item: OvernightItem, config) -> bool:
 
     Returns True if dispatch succeeded.
     """
-    from .__main__ import build_agent_command, _wait_for_agent_ready, inject_session_env
+    from .__main__ import build_agent_command, _wait_for_agent_ready, _build_tmux_env_flags
 
     project = item.project_path
     session = item.session
@@ -515,9 +515,22 @@ def dispatch_item(item: OvernightItem, config) -> bool:
     if _tmux_session_exists(session):
         subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)
 
-    # Create tmux session
+    # Build agent command with forked context (before session creation, so we
+    # can inject env via `tmux new-session -e K=V` — post-hoc set-environment
+    # doesn't reach the initial shell).
+    agent = build_agent_command(item.session_type)
+    agent_cmd = agent.command
+    if not agent_cmd:
+        item.status = "failed"
+        item.error = f"No agent command for session type: {item.session_type}"
+        save_item(item)
+        _log_event("dispatch_failed", item_id=item.id, error=item.error)
+        return False
+
+    # Create tmux session with env injected at creation time
     result = subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session, "-c", project],
+        ["tmux", "new-session", "-d", "-s", session, "-c", project,
+         *_build_tmux_env_flags(agent.env)],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -526,20 +539,6 @@ def dispatch_item(item: OvernightItem, config) -> bool:
         save_item(item)
         _log_event("dispatch_failed", item_id=item.id, error=item.error)
         return False
-
-    # Build agent command with forked context
-    agent = build_agent_command(item.session_type)
-    agent_cmd = agent.command
-    if not agent_cmd:
-        item.status = "failed"
-        item.error = f"No agent command for session type: {item.session_type}"
-        save_item(item)
-        subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)
-        _log_event("dispatch_failed", item_id=item.id, error=item.error)
-        return False
-
-    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
-    inject_session_env(session, agent.env)
 
     # Inject --resume <id> --fork-session
     if item.resume_session_id:

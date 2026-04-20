@@ -175,26 +175,37 @@ class TestBuildAgentCommand:
 
 
 class TestSessionEnvInjection:
-    def test_build_session_env_shell_fragment_empty(self):
-        from agentwire.__main__ import build_session_env_shell_fragment
-        assert build_session_env_shell_fragment("s", {}) == ""
+    def test_build_tmux_env_flags_empty(self):
+        from agentwire.__main__ import _build_tmux_env_flags
+        assert _build_tmux_env_flags({}) == []
 
-    def test_build_session_env_shell_fragment_quoted(self):
-        from agentwire.__main__ import build_session_env_shell_fragment
-        frag = build_session_env_shell_fragment("my-session", {"ZAI_API_KEY": "abc 123"})
-        # Must end with trailing ` && ` so it can splice into a compound command
-        assert frag.endswith(" && ")
-        assert "set-environment -t my-session" in frag
-        assert "ZAI_API_KEY" in frag
-        # Value with spaces must be shell-quoted
-        assert "'abc 123'" in frag
+    def test_build_tmux_env_flags_pairs(self):
+        from agentwire.__main__ import _build_tmux_env_flags
+        flags = _build_tmux_env_flags({"ZAI_API_KEY": "abc", "FOO": "bar"})
+        # Each var becomes two list entries: "-e" and "K=V"
+        assert flags.count("-e") == 2
+        assert "ZAI_API_KEY=abc" in flags
+        assert "FOO=bar" in flags
 
-    def test_build_session_env_shell_fragment_multiple(self):
-        from agentwire.__main__ import build_session_env_shell_fragment
-        frag = build_session_env_shell_fragment("s", {"A": "1", "B": "2"})
-        assert "A 1" in frag
-        assert "B 2" in frag
-        assert frag.count("set-environment") == 2
+    def test_build_tmux_env_flags_shell_empty(self):
+        from agentwire.__main__ import _build_tmux_env_flags_shell
+        assert _build_tmux_env_flags_shell({}) == ""
+
+    def test_build_tmux_env_flags_shell_quoted(self):
+        from agentwire.__main__ import _build_tmux_env_flags_shell
+        frag = _build_tmux_env_flags_shell({"ZAI_API_KEY": "abc 123"})
+        # Trailing space so it splices into the middle of a command string
+        assert frag.endswith(" ")
+        assert "-e" in frag
+        # Value with spaces must be shell-quoted as a single -e argument
+        assert "'ZAI_API_KEY=abc 123'" in frag
+
+    def test_build_tmux_env_flags_shell_multiple(self):
+        from agentwire.__main__ import _build_tmux_env_flags_shell
+        frag = _build_tmux_env_flags_shell({"A": "1", "B": "2"})
+        assert frag.count("-e") == 2
+        assert "A=1" in frag
+        assert "B=2" in frag
 
 
 class TestParseEnvArgs:
