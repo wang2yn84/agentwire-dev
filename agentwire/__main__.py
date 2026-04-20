@@ -84,11 +84,29 @@ class AgentCommand:
     env: dict[str, str] = field(default_factory=dict)  # Secrets to inject via tmux set-environment (keeps keys out of `ps`)
 
 
-def inject_session_env(session: str, env: dict[str, str], remote_host: str | None = None) -> None:
-    """Set env vars on a tmux session so panes inherit them without exposing secrets.
+def _build_tmux_env_flags(env: dict[str, str]) -> list[str]:
+    """Build `-e KEY=VAL` flag pairs for `tmux new-session`.
 
-    Using `tmux set-environment -t <session>` keeps API keys out of the command
-    string (which would otherwise be visible in `ps auxwww` and shell history).
+    Prefer this over post-creation `inject_session_env` when creating a fresh
+    session with secrets: `tmux new-session -e K=V` places the var in the
+    session environment BEFORE the initial shell starts, so that shell sees
+    it. `tmux set-environment` on an existing session only affects shells
+    spawned AFTER the call, which leaves the initial pane's shell without
+    the var — and the agent command runs in that initial shell.
+    """
+    flags: list[str] = []
+    for key, value in env.items():
+        flags.extend(["-e", f"{key}={value}"])
+    return flags
+
+
+def inject_session_env(session: str, env: dict[str, str], remote_host: str | None = None) -> None:
+    """Set env vars on an existing tmux session for FUTURE shells in that session.
+
+    Does NOT update the initial pane's shell — that shell was already started
+    when the session was created and has a fixed env. Use
+    `_build_tmux_env_flags(env)` with `tmux new-session -e K=V` instead if
+    the agent command runs in the initial shell.
     """
     if not env:
         return
@@ -3650,20 +3668,10 @@ def cmd_new(args) -> int:
         else:
             return _output_result(False, json_mode, f"Session '{session_name}' already exists. Use -f to replace.")
 
-    # Create new tmux session
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(session_path)],
-        check=True
-    )
-
-    # Ensure Claude starts in correct directory
-    subprocess.run(
-        ["tmux", "send-keys", "-t", session_name, f"cd {shlex.quote(str(session_path))}", "Enter"],
-        check=True
-    )
-    time.sleep(0.1)
-
-    # Determine agent type and normalize session type
+    # Determine agent type and normalize session type BEFORE creating the
+    # tmux session, so we can inject secrets via `tmux new-session -e K=V`
+    # (the only way to make the initial pane's shell see them — post-hoc
+    # `tmux set-environment` only affects shells spawned AFTER the call).
     agent_type = detect_default_agent_type()
 
     # Determine session type from CLI --type flag or existing config
@@ -3701,8 +3709,21 @@ def cmd_new(args) -> int:
 
     agent_cmd = agent.command
 
-    # Inject secrets via tmux set-environment (keeps keys out of `ps`)
-    inject_session_env(session_name, agent.env)
+    # Create new tmux session with env vars injected at creation time.
+    # `-e K=V` places vars in the session environment before the initial
+    # shell starts, so the agent command (run via send-keys below) sees them.
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(session_path),
+         *_build_tmux_env_flags(agent.env)],
+        check=True
+    )
+
+    # Ensure Claude starts in correct directory
+    subprocess.run(
+        ["tmux", "send-keys", "-t", session_name, f"cd {shlex.quote(str(session_path))}", "Enter"],
+        check=True
+    )
+    time.sleep(0.1)
 
     # Start agent command if not bare
     if agent_cmd:
