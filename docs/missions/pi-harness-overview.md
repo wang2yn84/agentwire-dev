@@ -51,31 +51,31 @@ Each phase is its own mission doc. Execute sequentially — each validates the n
 
 | # | Mission | Doc | Status |
 |---|---------|-----|--------|
-| 1 | Pi Session Type | `pi-session-type.md` | **complete (2026-04-13)** |
-| 2 | Pi Workflow Engine | `pi-workflow-engine.md` | **complete (2026-04-14, v1.22.0)** |
-| 3 | Scheduler Workflows | `pi-scheduler-workflows.md` | **complete (2026-04-16, v1.23.0)** |
-| 6 | Agent-SDK Workflow Runner (parallel to pi) | `anthropic-sdk-runner.md` | **next** |
-| 4 | Advanced Workflow Patterns | `pi-workflow-advanced.md` | planned — **gated on Phase 6 reaching parity** |
-| 5 | Workflow Desktop UI | `pi-workflow-ui.md` | planned — **gated on Phase 6 reaching parity** |
+| 1 | Pi Session Type | `completed/pi-session-type.md` | **complete (2026-04-13)** |
+| 2 | Pi Workflow Engine | `completed/pi-workflow-engine.md` | **complete (2026-04-14, v1.22.0)** |
+| 3 | Scheduler Workflows | `completed/pi-scheduler-workflows.md` | **complete (2026-04-16, v1.23.0)** |
+| 6 | Agent-SDK Workflow Runner (parallel to pi) | `completed/anthropic-sdk-runner.md` | **complete (2026-04-21)** — includes portal history window + `agentwire brave` helper + 5-day canary |
+| 4 | Advanced Workflow Patterns | `pi-workflow-advanced.md` | **on hold — awaiting real-usage trigger** (2026-04-21) |
+| 5 | Workflow Desktop UI | `pi-workflow-ui.md` | **partially shipped during Phase 6; remainder on hold** (2026-04-21) |
 
-**Reorder note (2026-04-16)**: After Anthropic confirmed subscription-mode Agent SDK usage is supported, Phase 6 was added and prioritized ahead of 4 and 5. Advanced patterns (parallelism, loops, HITL, cost caps) and the desktop UI need to work uniformly across runners — building them on pi alone would force a retrofit later. See `anthropic-sdk-runner.md` for the rationale.
+**Phase 6 closeout (2026-04-21)**: Shipped in 5 days vs the 4-6 week estimate. Scope expanded during development to include the portal workflow history window and the `agentwire brave` research helper, both of which emerged from real-usage pressure rather than the original plan. Three SDK-runner workflows plus three A/B variants running in production since 2026-04-17. The canary revealed a key finding: **Claude's built-in `WebSearch` tool is the research-quality bottleneck, not the model** — Opus+Brave-via-bash beats Opus+WebSearch by a wide margin. This shaped how research-heavy future workflows get built. See `completed/anthropic-sdk-runner.md` → "Closeout" for the full picture.
 
-**Completion target:** Phases 1–3 by 2026-05-15. Phase 4–5 as needed.
+**Phase 4 + 5 reassessment (2026-04-21)**: Real-usage data from 6 workflows over 5 days showed the originally-planned advanced patterns (parallelism, loops, HITL, cost caps, cross-workflow calls, event-driven triggers) have **zero active demand**. Workflows are 1-2 nodes, autonomous, subscription-covered. What *did* emerge as friction was tooling (research helpers, multi-recipient email, portal diagnosis surface) — all shipped during Phase 6 closeout. Phases 4 and 5 are on hold with specific triggers documented; revisit if/when real workflow complexity demands them.
 
 ## Dependencies Across Phases
 
 ```
-Phase 1 (Session Type)
+Phase 1 (Session Type) ✅
   │
-  ├──► Phase 2 (Workflow Engine) ──► Phase 3 (Scheduler Workflows)
-                                         │
-                                         └──► Phase 6 (Agent-SDK Runner, parallel to pi)
-                                                │
-                                                ├──► Phase 4 (Advanced Patterns — runner-agnostic)
-                                                └──► Phase 5 (Desktop UI — runner-agnostic)
+  ├──► Phase 2 (Workflow Engine) ✅ ──► Phase 3 (Scheduler Workflows) ✅
+                                             │
+                                             └──► Phase 6 (Agent-SDK Runner) ✅
+                                                    │
+                                                    ├──► Phase 4 (Advanced Patterns) — on hold
+                                                    └──► Phase 5 (Desktop UI) — partial, rest on hold
 ```
 
-Phase 1 validates pi works in our stack. Phase 2 builds the engine. Phase 3 wires the engine into the scheduler. Phase 6 adds a second runner (Anthropic SDK) alongside pi so higher-level features can be built on a runner-agnostic abstraction. Phases 4–5 extend the engine on top of that abstraction.
+Phase 1 validated pi works in our stack. Phase 2 built the engine. Phase 3 wired the engine into the scheduler. Phase 6 added a second runner (Anthropic SDK) alongside pi so higher-level features can be built on a runner-agnostic abstraction — and brought that abstraction to life through a 5-day canary of real scheduled workflows. Phases 4 and 5 remain available as the engine's next chapters when real workflows demand them.
 
 ## Key Non-Goals
 
@@ -84,13 +84,19 @@ Phase 1 validates pi works in our stack. Phase 2 builds the engine. Phase 3 wire
 
 ## Migration Plan (High Level)
 
-1. Phase 1 ships: `pi-zai` session type is the sole Z.AI path (claudeGLM already gone from main)
-2. Scheduler migrates tasks to `pi-zai` as Phase 3 workflow engine lands
-3. Phases 4–5 extend pi for advanced patterns and UI
+1. ✅ Phase 1 ships: `pi-zai` session type is the sole Z.AI path (claudeGLM already gone from main)
+2. ✅ Scheduler migrates tasks to `pi-zai` as Phase 3 workflow engine lands
+3. ✅ Phase 6 adds anthropic runner alongside pi — workflows can mix runners per-node
+4. ⏸ Migrate remaining legacy `task:` scheduler entries (agentwire-website/social, wiki-ingest) to `workflow:` over time — deferred cleanup, no urgency
+5. ⏸ Phases 4–5 extend the engine on trigger-driven demand
 
-## Open Questions Across All Phases
+## Open Questions
 
-- Pi RPC protocol docs are sparse — does it stabilize before we depend on it?
-- How do we handle pi binary upgrades? npm global install, version pinning?
-- Should workflow nodes support non-pi engines (Claude Code fallback)?
-- What's the right event/state persistence store for long-running workflows?
+- **Pi binary upgrades.** Currently npm-global install; no version pinning. Consider if a workflow ever breaks on a pi upgrade.
+- **Legacy scheduler entries.** The old `task:` + tmux-session pattern still exists in `scheduler.yaml` for some projects. Migrating them to workflows is a cleanup, not a blocker. When we're ready, the scheduler window UI can simplify (drop the "task vs workflow-backed" dual shape).
+
+## Resolved Questions
+
+- ~~Should workflow nodes support non-pi engines (Claude Code fallback)?~~ — Resolved by Phase 6: `runner: anthropic` uses `claude-agent-sdk`, not a fallback but a first-class peer to pi.
+- ~~What's the right event/state persistence store for long-running workflows?~~ — Resolved for now by per-run JSONL under `~/.agentwire/workflows/runs/<id>/`. Cross-run shared state stays deferred until Phase 4 has a concrete trigger.
+- ~~Pi RPC protocol stability?~~ — Not a blocker for current workflow patterns; revisit if a use case surfaces.

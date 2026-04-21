@@ -5,10 +5,10 @@
 Add a second, Anthropic-SDK-backed node executor alongside `pi_runner.py`. Workflows declare a `runner:` per node (or inherit workflow-level default); the DAG engine, storage, templating, and scheduler integration stay unchanged. Let real-world usage over weeks reveal which runner wins for which node type — *without* ripping out pi.
 
 **Phase of:** `pi-harness-overview.md` (extends — not replaces — the pi path)
-**Status:** planned — **prioritized ahead of Phase 4 and Phase 5**
-**Estimated effort:** 4–6 weeks
+**Status:** **complete (code shipped 2026-04-16 through 2026-04-21; canary running since 2026-04-17)**
+**Estimated effort:** 4–6 weeks · **actual: ~5 days** (2026-04-16 through 2026-04-21)
 **Depends on:** Phase 2 (workflow engine), Phase 3 (scheduler integration)
-**Blocks:** Phase 4 (advanced patterns) and Phase 5 (desktop UI) — both should land on top of a runner-agnostic abstraction, so they wait until this phase reaches feature parity
+**Unblocked:** Phase 4 (advanced patterns) and Phase 5 (desktop UI) — runner-agnostic abstraction in place.
 
 **SDK choice (locked 2026-04-16):** `claude-agent-sdk>=0.1.43` (already in `pyproject.toml`). Not the raw `anthropic` Messages API SDK. Rationale: `claude-agent-sdk` is the only package that uses Anthropic Claude monthly subscription auth (picks up creds from the `claude` CLI); raw `anthropic` requires an API key which we explicitly don't want. Claude Code also owns tool execution inside the SDK loop, so we inherit its tool set and our existing `~/.claude/hooks` damage-control plumbing for free.
 
@@ -418,3 +418,60 @@ Zero changes to `scheduler.py`. Workflow tasks still just call `run_workflow(wf,
 - Output token variance — first run hit 9565 out; flag if we drift toward context-window limits
 
 **Rollback path**: `~/.agentwire/workflows/defs/daily-book-report.yaml` — delete the `runner:`/`model:`/`effort:`/`thinking_config:` lines and replace `tools: [Bash, Write, Read]` → `tools: [bash, write, read]` and add back `thinking: medium`. `pi` is the default runner, so field absence reverts.
+
+---
+
+## Closeout (2026-04-21)
+
+### What shipped beyond the original scope
+
+The MVP in the mission scope covered runner abstraction, the Anthropic runner, event translation, storage v2, CLI override (`--runner`), and the canary. All landed. A handful of additional deliverables emerged from real usage during the 5-day build and are now part of Phase 6:
+
+| Addition | Why it emerged | PR |
+|---|---|---|
+| **Portal workflow history window** — sidebar section + detail window, reads runs from disk | The original "SSE live UI" stretch item morphed — email + CLI already covered live observation; what was missing was a portal view of *past* runs for diagnosis | #102 |
+| **`agentwire brave` CLI** — Brave Search API wrapped in an LLM-optimized command | Three-way A/B (2026-04-21) showed the SDK's built-in `WebSearch` tool was the research-quality bottleneck. Swapping to Brave via bash made Opus 4.7 the clear best. Codified as reusable tooling for every research workflow going forward. | #105 |
+| **Multi-recipient email** (`--to` accepts list/comma-split/repeat) | Stargazing was silently sending to only one of two recipients because `--to` was scalar argparse | #101 |
+| **Tmux env-inject sweep** — `tmux new-session -e K=V` replaces post-hoc `set-environment` across all local + remote session-creation paths | Discovered while spawning pi-zai interactive sessions; the old post-hoc approach left the initial shell without the API key | #99, #100 |
+| **Permission-hook bypass for auto/bypass modes** — hook short-circuits when `permission_mode` is `bypassPermissions`/`auto` | The damage-control hook was still prompting in bypass sessions | #98 |
+| **Sidebar UI polish** — thin/blended scrollbar, removed nested-scrollbar | Noticed once the workflow history window started rendering 10+ runs | #103, #104 |
+
+### What the mission-doc said was open, and why each is now closed
+
+| Original "still open" item | Resolution |
+|---|---|
+| Morning-report runner badge (portal) | **Closed by decision.** User doesn't use the portal morning-report view for diagnosis; CLI `workflow history` already shows runner per row. No real user need. |
+| SSE live UI for in-flight runs | **Closed by decision.** Email-first delivery + `agentwire workflow run -v` in terminal cover live observability. Portal history window (shipped) handles the "what happened" case. Revisit only if real friction appears. |
+| Mid-run control (cost caps, adaptive model switching, clean cancel) | **Deferred.** Subscription-covered runs mean no cost pressure. No concrete use case yet. Moved to "revisit if Phase 4 surfaces a specific trigger." |
+
+### Canary findings after 5 days of production use
+
+Runs executing daily since 2026-04-17:
+
+- **`daily-book-report`** (Opus 4.7, daily 13:30) — zero failures; output quality consistently high; "Daily Writing Spark" section tied to current-week data on every run
+- **`stargazing-forecast`** (Opus 4.7 + Brave, daily 12:00) — retooled to use `agentwire brave` + curl on 2026-04-21; delivers structured forecasts with hour-by-hour tables and source-agreement sections
+- **`ai-morning-briefing` × 3 variants** (Opus+WebSearch, Opus+Brave, GLM+pi+Brave, all at 08:00–08:10) — A/B running. First head-to-head (2026-04-21) showed **Opus+Brave decisively best**; SDK WebSearch tool is the weak link, not the model. Finding saved in user memory as the default pattern for future research workflows.
+- **`roblox-digest`** (Opus 4.7 + Brave, daily 13:00 to 4 family recipients) — family-facing workflow added 2026-04-21 as further validation of the Brave pattern on a new domain
+
+No reliability issues, no rate-limit hits against the 5-hour subscription window, no output-token overflow. The `--runner` override flag was never needed in anger — YAML declarations proved sufficient.
+
+### Lessons carried forward
+
+- **Research tools matter more than model choice.** For any workflow that fetches fresh web data, default to `runner: anthropic` + `tools: [Bash]` + `agentwire brave` — never the SDK's `WebSearch`. See `docs/workflows.md` → "Research tools".
+- **Storage independence from notifications** is valuable. The `examples/silent-save.yaml` pattern + portal history view means workflows can be action-only without losing auditability.
+- **The engine's extensibility carried most of the weight.** Once the runner abstraction + event translator landed, everything else was mechanical — five distinct new workflows (briefing × 3, roblox, stargazing-retool) shipped in a week with no engine changes.
+
+### Migration state of the scheduler
+
+As of 2026-04-21 the scheduler's enabled tasks are all workflow-backed:
+
+| Task | Schedule | Runner |
+|---|---|---|
+| ai-morning-briefing | 08:00 daily | anthropic (Opus+WebSearch — the loser, kept for ≥3 more days of data) |
+| ai-morning-briefing-opus-brave | 08:05 daily | anthropic (Opus+Brave — current best) |
+| ai-morning-briefing-zai | 08:10 daily | pi (GLM+Brave) |
+| stargazing-forecast | 12:00 daily | anthropic (Opus+Brave, retooled) |
+| roblox-digest | 13:00 daily | anthropic (Opus+Brave) |
+| daily-book-report | 13:30 daily | anthropic (Opus+Brave) |
+
+Legacy `task:` scheduler entries (direct tmux+prompt) still exist in `scheduler.yaml` for agentwire-website / agentwire-social and wiki-ingest. Migrating them is deferred as a future cleanup — not part of Phase 6.
