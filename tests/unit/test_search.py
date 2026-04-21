@@ -120,3 +120,77 @@ class TestFormatters:
         out = format_results_json(results)
         parsed = json.loads(out)
         assert parsed == [{"title": "A", "url": "u", "age": "1h", "description": "d"}]
+
+
+class TestCmdBrave:
+    """Tests for the cmd_brave CLI handler — argparse-to-func wiring."""
+
+    def _make_args(self, query, count=10, freshness="pd", json_out=False):
+        args = MagicMock()
+        # argparse with nargs="+" produces a list
+        args.query = query if isinstance(query, list) else [query]
+        args.count = count
+        args.freshness = freshness
+        args.json = json_out
+        return args
+
+    def test_empty_query_returns_2(self, capsys):
+        from agentwire.search import cmd_brave
+        rc = cmd_brave(self._make_args([]))
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "query is required" in err
+
+    def test_brave_error_returns_1_and_prints_stderr(self, monkeypatch, capsys):
+        from agentwire.search import cmd_brave
+        monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+        rc = cmd_brave(self._make_args(["hello"]))
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "BRAVE_SEARCH_API_KEY" in err
+
+    def test_no_results_prints_placeholder_and_returns_0(self, capsys):
+        from agentwire.search import cmd_brave
+        with patch("agentwire.search.urllib.request.urlopen") as m:
+            m.return_value.__enter__.return_value.read.return_value = b'{"web":{"results":[]}}'
+            with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "fake"}):
+                rc = cmd_brave(self._make_args(["anything"]))
+        assert rc == 0
+        assert "(no results)" in capsys.readouterr().out
+
+    def test_text_output_default(self, capsys):
+        from agentwire.search import cmd_brave
+        api = {"web": {"results": [
+            {"title": "T", "url": "http://u", "age": "1h", "description": "d"},
+        ]}}
+        with patch("agentwire.search.urllib.request.urlopen") as m:
+            m.return_value.__enter__.return_value.read.return_value = json.dumps(api).encode()
+            with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "fake"}):
+                rc = cmd_brave(self._make_args(["hello"]))
+        assert rc == 0
+        out = capsys.readouterr().out.strip()
+        assert out == "T | http://u | 1h | d"
+
+    def test_json_output_when_flagged(self, capsys):
+        from agentwire.search import cmd_brave
+        api = {"web": {"results": [
+            {"title": "T", "url": "http://u", "age": "1h", "description": "d"},
+        ]}}
+        with patch("agentwire.search.urllib.request.urlopen") as m:
+            m.return_value.__enter__.return_value.read.return_value = json.dumps(api).encode()
+            with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "fake"}):
+                rc = cmd_brave(self._make_args(["hello"], json_out=True))
+        assert rc == 0
+        parsed = json.loads(capsys.readouterr().out)
+        assert parsed[0]["title"] == "T"
+
+    def test_multiword_query_joined(self):
+        """argparse's nargs='+' passes query words as a list; we join with spaces."""
+        from agentwire.search import cmd_brave
+        with patch("agentwire.search.urllib.request.urlopen") as m:
+            m.return_value.__enter__.return_value.read.return_value = b'{"web":{"results":[]}}'
+            with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "fake"}):
+                cmd_brave(self._make_args(["open", "source", "LLM"]))
+            # Query string sent to Brave should be "open source LLM" URL-encoded
+            url_called = m.call_args[0][0].full_url
+            assert "q=open+source+LLM" in url_called or "q=open%20source%20LLM" in url_called
