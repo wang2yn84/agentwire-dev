@@ -246,6 +246,43 @@ class TestEmailChannel:
         finally:
             config_mod._config = old
 
+    def test_normalize_recipients_single_str(self):
+        from agentwire.channels.email import _normalize_recipients
+        assert _normalize_recipients("a@x.com", "fallback@x.com") == ["a@x.com"]
+
+    def test_normalize_recipients_comma_split(self):
+        from agentwire.channels.email import _normalize_recipients
+        assert _normalize_recipients("a@x.com, b@x.com ,c@x.com", "") == [
+            "a@x.com", "b@x.com", "c@x.com"
+        ]
+
+    def test_normalize_recipients_list(self):
+        from agentwire.channels.email import _normalize_recipients
+        assert _normalize_recipients(["a@x.com", "b@x.com"], "") == ["a@x.com", "b@x.com"]
+
+    def test_normalize_recipients_list_with_commas(self):
+        from agentwire.channels.email import _normalize_recipients
+        # argparse --to a,b --to c produces ["a,b", "c"]; we split each on commas
+        assert _normalize_recipients(["a@x.com,b@x.com", "c@x.com"], "") == [
+            "a@x.com", "b@x.com", "c@x.com"
+        ]
+
+    def test_normalize_recipients_dedupes_preserving_order(self):
+        from agentwire.channels.email import _normalize_recipients
+        assert _normalize_recipients(["a@x.com", "b@x.com", "a@x.com"], "") == [
+            "a@x.com", "b@x.com"
+        ]
+
+    def test_normalize_recipients_fallback_to_default(self):
+        from agentwire.channels.email import _normalize_recipients
+        assert _normalize_recipients(None, "default@x.com") == ["default@x.com"]
+        assert _normalize_recipients("", "default@x.com") == ["default@x.com"]
+
+    def test_normalize_recipients_empty_returns_empty(self):
+        from agentwire.channels.email import _normalize_recipients
+        assert _normalize_recipients(None, "") == []
+        assert _normalize_recipients([], "") == []
+
     def test_greetings_list(self):
         from agentwire.channels.email import GREETINGS
         assert len(GREETINGS) == 8

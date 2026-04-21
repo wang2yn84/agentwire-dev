@@ -10040,7 +10040,10 @@ def main() -> int:
     # === email command ===
     from agentwire.channels.email import cmd_email
     email_parser = subparsers.add_parser("email", help="Send branded email notification via Resend")
-    email_parser.add_argument("--to", type=str, help="Recipient email (default: from config)")
+    email_parser.add_argument(
+        "--to", action="append", default=None,
+        help="Recipient email. Repeat or pass comma-separated for multiple recipients (default: from config).",
+    )
     email_parser.add_argument("--subject", "-s", type=str, help="Email subject")
     email_parser.add_argument("--body", "-b", type=str, help="Email body - markdown supported (or pipe via stdin)")
     email_parser.add_argument("--attach", "-a", type=str, action="append", help="Attach file (can use multiple times)")
