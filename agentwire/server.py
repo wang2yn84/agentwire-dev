@@ -230,6 +230,9 @@ class AgentWireServer:
         self.app.router.add_post("/api/scheduler/start", self.api_scheduler_start)
         self.app.router.add_post("/api/scheduler/stop", self.api_scheduler_stop)
         self.app.router.add_get("/api/scheduler/output", self.api_scheduler_session_output)
+        # Workflow history endpoints
+        self.app.router.add_get("/api/workflows/runs", self.api_workflows_runs_list)
+        self.app.router.add_get("/api/workflows/runs/{run_id}", self.api_workflows_run_detail)
         # Artifact windows: upload and serve agent-generated HTML
         self.app.router.add_post("/api/artifacts/upload", self.api_artifacts_upload)
         self.app.router.add_get("/api/artifacts", self.api_artifacts_list)
@@ -4199,6 +4202,135 @@ projects:
             tail = int(request.query.get("tail", "100"))
             events = read_events(tail=tail, task_filter=name)
             return web.json_response({"events": events})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_workflows_runs_list(self, request: web.Request) -> web.Response:
+        """GET /api/workflows/runs?workflow=X&limit=N - Recent workflow runs.
+
+        Reads ~/.agentwire/workflows/runs/*/metadata.json. Sorted newest first.
+        Optional `workflow` filters to a specific workflow name.
+        """
+        try:
+            from .workflows.cli import RUNS_DIR
+            from .workflows.storage import list_runs
+            workflow_name = request.query.get("workflow")
+            try:
+                limit = int(request.query.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            loop = asyncio.get_event_loop()
+            runs = await loop.run_in_executor(
+                None, lambda: list_runs(RUNS_DIR, workflow=workflow_name, limit=limit)
+            )
+            # Slim each run to only the fields the sidebar needs — full metadata
+            # lives in the detail endpoint. Keeps the list response small.
+            # Totals aren't stored at run level; aggregate from per-node tokens.
+            slim = []
+            for r in runs:
+                nodes = r.get("nodes", []) or []
+                tokens_in = sum((n.get("tokens") or {}).get("input", 0) for n in nodes)
+                tokens_out = sum((n.get("tokens") or {}).get("output", 0) for n in nodes)
+                cost = sum((n.get("tokens") or {}).get("cost", 0.0) for n in nodes)
+                slim.append({
+                    "run_id": r.get("run_id"),
+                    "workflow": r.get("workflow"),
+                    "status": r.get("status"),
+                    "runner": r.get("runner", ""),
+                    "started_at": r.get("started_at"),
+                    "duration_ms": r.get("duration_ms"),
+                    "total_cost": cost,
+                    "total_tokens_in": tokens_in,
+                    "total_tokens_out": tokens_out,
+                    "node_count": len(nodes),
+                })
+            return web.json_response({"runs": slim})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_workflows_run_detail(self, request: web.Request) -> web.Response:
+        """GET /api/workflows/runs/{run_id} - Full run detail with normalized node schema.
+
+        Merges metadata.json's per-node records with event-stream-derived tool
+        call summaries, returning a single flat `nodes: [...]` list. The raw
+        `metadata` dict is also returned (minus the nodes array) for run-level
+        fields. Full event streams aren't included — fetch those separately
+        from the JSONL files on disk if needed.
+        """
+        run_id = request.match_info["run_id"]
+        try:
+            from .workflows.cli import RUNS_DIR
+            from .workflows.storage import load_run, load_context, load_events
+
+            loop = asyncio.get_event_loop()
+            meta = await loop.run_in_executor(None, lambda: load_run(RUNS_DIR, run_id))
+            if meta is None:
+                return web.json_response({"error": f"run '{run_id}' not found"}, status=404)
+
+            context = await loop.run_in_executor(None, lambda: load_context(RUNS_DIR, run_id))
+
+            # Walk event streams once to build per-node summaries: tool calls and
+            # final assistant text (last non-empty text block).
+            def _event_summaries() -> dict[str, dict]:
+                all_events = load_events(RUNS_DIR, run_id)
+                per_node: dict[str, dict] = {}
+                for node_id, ev in all_events:
+                    bucket = per_node.setdefault(
+                        node_id, {"event_count": 0, "tool_calls": [], "final_text": ""}
+                    )
+                    bucket["event_count"] += 1
+                    msg = ev.get("message") if isinstance(ev, dict) else None
+                    if not isinstance(msg, dict):
+                        continue
+                    if msg.get("role") != "assistant":
+                        continue
+                    for block in msg.get("content", []) or []:
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") == "tool_use":
+                            bucket["tool_calls"].append({
+                                "name": block.get("name", ""),
+                                "input_preview": str(block.get("input", ""))[:200],
+                            })
+                        elif block.get("type") == "text":
+                            text = (block.get("text") or "").strip()
+                            if text:
+                                bucket["final_text"] = text  # last non-empty wins
+                return per_node
+
+            summaries = await loop.run_in_executor(None, _event_summaries)
+
+            # Merge metadata node records with event summaries into a single flat
+            # shape for the frontend. Metadata uses `id` + nested `tokens.{input,output,cost}`;
+            # we flatten to `node_id` + `tokens_in` / `tokens_out` / `cost` for a cleaner API.
+            nodes_merged: list[dict] = []
+            for n in meta.get("nodes", []) or []:
+                node_id = n.get("id", "")
+                tokens = n.get("tokens") or {}
+                summary = summaries.get(node_id, {})
+                nodes_merged.append({
+                    "node_id": node_id,
+                    "status": n.get("status"),
+                    "runner": n.get("runner", ""),
+                    "duration_ms": n.get("duration_ms", 0),
+                    "attempts": n.get("attempts", 1),
+                    "tokens_in": tokens.get("input", 0),
+                    "tokens_out": tokens.get("output", 0),
+                    "cost": tokens.get("cost", 0.0),
+                    "error": n.get("error"),
+                    "event_count": summary.get("event_count", 0),
+                    "tool_calls": summary.get("tool_calls", []),
+                    "final_text": summary.get("final_text", ""),
+                })
+
+            # Run-level metadata without the nodes array (it's in `nodes` above)
+            meta_summary = {k: v for k, v in meta.items() if k != "nodes"}
+
+            return web.json_response({
+                "metadata": meta_summary,
+                "context": context or {},
+                "nodes": nodes_merged,
+            })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
