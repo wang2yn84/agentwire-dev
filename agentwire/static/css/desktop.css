@@ -3673,6 +3673,34 @@ body.sidebar-pinned .sidebar-tab {
     flex: 1;
     overflow-y: auto;
     padding: var(--spacing-base);
+
+    /* Thin, muted scrollbar that blends into the sidebar chrome.
+       Firefox uses the `scrollbar-*` properties; WebKit/Blink uses
+       the `::-webkit-scrollbar*` pseudo-elements below. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+.sidebar-sections::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar-sections::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-sections::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+    /* Inset the thumb so it sits at the edge rather than filling the gutter,
+       giving it the "outside" floating feel rather than a chunky panel. */
+    border: 1px solid transparent;
+    background-clip: padding-box;
+}
+
+.sidebar-sections::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+    background-clip: padding-box;
 }
 
 .sidebar-footer {
