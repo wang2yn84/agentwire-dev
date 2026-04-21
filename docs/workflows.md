@@ -129,6 +129,28 @@ Pi nodes are silent under `--verbose` (pi parses stdout after the subprocess exi
 
 ---
 
+## History, persistence, and notifications
+
+Every run persists **independently of notifications**. Whether the workflow emails, posts to Slack, or does nothing at all, you always get:
+
+```
+~/.agentwire/workflows/runs/<run-id>/
+├── metadata.json                  # run manifest (workflow, status, runner, costs, inputs)
+├── context.json                   # final Context (inputs + per-node extracted outputs)
+└── nodes/
+    └── <node-id>.events.jsonl     # full event stream per node (tool calls, results, text)
+```
+
+**Notification is a prompt-level choice, not an engine feature.** If a prompt calls `agentwire email` or `agentwire webhook send` or `agentwire quo send`, that channel fires. If it doesn't, nothing goes out — but history is still there. See `agentwire/workflows/examples/silent-save.yaml` for an action-only workflow that produces a markdown file and zero notifications.
+
+You can inspect past runs three ways:
+
+1. **CLI** — `agentwire workflow history` lists recent runs (status, runner, duration, cost). `agentwire workflow show <run-id>` drills into a single run.
+2. **Portal** — open the sidebar, expand **Workflows**, click a run. Shows metadata, per-node tool calls, tokens, and final text.
+3. **Raw files** — `cat ~/.agentwire/workflows/runs/<run-id>/nodes/<node-id>.events.jsonl` gives you every event the runner produced.
+
+---
+
 ## CLI reference
 
 ```bash
