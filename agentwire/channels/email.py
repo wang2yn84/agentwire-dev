@@ -166,8 +166,34 @@ def _get_email_config() -> EmailConfig:
     return EmailConfig()
 
 
+def _normalize_recipients(to: Optional[str | list[str]], default_to: str) -> list[str]:
+    """Flatten `to` (str | list[str]) into a deduped list, splitting on commas.
+
+    Accepts: None, "a@x.com", "a@x.com,b@y.com", ["a@x.com"], ["a,b", "c"].
+    Falls back to `default_to` (also comma-split) when `to` is None/empty.
+    Preserves order, drops duplicates and empty entries.
+    """
+    raw: list[str] = []
+    if not to:
+        raw = [default_to] if default_to else []
+    elif isinstance(to, str):
+        raw = [to]
+    else:
+        raw = list(to)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        for part in str(entry).split(","):
+            addr = part.strip()
+            if addr and addr not in seen:
+                seen.add(addr)
+                out.append(addr)
+    return out
+
+
 def send_email(
-    to: Optional[str] = None,
+    to: Optional[str | list[str]] = None,
     subject: str = "",
     body: str = "",
     attachments: Optional[list[Path | str]] = None,
@@ -178,7 +204,8 @@ def send_email(
     """Send a branded email via Resend.
 
     Args:
-        to: Recipient email address. Uses config default_to if not specified.
+        to: Recipient email(s). Accepts a single address, a comma-separated
+            string, or a list of either. Uses config default_to if not specified.
         subject: Email subject line.
         body: Email body (markdown supported, converted to HTML).
         attachments: List of file paths to attach.
@@ -202,9 +229,9 @@ def send_email(
             "or set channels.email.api_key in ~/.agentwire/config.yaml"
         )
 
-    # Determine recipient
-    recipient = to or email_config.default_to
-    if not recipient:
+    # Determine recipients (list form — Resend's `to` field accepts an array)
+    recipients = _normalize_recipients(to, email_config.default_to)
+    if not recipients:
         raise EmailConfigError(
             "No recipient specified and no default_to configured in "
             "channels.email.default_to"
@@ -247,7 +274,7 @@ def send_email(
 
     params: dict = {
         "from": sender,
-        "to": [recipient],
+        "to": recipients,
         "subject": email_subject,
     }
 

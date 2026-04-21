@@ -1923,7 +1923,7 @@ def channels_list() -> str:
 @mcp.tool()
 def email_send(
     body: str,
-    to: str | None = None,
+    to: str | list[str] | None = None,
     subject: str | None = None,
     attachments: list[str] | None = None,
     plain_text: bool = False,
@@ -1934,7 +1934,8 @@ def email_send(
 
     Args:
         body: Email body (markdown supported)
-        to: Recipient email address (default: from config)
+        to: Recipient email(s). Accepts a single address, a comma-separated
+            string, or a list (default: from config).
         subject: Email subject line (optional)
         attachments: List of file paths to attach (optional)
         plain_text: Send plain text only, no HTML template (default: false)
@@ -1944,7 +1945,9 @@ def email_send(
     """
     args = ["email", "--body", body]
     if to:
-        args.extend(["--to", to])
+        recipients = to if isinstance(to, list) else [to]
+        for addr in recipients:
+            args.extend(["--to", addr])
     if subject:
         args.extend(["--subject", subject])
     if attachments:
