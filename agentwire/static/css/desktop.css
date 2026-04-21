@@ -587,8 +587,8 @@ body {
 }
 
 .sidebar-section-body {
-    max-height: 400px;
-    overflow-y: auto;
+    /* No inner scroll — let sections grow to their natural content height.
+       The outer `.sidebar-sections` container handles the single scrollbar. */
 }
 
 /* Session cards — multi-row layout */
