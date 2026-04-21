@@ -129,6 +129,47 @@ Pi nodes are silent under `--verbose` (pi parses stdout after the subprocess exi
 
 ---
 
+## Research tools — `agentwire brave`
+
+For workflows that need fresh web data (news digests, trend scans, "what happened today" reports), **don't use the SDK's built-in WebSearch/WebFetch tools**. A three-way A/B on `ai-morning-briefing` (2026-04-21) showed they were the quality bottleneck — even Opus 4.7 produced repetitive, thin output when the research came from WebSearch. The same model produced dramatically better output when research went through Brave Search API.
+
+The `agentwire brave` CLI wraps the Brave API and emits results in an LLM-friendly compact format. Use it from any workflow via the `Bash` tool:
+
+```bash
+# Default: compact pipe-separated output (title | url | age | description)
+agentwire brave "GPT-5 release"
+
+# Tighter result set, wider time window
+agentwire brave "open source LLM release" --count 5 --freshness pw
+# --freshness: pd=past day (default), pw=past week, pm=past month, py=past year
+
+# Raw JSON when you need structured parsing
+agentwire brave "Anthropic funding" --json
+```
+
+Add `BRAVE_SEARCH_API_KEY` to `~/.agentwire/.env` (free tier: $5 credits/month ≈ 1000 searches).
+
+Pattern for a research workflow node:
+
+```yaml
+nodes:
+  research_and_send:
+    runner: anthropic
+    model: claude-opus-4-7
+    effort: high
+    thinking_config: { type: adaptive }
+    tools: [Bash, Write]     # NO WebSearch/WebFetch
+    prompt: |
+      Run 5-7 queries via `agentwire brave "..." --count 5` to cover your
+      topics. Compose from the compact output. Fetch specific URLs with
+      `curl -sL | python3 -c "strip html"` only if Brave's description
+      field is too thin.
+```
+
+The pattern is deliberately runner-agnostic — pi workflows can call `agentwire brave` through their `bash` tool identically.
+
+---
+
 ## History, persistence, and notifications
 
 Every run persists **independently of notifications**. Whether the workflow emails, posts to Slack, or does nothing at all, you always get:

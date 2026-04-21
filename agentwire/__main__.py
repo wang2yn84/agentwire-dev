@@ -10051,6 +10051,22 @@ def main() -> int:
     email_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress success output")
     email_parser.set_defaults(func=cmd_email)
 
+    # === brave command ===
+    from agentwire.search import cmd_brave
+    brave_parser = subparsers.add_parser(
+        "brave",
+        help="Brave Search helper — run a web search and print results optimized for LLM consumption.",
+    )
+    brave_parser.add_argument("query", nargs="+", help="Search query (all remaining args joined with spaces)")
+    brave_parser.add_argument("--count", "-n", type=int, default=10, help="Max results (1-20, default 10)")
+    brave_parser.add_argument(
+        "--freshness", "-f", type=str, default="pd",
+        choices=["pd", "pw", "pm", "py"],
+        help="Time window: pd=past day (default), pw=past week, pm=past month, py=past year",
+    )
+    brave_parser.add_argument("--json", action="store_true", help="Output raw JSON instead of compact text")
+    brave_parser.set_defaults(func=cmd_brave)
+
     # === notify command ===
     notify_parser = subparsers.add_parser("notify", help="Notify portal of session/pane state changes")
     notify_parser.add_argument(
