@@ -218,6 +218,38 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
             env={"ZAI_API_KEY": zai.get("api_key", "")},
         )
 
+    # === Agentwire REPL (claude-agent-sdk) ===
+    # sdk-bypass / sdk-prompted / sdk-restricted — Python REPL running in a
+    # tmux pane, auth via Claude subscription. See docs/missions/agentwire-repl.md.
+    if session_type.startswith("sdk-"):
+        # Permission mode maps to SDK's permission_mode parameter
+        mode_map = {
+            "sdk-bypass": "bypass",
+            "sdk-prompted": "prompted",
+            "sdk-restricted": "restricted",
+        }
+        mode = mode_map.get(session_type, "bypass")
+
+        parts = ["agentwire", "repl", "--mode", mode]
+        if model:
+            parts.extend(["--model", model])
+
+        # Role-based system prompt (same temp-file pattern as claude-* / pi-zai
+        # to avoid shell escaping on multiline content; --append-system-prompt
+        # must be last).
+        temp_file = None
+        if merged and merged.instructions:
+            f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            f.write(merged.instructions)
+            f.close()
+            temp_file = f.name
+            parts.append(f'--append-system-prompt "$(<{temp_file})"')
+
+        return AgentCommand(
+            command=" ".join(parts),
+            temp_file=temp_file,
+        )
+
     # === Claude Code ===
     if session_type.startswith("claude"):
         parts = ["claude"]
@@ -3393,6 +3425,25 @@ def cmd_list(args) -> int:
         print()
 
     return 0
+
+
+def cmd_repl(args) -> int:
+    """Agentwire REPL — interactive harness built on claude-agent-sdk.
+
+    Invoked by build_agent_command when a session is spawned with --type sdk-*.
+    The user never calls this directly; it runs inside a tmux pane created by
+    `agentwire new -s <name> --type sdk-bypass`.
+
+    Phase 1 scaffold — proves the session-type plumbing works end-to-end.
+    SDK integration lands in PR 2.
+    """
+    from agentwire.repl.app import run_repl
+    return run_repl(
+        mode=args.mode,
+        model=args.model,
+        print_prompt=args.print,
+        system_prompt=args.append_system_prompt,
+    )
 
 
 def cmd_new(args) -> int:
@@ -10108,12 +10159,34 @@ def main() -> int:
     list_parser.set_defaults(func=cmd_list)
 
     # === new command (top-level) ===
+    # === repl command (top-level, internal — invoked by build_agent_command) ===
+    # Users spawn it via `agentwire new -s <name> --type sdk-bypass`; this is
+    # the process that runs inside the tmux pane. See docs/missions/agentwire-repl.md.
+    repl_parser = subparsers.add_parser(
+        "repl",
+        help="Agentwire REPL (internal — runs inside tmux pane for sdk-* session types)",
+    )
+    repl_parser.add_argument(
+        "--mode", choices=["bypass", "prompted", "restricted"], default="bypass",
+        help="Permission mode (bypass=run tools without asking, prompted=ask, restricted=read-only)",
+    )
+    repl_parser.add_argument("--model", default=None, help="Model override (default: claude-opus-4-7)")
+    repl_parser.add_argument(
+        "-p", "--print", dest="print", default=None, metavar="PROMPT",
+        help="One-shot mode: run PROMPT, emit output, exit (no interactive loop)",
+    )
+    repl_parser.add_argument(
+        "--append-system-prompt", dest="append_system_prompt", default=None, metavar="TEXT",
+        help="Additional system prompt content (appended after base prompt)",
+    )
+    repl_parser.set_defaults(func=cmd_repl)
+
     new_parser = subparsers.add_parser("new", help="Create new Claude Code session")
     new_parser.add_argument("-s", "--session", required=True, help="Session name (project, project/branch, or project/branch@machine)")
     new_parser.add_argument("-p", "--path", help="Working directory (default: ~/projects/<name>)")
     new_parser.add_argument("-f", "--force", action="store_true", help="Replace existing session")
     # Session type
-    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
+    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, sdk-bypass, sdk-prompted, sdk-restricted, standard, worker, voice)")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
     new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
