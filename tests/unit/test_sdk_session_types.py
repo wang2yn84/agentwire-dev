@@ -94,22 +94,11 @@ class TestBuildAgentCommandSdk:
             os.unlink(cmd.temp_file)
 
 
-# --- REPL scaffold ---
+# --- REPL interactive scaffold ---
+# Print mode is tested in test_repl_sdk.py (mocked SDK). Interactive mode
+# still runs the PR 1 scaffold loop until PR 3 replaces it.
 
 class TestReplScaffold:
-    def test_print_mode_returns_zero(self, capsys):
-        rc = run_repl(mode="bypass", print_prompt="hello")
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert "prompt received: hello" in captured.out
-        assert "mode=bypass" in captured.out
-
-    def test_print_mode_with_system_prompt(self, capsys):
-        rc = run_repl(mode="bypass", print_prompt="x", system_prompt="system context")
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert "system prompt:" in captured.out
-
     def test_interactive_exits_on_eof(self, monkeypatch, capsys):
         # Simulate Ctrl+D immediately.
         monkeypatch.setattr("sys.stdin", io.StringIO(""))
