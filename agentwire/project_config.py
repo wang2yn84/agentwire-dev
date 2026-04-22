@@ -22,6 +22,9 @@ class SessionType(str, Enum):
     PI_ZAI = "pi-zai"                      # Pi coding agent via Z.AI GLM (full tools)
     PI_ZAI_RESTRICTED = "pi-zai-restricted"  # Pi via Z.AI, read+search+bash (no edits)
     PI_ZAI_READONLY = "pi-zai-readonly"      # Pi via Z.AI, read-only inspection
+    SDK_BYPASS = "sdk-bypass"          # Agentwire REPL (claude-agent-sdk), bypass permissions
+    SDK_PROMPTED = "sdk-prompted"      # Agentwire REPL, ask before each tool call
+    SDK_RESTRICTED = "sdk-restricted"  # Agentwire REPL, plan / read-only
     # Universal types (agent-agnostic, map to agent-specific types)
     STANDARD = "standard"  # Full automation -> claude-bypass
     WORKER = "worker"      # Worker pane -> claude-restricted
@@ -74,6 +77,7 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
     agent_specific_types = [
         "claude-bypass", "claude-auto", "claude-prompted", "claude-restricted",
         "pi-zai", "pi-zai-restricted", "pi-zai-readonly",
+        "sdk-bypass", "sdk-prompted", "sdk-restricted",
         "bare"
     ]
     if session_type in agent_specific_types:
