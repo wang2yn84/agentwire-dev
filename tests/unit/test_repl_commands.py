@@ -15,6 +15,7 @@ from agentwire.repl.commands import (
     CONTINUE,
     EXIT,
     RESTART,
+    RESUME,
     dispatch_command,
 )
 from agentwire.repl.state import (
@@ -235,6 +236,105 @@ class TestTrackResult:
         m = SimpleNamespace(usage=None, total_cost_usd=None)
         track_result(state, m)
         assert state.turn_count == 1
+
+
+class TestSave:
+    def test_no_session_dir(self):
+        out = io.StringIO()
+        dispatch_command("/save", _state(), out)
+        assert "no transcript dir yet" in out.getvalue()
+
+    def test_with_session_dir_and_session_id(self):
+        out = io.StringIO()
+        state = _state()
+        state.session_dir = "/tmp/foo"
+        state.transcript_name = "s-001"
+        state.turn_count = 4
+        state.session_id = "sdk-xyz"
+        dispatch_command("/save", state, out)
+        rendered = out.getvalue()
+        assert "s-001" in rendered
+        assert "4 turns" in rendered
+        assert "/tmp/foo" in rendered
+        assert "/resume s-001" in rendered
+
+    def test_singular_turn(self):
+        out = io.StringIO()
+        state = _state()
+        state.session_dir = "/tmp/x"
+        state.transcript_name = "s"
+        state.turn_count = 1
+        dispatch_command("/save", state, out)
+        assert "1 turn]" in out.getvalue()
+        assert "1 turns" not in out.getvalue()
+
+
+class TestResume:
+    def test_no_sessions_found(self, tmp_path, monkeypatch):
+        from agentwire.repl import persistence
+        monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "empty")
+        out = io.StringIO()
+        action = dispatch_command("/resume", _state(), out)
+        assert action == CONTINUE
+        assert "no saved sessions" in out.getvalue()
+
+    def test_lists_available(self, tmp_path, monkeypatch):
+        from agentwire.repl import persistence
+        home = tmp_path / "repl"
+        monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", home)
+        t = persistence.create_session(
+            mode="bypass", model="m", allowed_tools=[],
+            name="alpha", home=home,
+        )
+        t.close()
+
+        out = io.StringIO()
+        action = dispatch_command("/resume", _state(), out)
+        assert action == CONTINUE
+        rendered = out.getvalue()
+        assert "alpha" in rendered
+        assert "Usage: /resume" in rendered
+
+    def test_missing_named_session(self, tmp_path, monkeypatch):
+        from agentwire.repl import persistence
+        monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "empty")
+        out = io.StringIO()
+        action = dispatch_command("/resume not-there", _state(), out)
+        assert action == CONTINUE
+        assert "no session found" in out.getvalue()
+
+    def test_session_without_sdk_id(self, tmp_path, monkeypatch):
+        from agentwire.repl import persistence
+        home = tmp_path / "repl"
+        monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", home)
+        t = persistence.create_session(
+            mode="bypass", model="m", allowed_tools=[],
+            name="no-id", home=home,
+        )
+        t.close()
+
+        out = io.StringIO()
+        action = dispatch_command("/resume no-id", _state(), out)
+        assert action == CONTINUE  # not RESUME, since nothing to resume to
+        assert "no recorded sdk_session_id" in out.getvalue()
+
+    def test_resume_sets_pending_and_returns_resume(self, tmp_path, monkeypatch):
+        from agentwire.repl import persistence
+        home = tmp_path / "repl"
+        monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", home)
+        t = persistence.create_session(
+            mode="bypass", model="m", allowed_tools=[],
+            name="good", home=home,
+        )
+        persistence.record_session_id(t, "sdk-target-id")
+        t.close()
+
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/resume good", state, out)
+        assert action == RESUME
+        assert state.pending_resume_sdk_session_id == "sdk-target-id"
+        assert "resuming good" in out.getvalue()
 
 
 class TestResetForRestart:

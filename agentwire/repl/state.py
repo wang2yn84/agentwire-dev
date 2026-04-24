@@ -28,6 +28,12 @@ class ReplState:
     turn_count: int = 0
     restart_count: int = 0
     session_id: str | None = None
+    # Phase 2 PR 2 — transcript + resume plumbing
+    session_dir: str | None = None
+    transcript_name: str | None = None
+    # Set by `/resume NAME` handler; outer loop reads this to build the next
+    # SDK client's options with `resume=<sdk_session_id>`.
+    pending_resume_sdk_session_id: str | None = None
 
 
 def track_system_init(state: ReplState, message: Any) -> None:
