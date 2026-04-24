@@ -14,6 +14,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from agentwire.repl.commands import CONTINUE, EXIT, RESTART, dispatch_command
+from agentwire.repl.state import ReplState, reset_for_restart, track_result, track_system_init
+
 
 BANNER = """\
 ╭─────────────────────────────────────────────────────────╮
@@ -349,65 +352,119 @@ async def _run_interactive(
     model_display = model or f"{DEFAULT_MODEL} (default)"
     sys.stdout.write(BANNER.format(mode=mode, model=model_display))
     sys.stdout.write(
-        "Interactive mode. Enter to send · Ctrl+D to exit · Ctrl+C to cancel current turn.\n\n"
+        "Interactive mode. Enter to send · Ctrl+D to exit · Ctrl+C to cancel current turn.\n"
+        "Type /help for commands.\n\n"
     )
     sys.stdout.flush()
+
+    state = ReplState(
+        mode=mode,
+        model=model or DEFAULT_MODEL,
+        allowed_tools=list(options.allowed_tools)
+        if hasattr(options, "allowed_tools")
+        else list(getattr(options, "kwargs", {}).get("allowed_tools", [])),
+    )
 
     session = PromptSession(history=InMemoryHistory())
 
     saved_claudecode = os.environ.pop("CLAUDECODE", None)
     exit_code = 0
+
+    # Outer loop wraps the SDK client so /clear can close+reopen it for a
+    # fresh conversation while the REPL itself keeps running.
     try:
-        async with ClaudeSDKClient(options=options) as client:
-            while True:
-                try:
-                    with patch_stdout():
-                        user_input = await session.prompt_async("> ")
-                except EOFError:
-                    sys.stdout.write("\n[exit]\n")
-                    break
-                except KeyboardInterrupt:
-                    # At the prompt: just start a fresh line.
-                    sys.stdout.write("\n")
-                    continue
-
-                text = user_input.strip()
-                if not text:
-                    continue
-                if text in ("/exit", "/quit"):
-                    sys.stdout.write("[exit]\n")
-                    break
-
-                # Send the turn and stream the response until a ResultMessage.
-                try:
-                    await client.query(text)
-                    async for message in client.receive_response():
-                        try:
-                            render_message(
-                                message,
-                                AssistantMessage=AssistantMessage,
-                                UserMessage=UserMessage,
-                                SystemMessage=SystemMessage,
-                                ResultMessage=ResultMessage,
-                                out=sys.stdout,
-                            )
-                            sys.stdout.flush()
-                            if isinstance(message, ResultMessage) and getattr(message, "is_error", False):
-                                exit_code = 1
-                        except Exception as exc:
-                            print(f"[repl: render error: {exc}]", file=sys.stderr)
-                except (KeyboardInterrupt, asyncio.CancelledError):
-                    # Ctrl+C mid-turn: leave a marker and give the user the
-                    # prompt back. The SDK's own cancellation semantics handle
-                    # the in-flight request.
-                    sys.stdout.write("\n[turn cancelled]\n")
-                    sys.stdout.flush()
-                    continue
-                except Exception as exc:
-                    print(f"[repl: {type(exc).__name__}: {exc}]", file=sys.stderr)
-                    # Don't break the loop for one bad turn — let the user retry.
-                    continue
+        while True:
+            restart_requested, should_exit, loop_exit_code = await _run_sdk_session(
+                options=options,
+                state=state,
+                prompt_session=session,
+                ClaudeSDKClient=ClaudeSDKClient,
+                AssistantMessage=AssistantMessage,
+                UserMessage=UserMessage,
+                SystemMessage=SystemMessage,
+                ResultMessage=ResultMessage,
+                patch_stdout=patch_stdout,
+            )
+            if loop_exit_code != 0:
+                exit_code = loop_exit_code
+            if should_exit:
+                break
+            if not restart_requested:
+                break
+            reset_for_restart(state)
     finally:
         if saved_claudecode is not None:
             os.environ["CLAUDECODE"] = saved_claudecode
     return exit_code
+
+
+async def _run_sdk_session(
+    *,
+    options: Any,
+    state: ReplState,
+    prompt_session: Any,
+    ClaudeSDKClient: Any,
+    AssistantMessage: Any,
+    UserMessage: Any,
+    SystemMessage: Any,
+    ResultMessage: Any,
+    patch_stdout: Any,
+) -> tuple[bool, bool, int]:
+    """Run one ClaudeSDKClient lifecycle. Returns (restart, exit, exit_code).
+
+    A slash-command `/clear` signals restart — outer loop reopens the client.
+    EOF or `/exit` signals exit.
+    """
+    exit_code = 0
+    async with ClaudeSDKClient(options=options) as client:
+        while True:
+            try:
+                with patch_stdout():
+                    user_input = await prompt_session.prompt_async("> ")
+            except EOFError:
+                sys.stdout.write("\n[exit]\n")
+                return False, True, exit_code
+            except KeyboardInterrupt:
+                sys.stdout.write("\n")
+                continue
+
+            text = user_input.strip()
+            if not text:
+                continue
+
+            if text.startswith("/"):
+                action = dispatch_command(text, state, sys.stdout)
+                if action == EXIT:
+                    return False, True, exit_code
+                if action == RESTART:
+                    return True, False, exit_code
+                continue
+
+            try:
+                await client.query(text)
+                async for message in client.receive_response():
+                    try:
+                        render_message(
+                            message,
+                            AssistantMessage=AssistantMessage,
+                            UserMessage=UserMessage,
+                            SystemMessage=SystemMessage,
+                            ResultMessage=ResultMessage,
+                            out=sys.stdout,
+                        )
+                        sys.stdout.flush()
+                        if isinstance(message, SystemMessage):
+                            track_system_init(state, message)
+                        elif isinstance(message, ResultMessage):
+                            track_result(state, message)
+                            if getattr(message, "is_error", False):
+                                exit_code = 1
+                    except Exception as exc:
+                        print(f"[repl: render error: {exc}]", file=sys.stderr)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                sys.stdout.write("\n[turn cancelled]\n")
+                sys.stdout.flush()
+                continue
+            except Exception as exc:
+                print(f"[repl: {type(exc).__name__}: {exc}]", file=sys.stderr)
+                continue

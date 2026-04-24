@@ -632,6 +632,103 @@ class TestInteractiveLoop:
         assert opts.kwargs["model"] == "claude-sonnet-4-6"
         assert "Bash" not in opts.kwargs["allowed_tools"]
 
+    def test_help_command(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["/help"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "/help" in out
+        assert "/clear" in out
+        assert "/cost" in out
+
+    def test_cost_command_after_turn(self, monkeypatch, capsys):
+        turn = [
+            FakeSystemMessage("init", {"model": "claude-opus-4-7", "session_id": "abc"}),
+            FakeAssistantMessage([{"type": "text", "text": "hi"}]),
+            FakeResultMessage(
+                usage={"input_tokens": 100, "output_tokens": 50},
+                total_cost_usd=0.003,
+                duration_ms=100,
+            ),
+        ]
+        _install_fake_sdk(monkeypatch, [turn])
+        _install_fake_prompt_toolkit(monkeypatch, ["hello", "/cost"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "100+50=150 tok" in out
+        assert "$0.0030" in out
+        assert "1 turn" in out
+
+    def test_tools_command(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["/tools"])
+
+        from agentwire.repl.app import run_repl
+        run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        # bypass gets the full tool set
+        for tool in ("Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebFetch", "WebSearch"):
+            assert tool in out
+
+    def test_tools_restricted(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["/tools"])
+
+        from agentwire.repl.app import run_repl
+        run_repl(mode="restricted")
+        out = capsys.readouterr().out
+        assert "mode=restricted" in out
+        # Write/Edit/Bash NOT in restricted
+        assert "Write" not in out.split("\n")[-3]  # check near the tools line
+
+    def test_clear_restarts_session(self, monkeypatch, capsys):
+        # Two turns, /clear between them should reopen the SDK client
+        # (second "agent started" line), and cost reset.
+        turn1 = [
+            FakeSystemMessage("init", {"model": "claude-opus-4-7", "session_id": "sess1"}),
+            FakeResultMessage(usage={"input_tokens": 10, "output_tokens": 5}, duration_ms=100),
+        ]
+        turn2 = [
+            FakeSystemMessage("init", {"model": "claude-opus-4-7", "session_id": "sess2"}),
+            FakeResultMessage(usage={"input_tokens": 20, "output_tokens": 10}, duration_ms=100),
+        ]
+        state = _install_fake_sdk(monkeypatch, [turn1, turn2])
+        _install_fake_prompt_toolkit(monkeypatch, [
+            "first turn",   # sent on client 1
+            "/clear",       # close client 1, open client 2
+            "/cost",        # should say no turns yet (reset)
+            "second turn",  # sent on client 2
+        ])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert state["queries"] == ["first turn", "second turn"]
+        assert out.count("agent started") == 2  # opened twice
+        assert "restarting conversation" in out
+        assert "no turns yet" in out  # /cost after /clear before any turn
+
+    def test_unknown_command_continues(self, monkeypatch, capsys):
+        # /foo is not a command — should print "unknown command" and continue
+        # to EOF exit, never touching the SDK.
+        state = _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["/foo"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "unknown command" in out
+        assert "/foo" in out
+        assert state["queries"] == []
+
     def test_missing_prompt_toolkit_returns_one(self, monkeypatch, capsys):
         _install_fake_sdk(monkeypatch, [])
         # Scrub prompt_toolkit from sys.modules AND block future imports.
