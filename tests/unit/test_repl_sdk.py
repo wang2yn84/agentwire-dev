@@ -448,6 +448,215 @@ class TestPrintModeIntegration:
         assert "claude-agent-sdk not installed" in err
 
 
+# --- interactive loop (mocked prompt_toolkit + SDK) ---
+
+def _install_fake_sdk(monkeypatch, messages_per_turn):
+    """Install a fake claude_agent_sdk module. messages_per_turn is a list of
+    lists; one inner list per .query() call, each yielded by receive_response."""
+    import sys as _sys
+    import types
+
+    fake_sdk = types.ModuleType("claude_agent_sdk")
+    fake_sdk.AssistantMessage = FakeAssistantMessage
+    fake_sdk.UserMessage = FakeUserMessage
+    fake_sdk.SystemMessage = FakeSystemMessage
+    fake_sdk.ResultMessage = FakeResultMessage
+    fake_sdk.ClaudeAgentOptions = FakeOptions
+
+    state = {"queries": [], "turn_idx": 0}
+
+    class MockClient:
+        def __init__(self, options):
+            state["options"] = options
+            state["closed"] = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            state["closed"] = True
+            return False
+
+        async def query(self, prompt):
+            state["queries"].append(prompt)
+
+        async def receive_response(self):
+            idx = state["turn_idx"]
+            state["turn_idx"] += 1
+            msgs = messages_per_turn[idx] if idx < len(messages_per_turn) else []
+            for m in msgs:
+                yield m
+
+    fake_sdk.ClaudeSDKClient = MockClient
+    monkeypatch.setitem(_sys.modules, "claude_agent_sdk", fake_sdk)
+    return state
+
+
+def _install_fake_prompt_toolkit(monkeypatch, script):
+    """Install a fake prompt_toolkit module. script is a list of inputs — each
+    is either a string (returned by prompt_async) or an exception class (raised)."""
+    import sys as _sys
+    import types
+
+    fake_pt = types.ModuleType("prompt_toolkit")
+    fake_history = types.ModuleType("prompt_toolkit.history")
+    fake_patch = types.ModuleType("prompt_toolkit.patch_stdout")
+
+    class FakeInMemoryHistory:
+        def __init__(self): pass
+
+    class FakePromptSession:
+        def __init__(self, history=None):
+            self.idx = 0
+
+        async def prompt_async(self, text):
+            if self.idx >= len(script):
+                raise EOFError
+            item = script[self.idx]
+            self.idx += 1
+            if isinstance(item, type) and issubclass(item, BaseException):
+                raise item
+            return item
+
+    class _PatchStdout:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def patch_stdout():
+        return _PatchStdout()
+
+    fake_pt.PromptSession = FakePromptSession
+    fake_history.InMemoryHistory = FakeInMemoryHistory
+    fake_patch.patch_stdout = patch_stdout
+
+    monkeypatch.setitem(_sys.modules, "prompt_toolkit", fake_pt)
+    monkeypatch.setitem(_sys.modules, "prompt_toolkit.history", fake_history)
+    monkeypatch.setitem(_sys.modules, "prompt_toolkit.patch_stdout", fake_patch)
+
+
+class TestInteractiveLoop:
+    def test_eof_exits_clean(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, [])  # empty → EOFError
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "[exit]" in out
+        assert "Interactive mode" in out
+
+    def test_slash_exit_command(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["/exit"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "[exit]" in out
+
+    def test_slash_quit_command(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["/quit"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        assert rc == 0
+
+    def test_empty_input_skipped(self, monkeypatch, capsys):
+        # Empty + whitespace-only lines should not call query, then EOF exits.
+        state = _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["", "   ", "\t"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        assert rc == 0
+        assert state["queries"] == []
+
+    def test_multi_turn_sends_each_prompt(self, monkeypatch, capsys):
+        turn1 = [
+            FakeSystemMessage("init", {"model": "claude-opus-4-7", "session_id": "s1"}),
+            FakeAssistantMessage([{"type": "text", "text": "response one"}]),
+            FakeResultMessage(usage={"input_tokens": 10, "output_tokens": 5}, duration_ms=100),
+        ]
+        turn2 = [
+            FakeAssistantMessage([{"type": "text", "text": "response two"}]),
+            FakeResultMessage(usage={"input_tokens": 12, "output_tokens": 7}, duration_ms=120),
+        ]
+        state = _install_fake_sdk(monkeypatch, [turn1, turn2])
+        _install_fake_prompt_toolkit(monkeypatch, ["first prompt", "second prompt"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert state["queries"] == ["first prompt", "second prompt"]
+        assert "response one" in out
+        assert "response two" in out
+        assert "agent started" in out
+        assert state["closed"] is True
+
+    def test_error_result_sets_exit_code_but_continues_loop(self, monkeypatch, capsys):
+        # One bad turn followed by clean exit should exit with 1 (from the error).
+        bad = [FakeResultMessage(is_error=True, result="oh no")]
+        state = _install_fake_sdk(monkeypatch, [bad])
+        _install_fake_prompt_toolkit(monkeypatch, ["trigger the bad turn"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert "[error" in out
+
+    def test_keyboard_interrupt_at_prompt_continues(self, monkeypatch, capsys):
+        # Ctrl+C at prompt → clear line, continue. Next EOF exits clean.
+        state = _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, [KeyboardInterrupt])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        assert rc == 0
+        assert state["queries"] == []
+
+    def test_passes_mode_and_model_to_options(self, monkeypatch, capsys):
+        state = _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, [])
+
+        from agentwire.repl.app import run_repl
+        run_repl(mode="restricted", model="claude-sonnet-4-6")
+
+        opts = state["options"]
+        assert opts.kwargs["permission_mode"] == "plan"
+        assert opts.kwargs["model"] == "claude-sonnet-4-6"
+        assert "Bash" not in opts.kwargs["allowed_tools"]
+
+    def test_missing_prompt_toolkit_returns_one(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        # Scrub prompt_toolkit from sys.modules AND block future imports.
+        import sys as _sys
+        for mod in list(_sys.modules):
+            if mod.startswith("prompt_toolkit"):
+                monkeypatch.delitem(_sys.modules, mod, raising=False)
+
+        import builtins
+        original_import = builtins.__import__
+
+        def fail_import(name, *a, **kw):
+            if name.startswith("prompt_toolkit"):
+                raise ImportError(f"No module named {name!r}")
+            return original_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fail_import)
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "prompt_toolkit not installed" in err
+
+
 class TestFormatToolResult:
     def test_none(self):
         assert _format_tool_result(None) == "(no content)"

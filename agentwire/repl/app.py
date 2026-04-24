@@ -17,8 +17,8 @@ from typing import Any
 
 BANNER = """\
 ╭─────────────────────────────────────────────────────────╮
-│  agentwire repl — SDK-based interactive harness         │
-│  Phase 1 scaffold · mode={mode} · model={model}
+│  agentwire repl — Anthropic SDK harness                 │
+│  mode={mode} · model={model}
 ╰─────────────────────────────────────────────────────────╯
 """
 
@@ -47,11 +47,12 @@ def run_repl(
 
     - Print mode (`-p PROMPT`): wire up claude-agent-sdk, run one turn, stream
       events to stdout, exit.
-    - Interactive: PR 1 scaffold until PR 3 replaces with prompt_toolkit.
+    - Interactive: persistent prompt_toolkit loop holding one SDK client open
+      across turns. Ctrl+D exits; Ctrl+C cancels the current turn.
     """
     if print_prompt is not None:
         return asyncio.run(_run_print_mode(print_prompt, mode, model, system_prompt))
-    return _run_interactive_scaffold(mode, model, system_prompt)
+    return asyncio.run(_run_interactive(mode, model, system_prompt))
 
 
 # -------- print mode (SDK-backed) --------
@@ -306,36 +307,107 @@ def _format_tool_result(content: Any) -> str:
     return text if len(text) <= 120 else text[:117] + "..."
 
 
-# -------- interactive (PR 1 scaffold, replaced in PR 3) --------
+# -------- interactive (prompt_toolkit + persistent SDK client) --------
 
 
-def _run_interactive_scaffold(
+async def _run_interactive(
     mode: str,
     model: str | None,
     system_prompt: str | None,
 ) -> int:
+    """Run the interactive REPL.
+
+    Holds one `ClaudeSDKClient` open across the whole session so each turn
+    extends the same conversation (model keeps short-term context, session_id
+    stays stable). Ctrl+D exits cleanly; Ctrl+C cancels the current turn.
+    Slash commands are Phase 2 — here we only honor `/exit` and `/quit` as
+    conveniences for users who prefer explicit exit to Ctrl+D.
+    """
+    try:
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            ClaudeSDKClient,
+            ResultMessage,
+            SystemMessage,
+            UserMessage,
+        )
+    except ImportError as e:
+        print(f"error: claude-agent-sdk not installed: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.history import InMemoryHistory
+        from prompt_toolkit.patch_stdout import patch_stdout
+    except ImportError as e:
+        print(f"error: prompt_toolkit not installed: {e}", file=sys.stderr)
+        return 1
+
+    options = build_options(ClaudeAgentOptions, mode, model, system_prompt, cwd=Path.cwd())
+
     model_display = model or f"{DEFAULT_MODEL} (default)"
     sys.stdout.write(BANNER.format(mode=mode, model=model_display))
-    if system_prompt:
-        sys.stdout.write(f"system prompt loaded: {len(system_prompt)} chars\n")
     sys.stdout.write(
-        "Phase 1 scaffold — type anything and it echoes back. Ctrl+D to exit.\n"
-        "[interactive SDK loop lands in PR 3; use `-p` for real SDK turns today]\n\n"
+        "Interactive mode. Enter to send · Ctrl+D to exit · Ctrl+C to cancel current turn.\n\n"
     )
     sys.stdout.flush()
 
+    session = PromptSession(history=InMemoryHistory())
+
+    saved_claudecode = os.environ.pop("CLAUDECODE", None)
+    exit_code = 0
     try:
-        while True:
-            try:
-                line = input("> ")
-            except EOFError:
-                sys.stdout.write("\n[exit]\n")
-                return 0
-            except KeyboardInterrupt:
-                sys.stdout.write("\n[interrupt — use Ctrl+D to exit]\n")
-                continue
-            sys.stdout.write(f"scaffold received: {line!r}\n")
-            sys.stdout.flush()
-    except Exception as exc:
-        sys.stderr.write(f"[agentwire repl: unexpected error: {exc}]\n")
-        return 1
+        async with ClaudeSDKClient(options=options) as client:
+            while True:
+                try:
+                    with patch_stdout():
+                        user_input = await session.prompt_async("> ")
+                except EOFError:
+                    sys.stdout.write("\n[exit]\n")
+                    break
+                except KeyboardInterrupt:
+                    # At the prompt: just start a fresh line.
+                    sys.stdout.write("\n")
+                    continue
+
+                text = user_input.strip()
+                if not text:
+                    continue
+                if text in ("/exit", "/quit"):
+                    sys.stdout.write("[exit]\n")
+                    break
+
+                # Send the turn and stream the response until a ResultMessage.
+                try:
+                    await client.query(text)
+                    async for message in client.receive_response():
+                        try:
+                            render_message(
+                                message,
+                                AssistantMessage=AssistantMessage,
+                                UserMessage=UserMessage,
+                                SystemMessage=SystemMessage,
+                                ResultMessage=ResultMessage,
+                                out=sys.stdout,
+                            )
+                            sys.stdout.flush()
+                            if isinstance(message, ResultMessage) and getattr(message, "is_error", False):
+                                exit_code = 1
+                        except Exception as exc:
+                            print(f"[repl: render error: {exc}]", file=sys.stderr)
+                except (KeyboardInterrupt, asyncio.CancelledError):
+                    # Ctrl+C mid-turn: leave a marker and give the user the
+                    # prompt back. The SDK's own cancellation semantics handle
+                    # the in-flight request.
+                    sys.stdout.write("\n[turn cancelled]\n")
+                    sys.stdout.flush()
+                    continue
+                except Exception as exc:
+                    print(f"[repl: {type(exc).__name__}: {exc}]", file=sys.stderr)
+                    # Don't break the loop for one bad turn — let the user retry.
+                    continue
+    finally:
+        if saved_claudecode is not None:
+            os.environ["CLAUDECODE"] = saved_claudecode
+    return exit_code
