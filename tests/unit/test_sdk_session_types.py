@@ -6,14 +6,10 @@ See docs/missions/agentwire-repl.md for the mission scope.
 
 from __future__ import annotations
 
-import io
-import sys
-
 import pytest
 
 from agentwire.project_config import SessionType, normalize_session_type
 from agentwire.__main__ import build_agent_command
-from agentwire.repl.app import run_repl
 
 
 # --- SessionType enum round-trip ---
@@ -94,30 +90,7 @@ class TestBuildAgentCommandSdk:
             os.unlink(cmd.temp_file)
 
 
-# --- REPL interactive scaffold ---
-# Print mode is tested in test_repl_sdk.py (mocked SDK). Interactive mode
-# still runs the PR 1 scaffold loop until PR 3 replaces it.
-
-class TestReplScaffold:
-    def test_interactive_exits_on_eof(self, monkeypatch, capsys):
-        # Simulate Ctrl+D immediately.
-        monkeypatch.setattr("sys.stdin", io.StringIO(""))
-        monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError))
-        rc = run_repl(mode="bypass")
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert "agentwire repl" in captured.out
-
-    def test_interactive_echoes_input(self, monkeypatch, capsys):
-        lines = iter(["hello world", "second line"])
-        def fake_input(prompt=""):
-            try:
-                return next(lines)
-            except StopIteration:
-                raise EOFError
-        monkeypatch.setattr("builtins.input", fake_input)
-        rc = run_repl(mode="bypass")
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert "scaffold received: 'hello world'" in captured.out
-        assert "scaffold received: 'second line'" in captured.out
+# --- REPL interactive loop ---
+# The full interactive loop (prompt_toolkit + persistent SDK client) is tested
+# in test_repl_sdk.py with both subsystems mocked. This file still covers the
+# session-type + build_agent_command dispatch surface.
