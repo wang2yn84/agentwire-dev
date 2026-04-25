@@ -18,10 +18,10 @@ from agentwire.project_config import load_project_config
 from agentwire.roles import load_roles, merge_roles
 
 # When there's no `.agentwire.yml` and no `--role`, the REPL still wants an
-# agentwire-aware identity by default — pulls the bundled `agentwire` role
-# (agentwire/roles/agentwire.md) so the model knows about MCP tools, voice
-# routing, etc. without each project re-declaring it.
-DEFAULT_ROLE = "agentwire"
+# agentwire-aware identity by default — pulls the bundled `agentwire` and
+# `voice` roles so the model knows about MCP tools, voice routing, /say,
+# etc. without each project re-declaring them.
+DEFAULT_ROLES = ["agentwire", "voice"]
 
 
 @dataclass
@@ -43,8 +43,9 @@ def load_session_context(
       1. `role_overrides` (from `--role` CLI flag, if any) — including `[]`
          to explicitly opt out of all roles
       2. `roles:` in the nearest `.agentwire.yml`
-      3. `[DEFAULT_ROLE]` — the bundled `agentwire` role, so a bare
-         `agentwire repl` outside any project still has agentwire identity
+      3. `DEFAULT_ROLES` — the bundled `agentwire` + `voice` roles, so a
+         bare `agentwire repl` outside any project still has agentwire +
+         voice identity
 
     Voice precedence:
       1. `.agentwire.yml` `voice:`
@@ -58,7 +59,7 @@ def load_session_context(
     elif cfg is not None and cfg.roles:
         names = list(cfg.roles)
     else:
-        names = [DEFAULT_ROLE]
+        names = list(DEFAULT_ROLES)
 
     if names:
         roles, missing = load_roles(names, project_path=cwd)
@@ -81,14 +82,15 @@ def load_session_context(
 
 
 def _global_default_voice() -> str | None:
-    """Read tts.default_voice from ~/.agentwire/config.yaml. None on failure."""
+    """Read tts.default_voice from ~/.agentwire/config.yaml. None on failure.
+
+    The string `"default"` is a real voice name (the system's default TTS
+    voice), not a placeholder — pass it through untouched.
+    """
     try:
         from agentwire.config import load_config
         cfg = load_config()
         voice = getattr(getattr(cfg, "tts", None), "default_voice", None)
-        # Guard the placeholder string the config dataclass uses pre-config-file.
-        if voice and voice != "default":
-            return voice
+        return voice or None
     except Exception:
         return None
-    return None
