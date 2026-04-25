@@ -462,6 +462,42 @@ class TestSay:
         assert "not found" in out.getvalue()
 
 
+class TestRunWorkflow:
+    def test_no_args_shows_usage(self):
+        out = io.StringIO()
+        action = dispatch_command("/run-workflow", _state(), out)
+        assert action == CONTINUE
+        assert "Usage" in out.getvalue()
+
+    def test_invokes_subprocess(self, monkeypatch):
+        captured = {}
+
+        class FakeProc:
+            returncode = 0
+
+            def __init__(self):
+                self.stdout = iter(["hello\n", "world\n"])
+
+            def wait(self):
+                return 0
+
+        def fake_popen(cmd, **kw):
+            captured["cmd"] = cmd
+            return FakeProc()
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        out = io.StringIO()
+        action = dispatch_command("/run-workflow my-flow --runner anthropic", _state(), out)
+        assert action == CONTINUE
+        assert captured["cmd"] == ["agentwire", "workflow", "run", "my-flow", "--runner", "anthropic"]
+        rendered = out.getvalue()
+        assert "hello" in rendered
+        assert "world" in rendered
+        assert "exited with code 0" in rendered
+
+
 class TestThinking:
     def test_show_default(self):
         state = _state()

@@ -60,6 +60,8 @@ def _register_builtins() -> None:
         # claude-agent-sdk optional at import time — validation still flags
         # `runner: anthropic` as unknown if the runner isn't registered.
         pass
+    from agentwire.workflows.runners.human_gate import HumanGateRunner
+    register_runner(HumanGateRunner())
 
 
 _register_builtins()

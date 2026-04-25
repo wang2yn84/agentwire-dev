@@ -96,6 +96,7 @@ def run_repl(
     session_name: str | None = None,
     resume: str | None = None,
     roles: list[str] | None = None,
+    seed_message: str | None = None,
 ) -> int:
     """Run the REPL. Returns exit code.
 
@@ -106,10 +107,14 @@ def run_repl(
 
     `roles` overrides the role list from `.agentwire.yml` for this session;
     when None, project config wins.
+
+    `seed_message` is sent as the first user turn before the prompt loop
+    starts — used by the workflow human_gate runner to pre-load context.
+    Has no effect in print mode (use `print_prompt` instead).
     """
     if print_prompt is not None:
         return asyncio.run(_run_print_mode(print_prompt, mode, model, system_prompt, roles))
-    return asyncio.run(_run_interactive(mode, model, system_prompt, session_name, resume, roles))
+    return asyncio.run(_run_interactive(mode, model, system_prompt, session_name, resume, roles, seed_message))
 
 
 # -------- print mode (SDK-backed) --------
@@ -462,6 +467,7 @@ async def _run_interactive(
     session_name: str | None = None,
     resume: str | None = None,
     roles: list[str] | None = None,
+    seed_message: str | None = None,
 ) -> int:
     """Run the interactive REPL.
 
@@ -606,6 +612,7 @@ async def _run_interactive(
 
     # Outer loop wraps the SDK client so /clear and /resume can close+reopen
     # it for a different conversation while the REPL keeps running.
+    pending_seed = seed_message
     try:
         while True:
             restart_requested, should_exit, loop_exit_code = await _run_sdk_session(
@@ -619,7 +626,9 @@ async def _run_interactive(
                 SystemMessage=SystemMessage,
                 ResultMessage=ResultMessage,
                 patch_stdout=patch_stdout,
+                seed_message=pending_seed,
             )
+            pending_seed = None  # only seed the first conversation
             if loop_exit_code != 0:
                 exit_code = loop_exit_code
             if should_exit:
@@ -661,6 +670,7 @@ async def _run_sdk_session(
     SystemMessage: Any,
     ResultMessage: Any,
     patch_stdout: Any,
+    seed_message: str | None = None,
 ) -> tuple[bool, bool, int]:
     """Run one ClaudeSDKClient lifecycle. Returns (restart, exit, exit_code).
 
@@ -670,17 +680,29 @@ async def _run_sdk_session(
     `transcript.events_path` as JSONL.
     """
     exit_code = 0
+    pending_seed = seed_message
     async with ClaudeSDKClient(options=options) as client:
         while True:
-            try:
-                with patch_stdout():
-                    user_input = await prompt_session.prompt_async("> ")
-            except EOFError:
-                sys.stdout.write("\n[exit]\n")
-                return False, True, exit_code
-            except KeyboardInterrupt:
-                sys.stdout.write("\n")
-                continue
+            if pending_seed is not None:
+                # Workflow human_gate (or any caller using seed_message) wants
+                # this turn injected without prompt_async firing first. After
+                # the seed runs, normal prompt loop resumes.
+                user_input = pending_seed
+                pending_seed = None
+                sys.stdout.write(f"> {user_input.splitlines()[0] if user_input else ''}\n")
+                if user_input.count("\n") > 0:
+                    sys.stdout.write("[seeded with multi-line context]\n")
+                sys.stdout.flush()
+            else:
+                try:
+                    with patch_stdout():
+                        user_input = await prompt_session.prompt_async("> ")
+                except EOFError:
+                    sys.stdout.write("\n[exit]\n")
+                    return False, True, exit_code
+                except KeyboardInterrupt:
+                    sys.stdout.write("\n")
+                    continue
 
             text = user_input.strip()
             if not text:
