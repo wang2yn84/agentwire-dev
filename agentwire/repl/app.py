@@ -16,6 +16,7 @@ from typing import Any
 
 from agentwire.repl.commands import CONTINUE, EXIT, RESTART, RESUME, dispatch_command
 from agentwire.repl import persistence
+from agentwire.repl.damage_control import make_pre_tool_hook
 from agentwire.repl.mentions import expand_mentions
 from agentwire.repl.state import ReplState, reset_for_restart, track_result, track_system_init
 from agentwire.workflows.runners.sdk_errors import classify as _classify_sdk_error
@@ -68,6 +69,11 @@ def _agentwire_mcp_config() -> dict:
 
 def _mcp_enabled() -> bool:
     return os.environ.get("AGENTWIRE_REPL_MCP", "1") != "0"
+
+
+def _damage_control_enabled() -> bool:
+    """`AGENTWIRE_REPL_DAMAGE_CONTROL=0` opts out (used by tests)."""
+    return os.environ.get("AGENTWIRE_REPL_DAMAGE_CONTROL", "1") != "0"
 
 
 def _thinking_config(mode: str) -> dict | None:
@@ -198,6 +204,26 @@ def build_options(
         kwargs["resume"] = resume_sdk_session_id
     if can_use_tool is not None:
         kwargs["can_use_tool"] = can_use_tool
+
+    # Phase 3 PR 2 — Python-side damage control. Mirrors the shell hooks at
+    # ~/.agentwire/hooks/damage-control/*.py, but runs in-process via the
+    # SDK's PreToolUse callback so direct SDK tool dispatch can't bypass it.
+    if _damage_control_enabled():
+        try:
+            from claude_agent_sdk import HookMatcher
+        except ImportError:
+            HookMatcher = None  # SDK absent → render path will refuse anyway
+        if HookMatcher is not None:
+            hook = make_pre_tool_hook(mode=mode)
+            if hook is not None:
+                kwargs["hooks"] = {
+                    "PreToolUse": [
+                        HookMatcher(
+                            matcher="Bash|Edit|MultiEdit|Write",
+                            hooks=[hook],
+                        )
+                    ]
+                }
 
     append_parts: list[str] = []
     if cwd is not None:

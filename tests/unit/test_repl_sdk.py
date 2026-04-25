@@ -44,6 +44,8 @@ class TestBuildOptions:
         # agentwire MCP server so allowed_tools matches the static FULL_TOOLS /
         # RESTRICTED_TOOLS arrays. MCP attachment has its own dedicated tests.
         monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+        # Same reasoning for damage control: separate dedicated tests.
+        monkeypatch.setenv("AGENTWIRE_REPL_DAMAGE_CONTROL", "0")
 
     def test_bypass_mode(self, tmp_path):
         opts = build_options(FakeOptions, "bypass", None, None, cwd=tmp_path)
@@ -578,6 +580,9 @@ class TestInteractiveLoop:
         # the attachment so allowed_tools / banner / /tools assertions match
         # the pre-Phase-3-PR-1 shape. MCP wiring has its own dedicated tests.
         monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+        # Same for damage control — fake SDK ignores hooks, but we don't want
+        # the patterns file loaded under tests.
+        monkeypatch.setenv("AGENTWIRE_REPL_DAMAGE_CONTROL", "0")
 
     def test_eof_exits_clean(self, monkeypatch, capsys):
         _install_fake_sdk(monkeypatch, [])
@@ -1162,6 +1167,75 @@ class TestMcpBakedIn:
 
         build_options(FakeOptions, mode="restricted", model="m", system_prompt=None, cwd=None)
         assert MCP_TOOL_PREFIX in captured["allowed_tools"]
+
+
+class TestDamageControlAttachment:
+    def test_hooks_attached_when_patterns_load(self, monkeypatch, tmp_path):
+        # Point damage_control at a known patterns file
+        from agentwire.repl import damage_control
+        patterns_file = tmp_path / "patterns.yaml"
+        patterns_file.write_text(
+            "bashToolPatterns:\n  - pattern: '\\brm\\s+-rf'\n    reason: rm -rf\n"
+        )
+        monkeypatch.setattr(damage_control, "DEFAULT_PATTERNS_PATH", patterns_file)
+        monkeypatch.delenv("AGENTWIRE_REPL_DAMAGE_CONTROL", raising=False)
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+
+        from agentwire.repl.app import build_options
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(FakeOptions, mode="bypass", model="m", system_prompt=None, cwd=None)
+        assert "hooks" in captured
+        assert "PreToolUse" in captured["hooks"]
+        matchers = captured["hooks"]["PreToolUse"]
+        assert len(matchers) == 1
+        assert "Bash" in matchers[0].matcher
+
+    def test_no_hooks_when_disabled(self, monkeypatch, tmp_path):
+        from agentwire.repl import damage_control
+        patterns_file = tmp_path / "patterns.yaml"
+        patterns_file.write_text("bashToolPatterns: []\n")
+        monkeypatch.setattr(damage_control, "DEFAULT_PATTERNS_PATH", patterns_file)
+        monkeypatch.setenv("AGENTWIRE_REPL_DAMAGE_CONTROL", "0")
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+
+        from agentwire.repl.app import build_options
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(FakeOptions, mode="bypass", model="m", system_prompt=None, cwd=None)
+        assert "hooks" not in captured
+
+    def test_no_hooks_when_patterns_missing(self, monkeypatch, tmp_path):
+        # Patterns file doesn't exist → make_pre_tool_hook returns None →
+        # no hooks attached.
+        from agentwire.repl import damage_control
+        monkeypatch.setattr(damage_control, "DEFAULT_PATTERNS_PATH", tmp_path / "nope.yaml")
+        monkeypatch.delenv("AGENTWIRE_REPL_DAMAGE_CONTROL", raising=False)
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+
+        from agentwire.repl.app import build_options
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(FakeOptions, mode="bypass", model="m", system_prompt=None, cwd=None)
+        assert "hooks" not in captured
 
 
 class TestSdkErrorClassify:
