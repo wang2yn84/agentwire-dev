@@ -6,7 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from agentwire.repl.context import load_session_context
+from agentwire.repl.context import DEFAULT_ROLE, load_session_context
+
+
+@pytest.fixture(autouse=True)
+def _no_global_voice(monkeypatch):
+    # Most tests don't care about voice; pin the global lookup off so they
+    # see voice=None unless they wire it explicitly.
+    from agentwire.repl import context
+    monkeypatch.setattr(context, "_global_default_voice", lambda: None)
 
 
 def _write_role(dir: Path, name: str, body: str = "Be helpful.") -> None:
@@ -28,12 +36,19 @@ def _write_project_yaml(dir: Path, *, roles=None, voice=None) -> None:
 
 
 class TestNoConfig:
-    def test_returns_empty(self, tmp_path):
+    def test_falls_back_to_default_agentwire_role(self, tmp_path):
+        # Without a project config, the bundled `agentwire` role is loaded.
         ctx = load_session_context(tmp_path)
-        assert ctx.role_names == []
-        assert ctx.role_instructions is None
-        assert ctx.voice is None
+        assert ctx.role_names == [DEFAULT_ROLE]
+        assert ctx.role_instructions  # non-empty
+        assert ctx.voice is None  # no project voice; fixture pins global to None
         assert ctx.missing_roles == []
+
+    def test_global_voice_picked_up(self, tmp_path, monkeypatch):
+        from agentwire.repl import context
+        monkeypatch.setattr(context, "_global_default_voice", lambda: "af_heart")
+        ctx = load_session_context(tmp_path)
+        assert ctx.voice == "af_heart"
 
 
 class TestRolesFromConfig:
@@ -80,9 +95,24 @@ class TestRoleOverrides:
         _write_project_yaml(tmp_path, roles=["tester"])
 
         ctx = load_session_context(tmp_path, role_overrides=[])
-        # Override == [] means user wants no roles, ignore config.
+        # Override == [] means user wants no roles. Skips both the project
+        # config AND the default-agentwire fallback (explicit > implicit).
         assert ctx.role_names == []
         assert ctx.role_instructions is None
+
+
+class TestProjectWithoutRoles:
+    """A `.agentwire.yml` exists but doesn't declare any roles."""
+
+    def test_default_role_still_applies(self, tmp_path):
+        # Empty `roles:` in project config should still fall back to
+        # DEFAULT_ROLE — otherwise users in agentwire projects mysteriously
+        # lose the agentwire identity vs. running outside any project.
+        from pathlib import Path as _Path
+        (tmp_path / ".agentwire.yml").write_text("type: standard\nvoice: alice\n")
+        ctx = load_session_context(tmp_path)
+        assert ctx.role_names == ["agentwire"]
+        assert ctx.voice == "alice"  # project voice wins over global
 
 
 class TestVoice:
