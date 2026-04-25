@@ -105,6 +105,55 @@ def _model(state: ReplState, args: str, out: TextIO) -> str:
     return CONTINUE
 
 
+# Effort + thinking are SDK-side knobs. Changing them mid-session means the
+# next conversation needs new options, so the handlers also signal RESTART.
+# The user is told the conversation will reset; this is the same UX as
+# /clear.
+_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+_THINKING_MODES = ("adaptive", "summarized", "off")
+
+
+def _effort(state: ReplState, args: str, out: TextIO) -> str:
+    target = args.strip().lower()
+    if not target:
+        out.write(
+            f"[effort={state.effort} · choices: {', '.join(_EFFORT_LEVELS)}]\n"
+            "Usage: /effort <level>\n"
+        )
+        return CONTINUE
+    if target not in _EFFORT_LEVELS:
+        out.write(f"[unknown effort {target!r}; choices: {', '.join(_EFFORT_LEVELS)}]\n")
+        return CONTINUE
+    if target == state.effort:
+        out.write(f"[effort already {target}]\n")
+        return CONTINUE
+    state.effort = target
+    out.write(f"[effort → {target} · restarting conversation]\n")
+    return RESTART
+
+
+def _thinking(state: ReplState, args: str, out: TextIO) -> str:
+    target = args.strip().lower()
+    if not target:
+        out.write(
+            f"[thinking={state.thinking_mode} · choices: {', '.join(_THINKING_MODES)}]\n"
+            "Usage: /thinking <mode>\n"
+            "  adaptive   — Claude decides budget; reasoning hidden (Opus 4.7 default)\n"
+            "  summarized — Claude decides budget; show summarized reasoning\n"
+            "  off        — disable extended thinking\n"
+        )
+        return CONTINUE
+    if target not in _THINKING_MODES:
+        out.write(f"[unknown thinking {target!r}; choices: {', '.join(_THINKING_MODES)}]\n")
+        return CONTINUE
+    if target == state.thinking_mode:
+        out.write(f"[thinking already {target}]\n")
+        return CONTINUE
+    state.thinking_mode = target
+    out.write(f"[thinking → {target} · restarting conversation]\n")
+    return RESTART
+
+
 def _save(state: ReplState, args: str, out: TextIO) -> str:
     """Confirm where the transcript is being written. Every turn is already
     auto-persisted, so `/save` is a UX affirmation, not a flush-on-demand."""
@@ -180,6 +229,8 @@ def _build_registry() -> dict[str, Command]:
         Command(name="/model", handler=_model, summary="Show current model + session id"),
         Command(name="/save", handler=_save, summary="Show transcript path + resume hint"),
         Command(name="/resume", handler=_resume, summary="Resume a saved session (or list)"),
+        Command(name="/effort", handler=_effort, summary="Show or set thinking effort (low/medium/high/xhigh/max)"),
+        Command(name="/thinking", handler=_thinking, summary="Show or set thinking display (adaptive/summarized/off)"),
         exit_cmd,
     ]
     registry: dict[str, Command] = {}

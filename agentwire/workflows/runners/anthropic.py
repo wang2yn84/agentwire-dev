@@ -27,37 +27,9 @@ from typing import Any, Callable
 from agentwire.workflows.node import ActionNode, NodeResult
 from agentwire.workflows.runners import anthropic_events as ev
 from agentwire.workflows.runners.anthropic_capabilities import validate_node_settings
+from agentwire.workflows.runners.sdk_errors import classify as _classify
 
 logger = logging.getLogger("agentwire.workflows.anthropic")
-
-
-# Error-message substrings that mark a failure as transient (worth retrying
-# via the workflow-level node.retries loop). Classification only — we don't
-# add an inner retry loop here; outer retry handles all failure kinds, and
-# this prefix is purely informational so users see at a glance why a node
-# failed. PR 6 canary data will tell us whether inner backoff pays.
-_TRANSIENT_MARKERS = (
-    "overloaded", "rate_limit", "rate limit", " 429", " 529", " 503",
-)
-_AUTH_MARKERS = ("authentication", "unauthorized", " 401", " 403")
-_INVALID_MARKERS = ("invalid_request", " 400", "validation")
-
-
-def _classify(err_type: str, err_msg: str) -> str:
-    """Return a prefix category for an SDK-side error.
-
-    Not a retry decision — just a human-readable tag on NodeResult.error so
-    logs and morning reports can distinguish rate-limited runs from genuine
-    bugs.
-    """
-    haystack = f"{err_type} {err_msg}".lower()
-    if any(m in haystack for m in _TRANSIENT_MARKERS):
-        return "transient"
-    if any(m in haystack for m in _AUTH_MARKERS):
-        return "permanent"
-    if any(m in haystack for m in _INVALID_MARKERS):
-        return "invalid"
-    return "error"
 
 
 class AnthropicRunner:
