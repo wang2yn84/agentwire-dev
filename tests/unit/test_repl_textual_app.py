@@ -922,6 +922,101 @@ async def test_tab_completes_mention(patched_sdk, tmp_path, monkeypatch):
         assert "@README.md" in inp.value
 
 
+class TestCommandPaletteFuzzy:
+    """Phase 3C — command palette fuzzy scoring."""
+
+    def test_empty_query_matches_all(self):
+        from agentwire.repl.textual_app import CommandPalette
+        assert CommandPalette._fuzzy_score("/help", "Show help", "") == 0
+
+    def test_prefix_match_best(self):
+        from agentwire.repl.textual_app import CommandPalette
+        assert CommandPalette._fuzzy_score("/cost", "Show cost", "co") == 0
+
+    def test_substring_in_name(self):
+        from agentwire.repl.textual_app import CommandPalette
+        # "lp" is a substring of "help" but not a prefix.
+        assert CommandPalette._fuzzy_score("/help", "Show help", "lp") == 1
+
+    def test_substring_in_summary(self):
+        from agentwire.repl.textual_app import CommandPalette
+        # "trans" doesn't appear in "/save" but does in "transcript".
+        assert CommandPalette._fuzzy_score("/save", "Show transcript path", "trans") == 2
+
+    def test_no_match(self):
+        from agentwire.repl.textual_app import CommandPalette
+        assert CommandPalette._fuzzy_score("/help", "Show help", "xyzzy") == -1
+
+    def test_query_with_slash_normalized(self):
+        from agentwire.repl.textual_app import CommandPalette
+        # User types "/co" — leading slash is normalized away.
+        assert CommandPalette._fuzzy_score("/cost", "Show cost", "/co") == 0
+
+
+@pytest.mark.asyncio
+async def test_command_palette_opens_and_filters(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL, CommandPalette
+    from textual.widgets import Input, OptionList
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Open palette via the action.
+        app.action_agentwire_palette()
+        for _ in range(5):
+            await pilot.pause()
+
+        # Find the palette modal in the screen stack.
+        palette = next(
+            (s for s in app.screen_stack if isinstance(s, CommandPalette)),
+            None,
+        )
+        assert palette is not None
+
+        # Filter to commands containing "cost".
+        palette_input = palette.query_one("#palette-input", Input)
+        palette_input.value = "cost"
+        palette._refilter("cost")
+        await pilot.pause()
+
+        olist = palette.query_one("#palette-list", OptionList)
+        assert olist.option_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_command_palette_dismiss_writes_to_input(
+    patched_sdk, tmp_path, monkeypatch
+):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL, CommandPalette
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        app.action_agentwire_palette()
+        for _ in range(5):
+            await pilot.pause()
+
+        palette = next(
+            (s for s in app.screen_stack if isinstance(s, CommandPalette)),
+            None,
+        )
+        assert palette is not None
+        # Dismiss with a known command name.
+        palette.dismiss("/help")
+        for _ in range(5):
+            await pilot.pause()
+
+        inp = app.query_one("#input", Input)
+        assert inp.value.startswith("/help")
+
+
 @pytest.mark.asyncio
 async def test_exit_command_quits_app(patched_sdk):
     from agentwire.repl.textual_app import AgentwireREPL
