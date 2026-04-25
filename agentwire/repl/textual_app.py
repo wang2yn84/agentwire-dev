@@ -723,6 +723,14 @@ class AgentwireREPL(App):
             self._sink.write(f"> {line}\n")
         self._sink.flush()
 
+        # Textual-only slash commands intercepted before dispatch_command.
+        if text.startswith("/layout"):
+            self._handle_layout(text[len("/layout"):].strip())
+            return
+        if text.startswith("/theme"):
+            self._handle_theme(text[len("/theme"):].strip())
+            return
+
         if text.startswith("/"):
             action = dispatch_command(text, self.state, self._sink)
             self._sink.flush()
@@ -847,6 +855,96 @@ class AgentwireREPL(App):
         except Exception as exc:
             self._sink.write(f"[render error: {exc}]\n")
             self._sink.flush()
+
+    # ------ Textual-only slash commands (Phase 2D) ------
+
+    def _handle_layout(self, args: str) -> None:
+        """`/layout` — adjust the chat / action proportional weights at runtime.
+
+        Usage:
+          /layout            # show current weights
+          /layout chat=8 action=1
+        """
+        assert self._sink is not None
+        if not args:
+            chat = self.query_one("#chat", RichLog)
+            action = self.query_one("#action", RichLog)
+            self._sink.write(
+                f"[layout: chat={chat.styles.height} action={action.styles.height}]\n"
+            )
+            self._sink.flush()
+            return
+
+        # Parse chat=N action=M tokens.
+        chat_n: int | None = None
+        action_n: int | None = None
+        for tok in args.split():
+            if "=" not in tok:
+                continue
+            key, _, val = tok.partition("=")
+            try:
+                n = int(val)
+            except ValueError:
+                continue
+            if key.lower() == "chat":
+                chat_n = n
+            elif key.lower() == "action":
+                action_n = n
+
+        if chat_n is None and action_n is None:
+            self._sink.write("[/layout: expected chat=N or action=N — nothing changed]\n")
+            self._sink.flush()
+            return
+
+        try:
+            if chat_n is not None and chat_n > 0:
+                self.query_one("#chat", RichLog).styles.height = f"{chat_n}fr"
+            if action_n is not None and action_n > 0:
+                self.query_one("#action", RichLog).styles.height = f"{action_n}fr"
+            self._sink.write(
+                f"[layout updated · "
+                f"chat={chat_n if chat_n is not None else 'unchanged'} · "
+                f"action={action_n if action_n is not None else 'unchanged'}]\n"
+            )
+        except Exception as exc:
+            self._sink.write(f"[/layout error: {exc}]\n")
+        self._sink.flush()
+
+    def _handle_theme(self, args: str) -> None:
+        """`/theme` — switch Textual themes at runtime.
+
+        Usage:
+          /theme               # show current theme + list available
+          /theme <name>        # set theme
+        """
+        assert self._sink is not None
+        if not args:
+            current = getattr(self, "theme", None) or "(default)"
+            available = self._available_themes()
+            self._sink.write(f"[theme: {current}]\n")
+            self._sink.write(f"[available: {', '.join(available)}]\n")
+            self._sink.flush()
+            return
+
+        try:
+            self.theme = args
+            self._sink.write(f"[theme set: {args}]\n")
+        except Exception as exc:
+            self._sink.write(f"[/theme error: {exc}]\n")
+        self._sink.flush()
+
+    def _available_themes(self) -> list[str]:
+        # Textual exposes `App.available_themes` as a property in 0.80+.
+        try:
+            return sorted(self.available_themes.keys())
+        except (AttributeError, TypeError):
+            # Fallback list of built-in themes for older Textual versions.
+            return [
+                "textual-dark", "textual-light",
+                "nord", "gruvbox", "catppuccin-mocha", "dracula",
+                "tokyo-night", "monokai", "flexoki",
+                "catppuccin-latte", "solarized-light",
+            ]
 
     def _refresh_status(self) -> None:
         try:

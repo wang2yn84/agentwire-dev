@@ -458,7 +458,7 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 - [x] **Phase 2A** — CurrentAction subpane + proportional weights (#131, 2026-04-25)
 - [x] **Phase 2B** — Header + StatusLine (#132, 2026-04-25)
 - [x] **Phase 2C** — tool-call collapse + permission ModalScreen (#133, 2026-04-25)
-- [ ] **Phase 2D** — theming + `/layout` + flag default flip
+- [x] **Phase 2D** — theming + `/layout` (#134, 2026-04-25). Flag default flip deferred to a follow-up after the 1-week daily-driver soak window completes.
 - [ ] **Phase 3A** — snapshot test infra
 - [ ] **Phase 3B** — `@`-mention autocomplete
 - [ ] **Phase 3C** — slash command palette
