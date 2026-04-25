@@ -48,6 +48,9 @@ class ReplState:
     # prompt at SDK init; voice routes /say.
     role_names: list[str] = field(default_factory=list)
     voice: str | None = None
+    # Phase 3D — per-turn cost history for the StatusLine sparkline.
+    # Capped at 20 entries (rolling window). Reset on /clear.
+    turn_costs: list[float] = field(default_factory=list)
 
 
 def track_system_init(state: ReplState, message: Any) -> None:
@@ -67,7 +70,12 @@ def track_result(state: ReplState, message: Any) -> None:
     cost = getattr(message, "total_cost_usd", None)
     if cost is not None:
         try:
-            state.total_cost_usd += float(cost)
+            cost_f = float(cost)
+            state.total_cost_usd += cost_f
+            state.turn_costs.append(cost_f)
+            # Cap at 20 — rolling window for the sparkline.
+            if len(state.turn_costs) > 20:
+                state.turn_costs = state.turn_costs[-20:]
         except (TypeError, ValueError):
             pass
     state.turn_count += 1
@@ -85,3 +93,4 @@ def reset_for_restart(state: ReplState) -> None:
     state.session_id = None
     state.restart_count += 1
     state.always_allow_tools = set()
+    state.turn_costs = []

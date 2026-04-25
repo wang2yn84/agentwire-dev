@@ -462,5 +462,5 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 - [x] **Phase 3A** — snapshot test infra (#135, 2026-04-25; opt-in via `pytest -m snapshots` because the framework leaves asyncio state polluted across the rest of the suite)
 - [x] **Phase 3B** — `@`-mention autocomplete (#136, 2026-04-25; live preview in action pane + Tab to complete to top match)
 - [x] **Phase 3C** — slash command palette (#137, 2026-04-25; Ctrl+P opens fuzzy picker)
-- [ ] **Phase 3D** — cost sparkline + transcript scrubber
+- [x] **Phase 3D** — cost sparkline + transcript scrubber (#138, 2026-04-25)
 - [ ] **Phase 3E** — walkthrough doc

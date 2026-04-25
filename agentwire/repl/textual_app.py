@@ -438,7 +438,105 @@ class PermissionPrompt(ModalScreen[str]):
         self.dismiss(event.button.id or "deny")
 
 
+# ----- Transcript scrubber ModalScreen (Phase 3D) --------------------------
+
+
+class TranscriptScrubber(ModalScreen[None]):
+    """Read-only viewer for the current session's prior turns.
+
+    Triggered by `/scrub`. Lists each `user_input` event from the transcript
+    JSONL, with a 100-char preview. Esc / button to close. Selecting a turn
+    is a no-op for now (Phase 3D ships read-only; future scroll-to-turn is
+    separate).
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", priority=True),
+        Binding("q", "close", "Close", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    TranscriptScrubber {
+        align: center middle;
+    }
+    TranscriptScrubber > Vertical {
+        background: $surface;
+        border: thick $accent;
+        width: 100;
+        height: 30;
+        padding: 0 1;
+    }
+    TranscriptScrubber Label {
+        margin: 1 0;
+        color: $text;
+    }
+    TranscriptScrubber OptionList {
+        height: 1fr;
+    }
+    """
+
+    def __init__(self, transcript_path: Path | None) -> None:
+        super().__init__()
+        self._path = transcript_path
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Transcript — prior turns this session (Esc to close)")
+            yield OptionList(id="scrub-list")
+
+    def on_mount(self) -> None:
+        olist = self.query_one("#scrub-list", OptionList)
+        if self._path is None or not Path(self._path).exists():
+            olist.add_option(Option("(no transcript)"))
+            return
+        import json
+        try:
+            lines = Path(self._path).read_text().splitlines()
+        except Exception as exc:
+            olist.add_option(Option(f"(read error: {exc})"))
+            return
+        n = 0
+        for line in lines:
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("type") == "user_input":
+                n += 1
+                text = (ev.get("text") or "").replace("\n", " ")
+                preview = text[:100] + ("..." if len(text) > 100 else "")
+                olist.add_option(Option(f"{n:>3}. {preview}"))
+        if n == 0:
+            olist.add_option(Option("(no user turns yet)"))
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 # ----- StatusLine widget ----------------------------------------------------
+
+
+_SPARK_BARS = "▁▂▃▄▅▆▇█"
+
+
+def _sparkline(values: list[float]) -> str:
+    """Render a unicode-block sparkline from `values`.
+
+    Empty input → "". All zeros → flat baseline. Each value scales relative
+    to the peak in the series.
+    """
+    if not values:
+        return ""
+    peak = max(values)
+    if peak <= 0:
+        return _SPARK_BARS[0] * len(values)
+    out: list[str] = []
+    span = len(_SPARK_BARS) - 1
+    for v in values:
+        ratio = v / peak
+        idx = max(0, min(span, int(ratio * span)))
+        out.append(_SPARK_BARS[idx])
+    return "".join(out)
 
 
 class StatusLine(Static):
@@ -474,8 +572,10 @@ class StatusLine(Static):
             return
         total = state.total_input_tokens + state.total_output_tokens
         plural = "s" if state.turn_count != 1 else ""
+        spark = _sparkline(state.turn_costs)
+        spark_part = f" {spark}" if spark else ""
         self.update(
-            f"{state.turn_count} turn{plural} · "
+            f"{state.turn_count} turn{plural}{spark_part} · "
             f"{total} tok ({state.total_input_tokens} in / {state.total_output_tokens} out) · "
             f"${state.total_cost_usd:.4f} · effort={state.effort} · "
             f"thinking={state.thinking_mode}"
@@ -852,6 +952,9 @@ class AgentwireREPL(App):
         if text.startswith("/theme"):
             self._handle_theme(text[len("/theme"):].strip())
             return
+        if text == "/scrub" or text.startswith("/scrub "):
+            self._handle_scrub()
+            return
 
         if text.startswith("/"):
             action = dispatch_command(text, self.state, self._sink)
@@ -1111,7 +1214,17 @@ class AgentwireREPL(App):
             self._action_sink.clear()
             self._last_mention_prefix = None
 
-    # ------ Textual-only slash commands (Phase 2D) ------
+    # ------ Textual-only slash commands (Phase 2D + 3D) ------
+
+    def _handle_scrub(self) -> None:
+        """`/scrub` — open a read-only viewer of prior turns this session."""
+        path = None
+        if self._transcript is not None:
+            try:
+                path = Path(self._transcript.session_dir) / "transcript.jsonl"
+            except Exception:
+                path = None
+        self.push_screen(TranscriptScrubber(path))
 
     def _handle_layout(self, args: str) -> None:
         """`/layout` — adjust the chat / action proportional weights at runtime.

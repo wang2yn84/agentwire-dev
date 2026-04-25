@@ -1017,6 +1017,96 @@ async def test_command_palette_dismiss_writes_to_input(
         assert inp.value.startswith("/help")
 
 
+class TestSparkline:
+    """Phase 3D — unicode-block sparkline."""
+
+    def test_empty_returns_empty_string(self):
+        from agentwire.repl.textual_app import _sparkline
+        assert _sparkline([]) == ""
+
+    def test_all_zeros_baseline(self):
+        from agentwire.repl.textual_app import _sparkline
+        out = _sparkline([0, 0, 0])
+        assert len(out) == 3
+        # First bar is the baseline.
+        assert all(c == "▁" for c in out)
+
+    def test_increasing_series(self):
+        from agentwire.repl.textual_app import _sparkline
+        out = _sparkline([0.1, 0.5, 1.0])
+        # Last char is the peak block.
+        assert out[-1] == "█"
+        # All chars are members of the bar set.
+        assert all(c in "▁▂▃▄▅▆▇█" for c in out)
+
+
+@pytest.mark.asyncio
+async def test_status_line_shows_sparkline_after_turns(
+    patched_sdk, tmp_path, monkeypatch
+):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL, StatusLine
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        client.script([
+            _FakeResultMessage(
+                total_cost_usd=0.05,
+                duration_ms=1000,
+                usage={"input_tokens": 10, "output_tokens": 20},
+            ),
+        ])
+        inp = app.query_one("#input", Input)
+        inp.value = "trigger"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+
+        status = app.query_one("#status", StatusLine)
+        text = str(status.render())
+        # After one turn, the sparkline (one bar) is in the status line.
+        assert any(b in text for b in "▁▂▃▄▅▆▇█")
+
+
+@pytest.mark.asyncio
+async def test_scrub_opens_modal(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL, TranscriptScrubber
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Add a couple of fake events to the transcript file so the scrubber
+        # has something to show.
+        import json as _json
+        path = Path(app.state.session_dir) / "transcript.jsonl"
+        with path.open("a") as f:
+            f.write(_json.dumps({"type": "user_input", "text": "hello"}) + "\n")
+            f.write(_json.dumps({"type": "user_input", "text": "world"}) + "\n")
+
+        inp = app.query_one("#input", Input)
+        inp.value = "/scrub"
+        await inp.action_submit()
+        for _ in range(5):
+            await pilot.pause()
+
+        scrubber = next(
+            (s for s in app.screen_stack if isinstance(s, TranscriptScrubber)),
+            None,
+        )
+        assert scrubber is not None
+        # The OptionList should have at least 2 options (the two user_inputs).
+        from textual.widgets import OptionList
+        olist = scrubber.query_one("#scrub-list", OptionList)
+        assert olist.option_count >= 2
+
+
 @pytest.mark.asyncio
 async def test_exit_command_quits_app(patched_sdk):
     from agentwire.repl.textual_app import AgentwireREPL
