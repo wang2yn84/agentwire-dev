@@ -59,7 +59,8 @@ from textual.binding import Binding
 from textual.containers import Center, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
+from textual.widgets import Button, Footer, Header, Input, Label, OptionList, RichLog, Static
+from textual.widgets.option_list import Option
 
 from agentwire.repl import persistence
 from agentwire.repl.app import (
@@ -77,6 +78,7 @@ from agentwire.repl.app import (
     render_message,
 )
 from agentwire.repl.commands import (
+    COMMANDS,
     CONTINUE,
     EXIT,
     RESTART,
@@ -244,6 +246,124 @@ class TurnFinished(Message):
         super().__init__()
 
 
+# ----- Command palette ModalScreen (Phase 3C) ------------------------------
+
+
+class CommandPalette(ModalScreen[str | None]):
+    """Ctrl+P fuzzy picker for slash commands.
+
+    Reads from `agentwire.repl.commands.COMMANDS` (the existing registry)
+    so newly added slash commands appear here automatically. Returns the
+    selected command name (e.g. `/cost`) on dismiss, or None on Esc.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+    ]
+
+    DEFAULT_CSS = """
+    CommandPalette {
+        align: center middle;
+    }
+    CommandPalette > Vertical {
+        background: $surface;
+        border: thick $accent;
+        width: 70;
+        height: 22;
+    }
+    CommandPalette Input {
+        margin: 1;
+        border: none;
+    }
+    CommandPalette OptionList {
+        height: 1fr;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Build a unique-by-Command list so aliases don't double-list.
+        seen: set[str] = set()
+        self._commands: list[tuple[str, str]] = []
+        for name, cmd in COMMANDS.items():
+            if cmd.name in seen:
+                continue
+            seen.add(cmd.name)
+            self._commands.append((cmd.name, cmd.summary))
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Input(id="palette-input", placeholder="Filter commands…")
+            yield OptionList(id="palette-list")
+
+    def on_mount(self) -> None:
+        self.query_one("#palette-input", Input).focus()
+        self._refilter("")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "palette-input":
+            self._refilter(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "palette-input":
+            self._accept_highlighted()
+
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        # Mouse click on an option.
+        opt_id = event.option.id
+        if opt_id:
+            self.dismiss(opt_id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _refilter(self, query: str) -> None:
+        olist = self.query_one("#palette-list", OptionList)
+        olist.clear_options()
+        q = query.lower().lstrip("/")
+        for name, summary in self._commands:
+            score = self._fuzzy_score(name, summary, q)
+            if score < 0:
+                continue
+            label = f"{name}  —  {summary}"
+            olist.add_option(Option(label, id=name))
+        # Highlight the first match by default.
+        if olist.option_count > 0:
+            olist.highlighted = 0
+
+    @staticmethod
+    def _fuzzy_score(name: str, summary: str, q: str) -> int:
+        """Return a score (>=0 = match, -1 = no match).
+
+        Matches are: empty query, substring of name (best), substring of
+        summary (lower priority). A leading `/` on the query is dropped so
+        users typing `/co` and `co` both match `/cost`.
+        """
+        q = q.lower().lstrip("/")
+        if not q:
+            return 0
+        n = name.lower().lstrip("/")
+        s = summary.lower()
+        if n.startswith(q):
+            return 0
+        if q in n:
+            return 1
+        if q in s:
+            return 2
+        return -1
+
+    def _accept_highlighted(self) -> None:
+        olist = self.query_one("#palette-list", OptionList)
+        idx = olist.highlighted
+        if idx is None or idx < 0 or idx >= olist.option_count:
+            self.dismiss(None)
+            return
+        opt = olist.get_option_at_index(idx)
+        self.dismiss(opt.id)
+
+
 # ----- Permission ModalScreen (Phase 2C) -----------------------------------
 
 
@@ -409,6 +529,7 @@ class AgentwireREPL(App):
     BINDINGS = [
         Binding("ctrl+d", "quit", "Exit"),
         Binding("ctrl+c", "cancel_turn", "Cancel turn"),
+        Binding("ctrl+p", "agentwire_palette", "Command palette"),
         Binding("tab", "complete_mention", "Complete @mention", show=False),
     ]
 
@@ -856,6 +977,25 @@ class AgentwireREPL(App):
         except Exception as exc:
             self._sink.write(f"[render error: {exc}]\n")
             self._sink.flush()
+
+    # ------ Command palette (Phase 3C) ------
+
+    def action_agentwire_palette(self) -> None:
+        """Ctrl+P opens a fuzzy picker over the slash command registry."""
+        def _on_dismiss(selected: str | None) -> None:
+            if selected is None:
+                return
+            # Push the selected command name into the input so the user can
+            # add args (e.g. /resume <name>) before submitting.
+            try:
+                inp = self.query_one("#input", Input)
+            except Exception:
+                return
+            inp.value = selected + " "
+            inp.cursor_position = len(inp.value)
+            inp.focus()
+
+        self.push_screen(CommandPalette(), _on_dismiss)
 
     # ------ @-mention autocomplete (Phase 3B) ------
 
