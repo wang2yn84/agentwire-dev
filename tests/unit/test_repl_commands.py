@@ -337,6 +337,68 @@ class TestResume:
         assert "resuming good" in out.getvalue()
 
 
+class TestEffort:
+    def test_show_default(self):
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/effort", state, out)
+        assert action == CONTINUE
+        assert f"effort={state.effort}" in out.getvalue()
+
+    def test_set_changes_state_and_restarts(self):
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/effort low", state, out)
+        assert action == RESTART
+        assert state.effort == "low"
+
+    def test_unknown_value_continues(self):
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/effort wat", state, out)
+        assert action == CONTINUE
+        assert "unknown effort" in out.getvalue()
+        assert state.effort == "high"  # unchanged
+
+    def test_same_value_noop_continues(self):
+        state = _state()
+        state.effort = "max"
+        out = io.StringIO()
+        action = dispatch_command("/effort max", state, out)
+        assert action == CONTINUE
+        assert "already" in out.getvalue()
+
+
+class TestThinking:
+    def test_show_default(self):
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/thinking", state, out)
+        assert action == CONTINUE
+        assert f"thinking={state.thinking_mode}" in out.getvalue()
+
+    def test_summarized_restarts(self):
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/thinking summarized", state, out)
+        assert action == RESTART
+        assert state.thinking_mode == "summarized"
+
+    def test_off_restarts(self):
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/thinking off", state, out)
+        assert action == RESTART
+        assert state.thinking_mode == "off"
+
+    def test_unknown_value_continues(self):
+        state = _state()
+        out = io.StringIO()
+        action = dispatch_command("/thinking weird", state, out)
+        assert action == CONTINUE
+        assert "unknown thinking" in out.getvalue()
+
+
 class TestResetForRestart:
     def test_zeros_counters_preserves_config(self):
         state = _state()
@@ -363,3 +425,9 @@ class TestResetForRestart:
         reset_for_restart(state)
         reset_for_restart(state)
         assert state.restart_count == 3
+
+    def test_clears_always_allow(self):
+        state = _state()
+        state.always_allow_tools = {"Read", "Bash"}
+        reset_for_restart(state)
+        assert state.always_allow_tools == set()

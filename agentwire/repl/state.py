@@ -34,6 +34,15 @@ class ReplState:
     # Set by `/resume NAME` handler; outer loop reads this to build the next
     # SDK client's options with `resume=<sdk_session_id>`.
     pending_resume_sdk_session_id: str | None = None
+    # Phase 2 PR 4 — tunable knobs surfaced as /effort and /thinking. Changes
+    # don't take effect until the next conversation starts, so the slash
+    # handlers also signal RESTART.
+    effort: str = "high"
+    thinking_mode: str = "adaptive"
+    # `sdk-prompted` per-session "always allow" set, populated by the inline
+    # permission prompt when the user picks 'a'. Survives across turns; reset
+    # on /clear via reset_for_restart.
+    always_allow_tools: set[str] = field(default_factory=set)
 
 
 def track_system_init(state: ReplState, message: Any) -> None:
@@ -70,3 +79,4 @@ def reset_for_restart(state: ReplState) -> None:
     state.turn_count = 0
     state.session_id = None
     state.restart_count += 1
+    state.always_allow_tools = set()

@@ -18,6 +18,7 @@ from agentwire.repl.commands import CONTINUE, EXIT, RESTART, RESUME, dispatch_co
 from agentwire.repl import persistence
 from agentwire.repl.mentions import expand_mentions
 from agentwire.repl.state import ReplState, reset_for_restart, track_result, track_system_init
+from agentwire.workflows.runners.sdk_errors import classify as _classify_sdk_error
 
 
 BANNER = """\
@@ -40,6 +41,18 @@ RESTRICTED_TOOLS = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
 
 DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_EFFORT = "high"
+DEFAULT_THINKING_MODE = "adaptive"
+
+
+def _thinking_config(mode: str) -> dict | None:
+    """Translate the REPL's `/thinking` mode into an SDK thinking config."""
+    if mode == "adaptive":
+        return {"type": "adaptive"}
+    if mode == "summarized":
+        return {"type": "adaptive", "display": "summarized"}
+    if mode == "off":
+        return {"type": "disabled"}
+    return {"type": "adaptive"}
 
 
 def run_repl(
@@ -122,6 +135,9 @@ def build_options(
     system_prompt: str | None,
     cwd: Path | None = None,
     resume_sdk_session_id: str | None = None,
+    effort: str = DEFAULT_EFFORT,
+    thinking_mode: str = DEFAULT_THINKING_MODE,
+    can_use_tool: Any = None,
 ) -> Any:
     """Compose `ClaudeAgentOptions` for a REPL session.
 
@@ -136,13 +152,15 @@ def build_options(
         "allowed_tools": RESTRICTED_TOOLS if mode == "restricted" else FULL_TOOLS,
         "setting_sources": ["user"],       # load ~/.claude/hooks — damage-control
         "include_partial_messages": False,
-        "effort": DEFAULT_EFFORT,
-        "thinking": {"type": "adaptive"},
+        "effort": effort,
+        "thinking": _thinking_config(thinking_mode),
     }
     if cwd is not None:
         kwargs["cwd"] = str(cwd)
     if resume_sdk_session_id:
         kwargs["resume"] = resume_sdk_session_id
+    if can_use_tool is not None:
+        kwargs["can_use_tool"] = can_use_tool
 
     append_parts: list[str] = []
     if cwd is not None:
@@ -281,7 +299,8 @@ def render_message(
         suffix = f" · {' · '.join(parts)}" if parts else ""
         if getattr(message, "is_error", False):
             err = getattr(message, "result", None) or "unknown error"
-            out.write(f"[error{suffix}] {err}\n")
+            category = _classify_sdk_error("ResultMessage", str(err))
+            out.write(f"[error · {category}{suffix}] {err}\n")
         else:
             out.write(f"[done{suffix}]\n")
         return
@@ -403,9 +422,22 @@ async def _run_interactive(
         else:
             resume_sdk_session_id = ids[-1]  # most recent
 
+    # ReplState built up-front so the permission callback (and the bottom
+    # toolbar) can close over it before the first SDK options bake.
+    placeholder_tools = (RESTRICTED_TOOLS if mode == "restricted" else FULL_TOOLS).copy()
+    state = ReplState(
+        mode=mode,
+        model=model or DEFAULT_MODEL,
+        allowed_tools=placeholder_tools,
+    )
+
+    can_use_tool = _make_can_use_tool(state) if mode == "prompted" else None
+
     options = build_options(
         ClaudeAgentOptions, mode, model, system_prompt,
         cwd=Path.cwd(), resume_sdk_session_id=resume_sdk_session_id,
+        effort=state.effort, thinking_mode=state.thinking_mode,
+        can_use_tool=can_use_tool,
     )
 
     model_display = model or f"{DEFAULT_MODEL} (default)"
@@ -414,7 +446,7 @@ async def _run_interactive(
         sys.stdout.write(f"Resuming {resume!r} (sdk session {resume_sdk_session_id[:8]}…)\n")
     sys.stdout.write(
         "Interactive mode. Enter to send · Alt+Enter for newline · Ctrl+D to exit · Ctrl+C to cancel.\n"
-        "Type /help for commands. @path/to/file expands inline.\n\n"
+        "Type /help for commands. @path/to/file expands inline. /effort and /thinking tune SDK knobs.\n\n"
     )
     sys.stdout.flush()
 
@@ -423,11 +455,7 @@ async def _run_interactive(
         if hasattr(options, "allowed_tools")
         else list(getattr(options, "kwargs", {}).get("allowed_tools", []))
     )
-    state = ReplState(
-        mode=mode,
-        model=model or DEFAULT_MODEL,
-        allowed_tools=allowed_tools,
-    )
+    state.allowed_tools = allowed_tools
 
     transcript = persistence.create_session(
         mode=mode,
@@ -444,6 +472,7 @@ async def _run_interactive(
     # multi-line mode treats every \n as literal and never submits on EOF,
     # so we fall back to single-line in that case.
     is_tty = sys.stdin.isatty()
+    bottom_toolbar = _make_bottom_toolbar(state) if is_tty else None
     if is_tty:
         kb = KeyBindings()
 
@@ -464,6 +493,8 @@ async def _run_interactive(
             multiline=True,
             key_bindings=kb,
             prompt_continuation="… ",
+            bottom_toolbar=bottom_toolbar,
+            refresh_interval=0.5,
         )
     else:
         prompt_session = PromptSession(history=InMemoryHistory())
@@ -493,12 +524,14 @@ async def _run_interactive(
                 break
             if not restart_requested:
                 break
-            # Rebuild options for /clear vs /resume.
+            # Rebuild options for /clear vs /resume vs /effort vs /thinking.
             next_resume_id = state.pending_resume_sdk_session_id
             state.pending_resume_sdk_session_id = None
             options = build_options(
                 ClaudeAgentOptions, mode, model, system_prompt,
                 cwd=Path.cwd(), resume_sdk_session_id=next_resume_id,
+                effort=state.effort, thinking_mode=state.thinking_mode,
+                can_use_tool=can_use_tool,
             )
             transcript.write_event({
                 "type": "restart",
@@ -616,5 +649,83 @@ async def _run_sdk_session(
                 sys.stdout.flush()
                 continue
             except Exception as exc:
-                print(f"[repl: {type(exc).__name__}: {exc}]", file=sys.stderr)
+                category = _classify_sdk_error(type(exc).__name__, str(exc))
+                print(
+                    f"[repl: {category} · {type(exc).__name__}: {exc}]",
+                    file=sys.stderr,
+                )
                 continue
+
+
+# -------- Phase 2 PR 4 helpers: bottom toolbar + permission prompt --------
+
+
+def _make_bottom_toolbar(state: ReplState):
+    """Return a callable rendered by prompt_toolkit at the bottom of the prompt.
+
+    Reads from `state` directly so token/cost totals refresh after every turn
+    without us pushing into prompt_toolkit. Falls back to a config-only line
+    before the first response lands.
+    """
+    def _render():
+        if state.turn_count == 0:
+            return (
+                f"{state.mode} · {state.model} · effort={state.effort} · "
+                f"thinking={state.thinking_mode}"
+            )
+        total = state.total_input_tokens + state.total_output_tokens
+        return (
+            f"{state.turn_count} turn{'s' if state.turn_count != 1 else ''} · "
+            f"{total} tok ({state.total_input_tokens} in / {state.total_output_tokens} out) · "
+            f"${state.total_cost_usd:.4f} · effort={state.effort} · "
+            f"thinking={state.thinking_mode}"
+        )
+    return _render
+
+
+def _make_can_use_tool(state: ReplState):
+    """Build a `can_use_tool` async callback for `sdk-prompted` mode.
+
+    Prints a one-line tool-use prompt (`Read /etc/passwd?`) and reads y/n/a
+    from stdin in a worker thread so the SDK's async loop isn't blocked. 'a'
+    adds the tool name to a per-session always-allow set kept on `state`.
+    Reset by `/clear`.
+    """
+    async def _can_use_tool(tool_name: str, tool_input: dict, ctx: Any):
+        # Lazy import — keeps SDK absence from breaking module import.
+        from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
+        if tool_name in state.always_allow_tools:
+            return PermissionResultAllow()
+
+        summary = _format_tool_input(tool_name, tool_input or {})
+        prompt = f"\n[? allow {tool_name}{' ' + summary if summary else ''}? (y/n/a=always)] "
+
+        loop = asyncio.get_event_loop()
+        try:
+            answer = await loop.run_in_executor(None, _prompt_sync, prompt)
+        except (EOFError, KeyboardInterrupt):
+            sys.stdout.write("\n[denied via Ctrl+C/EOF]\n")
+            sys.stdout.flush()
+            return PermissionResultDeny(message="user denied (interrupt)")
+
+        answer = (answer or "").strip().lower()
+        if answer in ("a", "always"):
+            state.always_allow_tools.add(tool_name)
+            sys.stdout.write(f"[allow · {tool_name} now always allowed this session]\n")
+            sys.stdout.flush()
+            return PermissionResultAllow()
+        if answer in ("", "y", "yes"):
+            return PermissionResultAllow()
+        sys.stdout.write(f"[deny · {tool_name}]\n")
+        sys.stdout.flush()
+        return PermissionResultDeny(message="user denied")
+
+    return _can_use_tool
+
+
+def _prompt_sync(prompt: str) -> str:
+    """Blocking prompt for the permission callback. Runs off-loop."""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    return sys.stdin.readline()

@@ -5,6 +5,7 @@ Phase 1 PR 2. See docs/missions/agentwire-repl.md.
 
 from __future__ import annotations
 
+import asyncio
 import io
 from dataclasses import dataclass
 from pathlib import Path
@@ -525,8 +526,11 @@ def _install_fake_prompt_toolkit(monkeypatch, script):
             return deco
 
     class FakePromptSession:
-        def __init__(self, history=None, multiline=False, key_bindings=None, prompt_continuation=None):
+        def __init__(self, history=None, multiline=False, key_bindings=None,
+                     prompt_continuation=None, bottom_toolbar=None,
+                     refresh_interval=None):
             self.idx = 0
+            self.bottom_toolbar = bottom_toolbar
 
         async def prompt_async(self, text):
             if self.idx >= len(script):
@@ -981,6 +985,190 @@ class TestInteractiveLoop:
         err = capsys.readouterr().err
         assert rc == 1
         assert "prompt_toolkit not installed" in err
+
+
+class TestThinkingConfig:
+    def test_adaptive_default(self):
+        from agentwire.repl.app import _thinking_config
+        assert _thinking_config("adaptive") == {"type": "adaptive"}
+
+    def test_summarized_sets_display(self):
+        from agentwire.repl.app import _thinking_config
+        assert _thinking_config("summarized") == {"type": "adaptive", "display": "summarized"}
+
+    def test_off_disabled(self):
+        from agentwire.repl.app import _thinking_config
+        assert _thinking_config("off") == {"type": "disabled"}
+
+    def test_unknown_falls_back_adaptive(self):
+        from agentwire.repl.app import _thinking_config
+        assert _thinking_config("nonsense") == {"type": "adaptive"}
+
+
+class TestBottomToolbar:
+    def _state(self):
+        from agentwire.repl.state import ReplState
+        return ReplState(mode="bypass", model="claude-opus-4-7", allowed_tools=[])
+
+    def test_pre_first_turn_shows_config(self):
+        from agentwire.repl.app import _make_bottom_toolbar
+        s = self._state()
+        out = _make_bottom_toolbar(s)()
+        assert "bypass" in out
+        assert "claude-opus-4-7" in out
+        assert "effort=high" in out
+        assert "thinking=adaptive" in out
+        # No tokens before first turn
+        assert "tok" not in out
+
+    def test_after_first_turn_shows_totals(self):
+        from agentwire.repl.app import _make_bottom_toolbar
+        s = self._state()
+        s.turn_count = 2
+        s.total_input_tokens = 100
+        s.total_output_tokens = 50
+        s.total_cost_usd = 0.012
+        out = _make_bottom_toolbar(s)()
+        assert "2 turns" in out
+        assert "150 tok" in out
+        assert "100 in" in out
+        assert "50 out" in out
+        assert "$0.0120" in out
+
+    def test_singular_turn_pluralization(self):
+        from agentwire.repl.app import _make_bottom_toolbar
+        s = self._state()
+        s.turn_count = 1
+        out = _make_bottom_toolbar(s)()
+        assert "1 turn " in out  # not "1 turns"
+
+
+class TestPermissionCallback:
+    def _state(self):
+        from agentwire.repl.state import ReplState
+        return ReplState(mode="prompted", model="m", allowed_tools=[])
+
+    def _ctx(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(signal=None, suggestions=[])
+
+    def test_yes_allows(self, monkeypatch):
+        import agentwire.repl.app as app
+        monkeypatch.setattr(app, "_prompt_sync", lambda prompt: "y\n")
+
+        s = self._state()
+        cb = app._make_can_use_tool(s)
+        result = asyncio.run(cb("Read", {"file_path": "/etc/hosts"}, self._ctx()))
+        from claude_agent_sdk import PermissionResultAllow
+        assert isinstance(result, PermissionResultAllow)
+        assert s.always_allow_tools == set()
+
+    def test_no_denies(self, monkeypatch):
+        import agentwire.repl.app as app
+        monkeypatch.setattr(app, "_prompt_sync", lambda prompt: "n\n")
+
+        s = self._state()
+        cb = app._make_can_use_tool(s)
+        result = asyncio.run(cb("Bash", {"command": "ls"}, self._ctx()))
+        from claude_agent_sdk import PermissionResultDeny
+        assert isinstance(result, PermissionResultDeny)
+
+    def test_always_remembers(self, monkeypatch):
+        import agentwire.repl.app as app
+        monkeypatch.setattr(app, "_prompt_sync", lambda prompt: "a\n")
+
+        s = self._state()
+        cb = app._make_can_use_tool(s)
+        result = asyncio.run(cb("Read", {"file_path": "/x"}, self._ctx()))
+        from claude_agent_sdk import PermissionResultAllow
+        assert isinstance(result, PermissionResultAllow)
+        assert "Read" in s.always_allow_tools
+
+        # Subsequent call should bypass _prompt_sync
+        def boom(prompt):
+            raise AssertionError("prompt_sync should not be called")
+        monkeypatch.setattr(app, "_prompt_sync", boom)
+        result2 = asyncio.run(cb("Read", {"file_path": "/y"}, self._ctx()))
+        assert isinstance(result2, PermissionResultAllow)
+
+    def test_blank_defaults_to_allow(self, monkeypatch):
+        import agentwire.repl.app as app
+        monkeypatch.setattr(app, "_prompt_sync", lambda prompt: "\n")
+        s = self._state()
+        cb = app._make_can_use_tool(s)
+        result = asyncio.run(cb("Read", {}, self._ctx()))
+        from claude_agent_sdk import PermissionResultAllow
+        assert isinstance(result, PermissionResultAllow)
+
+
+class TestSdkErrorClassify:
+    def test_transient_429(self):
+        from agentwire.workflows.runners.sdk_errors import classify
+        assert classify("HTTPError", "got 429 rate_limit") == "transient"
+
+    def test_auth_401(self):
+        from agentwire.workflows.runners.sdk_errors import classify
+        assert classify("AuthError", "401 unauthorized") == "permanent"
+
+    def test_invalid_400(self):
+        from agentwire.workflows.runners.sdk_errors import classify
+        assert classify("ValidationError", "invalid_request: bad field") == "invalid"
+
+    def test_generic(self):
+        from agentwire.workflows.runners.sdk_errors import classify
+        assert classify("RuntimeError", "something broke") == "error"
+
+
+class TestBuildOptionsThreadsKnobs:
+    def test_effort_and_thinking_passed_through(self):
+        from agentwire.repl.app import build_options
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(
+            FakeOptions, mode="bypass", model="m", system_prompt=None,
+            cwd=None, effort="max", thinking_mode="summarized",
+        )
+        assert captured["effort"] == "max"
+        assert captured["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+    def test_can_use_tool_passed_through(self):
+        from agentwire.repl.app import build_options
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        async def cb(*args, **kwargs): pass
+        build_options(
+            FakeOptions, mode="prompted", model="m", system_prompt=None,
+            cwd=None, can_use_tool=cb,
+        )
+        assert captured["can_use_tool"] is cb
+
+    def test_can_use_tool_omitted_when_none(self):
+        from agentwire.repl.app import build_options
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(
+            FakeOptions, mode="bypass", model="m", system_prompt=None,
+            cwd=None,
+        )
+        assert "can_use_tool" not in captured
 
 
 class TestFormatToolResult:
