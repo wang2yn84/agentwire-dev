@@ -1169,6 +1169,52 @@ class TestMcpBakedIn:
         assert MCP_TOOL_PREFIX in captured["allowed_tools"]
 
 
+class TestSessionContextThreading:
+    def test_role_instructions_appended_to_system_prompt(self, monkeypatch):
+        from agentwire.repl.app import build_options
+        from agentwire.repl.context import SessionContext
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+        monkeypatch.setenv("AGENTWIRE_REPL_DAMAGE_CONTROL", "0")
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        ctx = SessionContext(
+            role_names=["tester"],
+            role_instructions="Test rigorously.",
+            voice="alice",
+            missing_roles=[],
+        )
+        build_options(
+            FakeOptions, mode="bypass", model="m", system_prompt=None,
+            cwd=None, session_context=ctx,
+        )
+        sp = captured["system_prompt"]
+        assert sp["type"] == "preset"
+        assert "tester" in sp["append"]
+        assert "Test rigorously" in sp["append"]
+
+    def test_no_session_context_no_change(self, monkeypatch):
+        from agentwire.repl.app import build_options
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+        monkeypatch.setenv("AGENTWIRE_REPL_DAMAGE_CONTROL", "0")
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(FakeOptions, mode="bypass", model="m", system_prompt=None, cwd=None)
+        # No system_prompt key when nothing to append.
+        assert "system_prompt" not in captured
+
+
 class TestDamageControlAttachment:
     def test_hooks_attached_when_patterns_load(self, monkeypatch, tmp_path):
         # Point damage_control at a known patterns file

@@ -380,6 +380,88 @@ class TestEffort:
         assert "already" in out.getvalue()
 
 
+class TestSay:
+    def test_no_args_shows_usage(self):
+        out = io.StringIO()
+        action = dispatch_command("/say", _state(), out)
+        assert action == CONTINUE
+        assert "Usage" in out.getvalue()
+
+    def test_voice_in_no_args_when_set(self):
+        out = io.StringIO()
+        s = _state()
+        s.voice = "alice"
+        dispatch_command("/say", s, out)
+        assert "voice=alice" in out.getvalue()
+
+    def test_invokes_subprocess(self, monkeypatch):
+        captured = {}
+
+        class FakeProc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return FakeProc()
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        out = io.StringIO()
+        s = _state()
+        s.voice = "alice"
+        action = dispatch_command("/say hello world", s, out)
+        assert action == CONTINUE
+        assert captured["cmd"][:2] == ["agentwire", "say"]
+        assert "--voice" in captured["cmd"]
+        assert "alice" in captured["cmd"]
+        assert "hello world" in captured["cmd"]
+        assert "[said" in out.getvalue()
+
+    def test_no_voice_omits_voice_flag(self, monkeypatch):
+        captured = {}
+
+        class FakeProc:
+            returncode = 0
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return FakeProc()
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        out = io.StringIO()
+        action = dispatch_command("/say hi", _state(), out)
+        assert "--voice" not in captured["cmd"]
+
+    def test_subprocess_error(self, monkeypatch):
+        class FakeProc:
+            returncode = 1
+            stdout = ""
+            stderr = "tts unreachable"
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeProc())
+
+        out = io.StringIO()
+        dispatch_command("/say bad", _state(), out)
+        assert "say failed" in out.getvalue()
+        assert "tts unreachable" in out.getvalue()
+
+    def test_agentwire_not_on_path(self, monkeypatch):
+        import subprocess
+        def raise_fnf(*a, **kw):
+            raise FileNotFoundError("no agentwire")
+        monkeypatch.setattr(subprocess, "run", raise_fnf)
+
+        out = io.StringIO()
+        dispatch_command("/say hi", _state(), out)
+        assert "not found" in out.getvalue()
+
+
 class TestThinking:
     def test_show_default(self):
         state = _state()
