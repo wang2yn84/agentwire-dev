@@ -1,19 +1,24 @@
-"""Textual-based rendering layer for `agentwire repl` (Phase 1C parity).
+"""Textual-based rendering layer for `agentwire repl` (Phase 2A — layout).
 
-Layout (Phase 1 — minimal; Phase 2 splits into chat + current-action with
-proportional weights):
+Layout (Phase 2A: proportional chat=6 / action=2 / input=3):
 
-    ┌─ Header ─────────────────────────────┐
-    │                                      │
-    ├─ ChatLog (RichLog, fr=1) ────────────┤
-    │  > previous user turn                │
-    │  [thinking: ...]                     │
-    │  assistant text                      │
-    │  [→ tool call]                       │
-    │  [← result]                          │
-    ├─ Input (TextArea, dock=bottom) ──────┤
-    │  > tell me about prompt caching      │
-    └─ Footer ─────────────────────────────┘
+    ┌─ Header ──────────────────────────────────┐
+    │                                           │
+    ├─ ChatLog (RichLog, fr=6) ─────────────────┤
+    │  > previous user turn                     │
+    │  assistant text                           │
+    │  [→ tool call]                            │
+    │  [← result]                               │
+    │  [done · ...]                             │
+    ├─ CurrentAction (RichLog, fr=2, title) ────┤
+    │  ╭─ Current action ─────────────────────╮ │
+    │  │ [thinking: ...] live stream          │ │
+    │  │ [writing X input · 4.2 KB live tick] │ │
+    │  │ […still working · 5s]                │ │
+    │  ╰──────────────────────────────────────╯ │
+    ├─ Input (Input, dock=bottom) ──────────────┤
+    │  > tell me about prompt caching           │
+    └─ Footer ──────────────────────────────────┘
 
 Event flow:
     user types → SubmittableTextArea posts Submitted → on_input_submitted
@@ -24,11 +29,18 @@ Event flow:
 
 Workers MUST use `self.post_message(...)` — never call RichLog.write directly.
 
-Phase 1C scope: full feature parity with the legacy line-mode REPL —
-transcript persistence, @-mention expansion, sdk-prompted permission
-prompts (inline placeholder), /clear and /resume lifecycle (close+reopen
-ClaudeSDKClient with new options), CLAUDECODE env handling, resume
-lookup via persistence.load_session.
+Phase 2A scope: split chat into chat + CurrentAction subpanes with
+proportional weights. Partial-stream events (thinking, byte counter,
+heartbeat) route to the action pane via a dedicated `_ActionSink` that
+supports proper in-place line updates (clear-and-rewrite). The action
+pane is cleared on every ResultMessage (turn complete) so the next
+turn's partials start fresh. Finalized snapshot Messages stay in chat
+via `_RichLogSink` as before.
+
+The 120-second silent gap of the legacy REPL is fully solved here:
+thinking and byte counter tick live in their own docked subpane, with
+clean in-place updates (not the choppy multi-line emission of Phase
+1B's single-sink approach).
 
 See `docs/missions/agentwire-repl-textual.md` for the full plan.
 """
@@ -145,6 +157,71 @@ class _RichLogSink:
             self._log.write(Text.from_ansi(text))
 
 
+class _ActionSink:
+    """Streaming sink for the CurrentAction subpane.
+
+    Unlike `_RichLogSink` (chat — append-only, buffer-until-newline), the
+    action pane shows live-updating content. We maintain our own list of
+    "finalized" lines plus a buffer for the in-flight current line, and
+    rewrite the entire RichLog on each update via clear()+write loop.
+
+    For an action pane with O(20) lines and a turn with O(1000) deltas,
+    the cost is ~20K writes — well within Textual's render budget.
+
+    `clear()` is called from the app on each ResultMessage (turn complete)
+    so the next turn's partials start with a clean pane.
+    """
+
+    _CR_CLEAR = "\r\x1b[K"
+
+    def __init__(self, log: RichLog) -> None:
+        self._log = log
+        self._finalized: list[str] = []
+        self._current = ""
+
+    def write(self, s: str) -> None:
+        if not s:
+            return
+        if self._CR_CLEAR in s:
+            # \r\033[K resets the in-flight line — used by the byte counter
+            # to refresh `[writing X · N KB` to a new value in place.
+            s = s.rsplit(self._CR_CLEAR, 1)[1]
+            self._current = ""
+        self._current += s
+        while "\n" in self._current:
+            line, self._current = self._current.split("\n", 1)
+            self._finalized.append(line)
+        self._refresh()
+
+    def flush(self) -> None:
+        self._refresh()
+
+    def isatty(self) -> bool:
+        return True
+
+    def clear(self) -> None:
+        """Wipe the pane — called at end of every turn (ResultMessage)."""
+        self._finalized.clear()
+        self._current = ""
+        try:
+            self._log.clear()
+        except AttributeError:
+            pass
+
+    def _refresh(self) -> None:
+        try:
+            self._log.clear()
+        except AttributeError:
+            return
+        for line in self._finalized:
+            if line == "":
+                self._log.write("")
+            else:
+                self._log.write(Text.from_ansi(line))
+        if self._current:
+            self._log.write(Text.from_ansi(self._current))
+
+
 # ----- SDK event message ----------------------------------------------------
 
 
@@ -182,8 +259,15 @@ class AgentwireREPL(App):
     }
 
     #chat {
-        height: 1fr;
+        height: 6fr;
         border: tall $accent;
+        padding: 0 1;
+    }
+
+    #action {
+        height: 2fr;
+        border: tall $warning;
+        border-title-color: $warning;
         padding: 0 1;
     }
 
@@ -231,7 +315,8 @@ class AgentwireREPL(App):
         self.state: ReplState | None = None
         self._client = None
         self._client_ctx = None
-        self._sink: _RichLogSink | None = None
+        self._sink: _RichLogSink | None = None  # chat — finalized snapshot messages
+        self._action_sink: _ActionSink | None = None  # action — live partials
         self._stream_state = _StreamRenderState()
         self._sdk_classes: dict[str, Any] | None = None
         self._saved_claudecode: str | None = None
@@ -247,6 +332,7 @@ class AgentwireREPL(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield RichLog(id="chat", markup=False, highlight=False, wrap=True, auto_scroll=True)
+        yield RichLog(id="action", markup=False, highlight=False, wrap=True, auto_scroll=True)
         yield Input(id="input", placeholder="> ")
         yield Footer()
 
@@ -254,7 +340,10 @@ class AgentwireREPL(App):
 
     async def on_mount(self) -> None:
         chat = self.query_one("#chat", RichLog)
+        action = self.query_one("#action", RichLog)
+        action.border_title = "Current action"
         self._sink = _RichLogSink(chat)
+        self._action_sink = _ActionSink(action)
         self.query_one("#input", Input).focus()
         try:
             await self._open_session()
@@ -595,11 +684,13 @@ class AgentwireREPL(App):
 
     def on_sdk_event(self, event: SdkEvent) -> None:
         assert self._sink is not None
+        assert self._action_sink is not None
         assert self._sdk_classes is not None
         msg = event.payload
         if msg is _HEARTBEAT:
-            self._stream_state.heartbeat(self._sink)
-            self._sink.flush()
+            # Heartbeats live in the action pane (live indicator).
+            self._stream_state.heartbeat(self._action_sink)
+            self._action_sink.flush()
             return
         try:
             render_message(
@@ -609,9 +700,11 @@ class AgentwireREPL(App):
                 SystemMessage=self._sdk_classes["SystemMessage"],
                 ResultMessage=self._sdk_classes["ResultMessage"],
                 out=self._sink,
+                action_out=self._action_sink,
                 stream_state=self._stream_state,
             )
             self._sink.flush()
+            self._action_sink.flush()
             if self._transcript is not None:
                 _persist_sdk_message(
                     msg,
@@ -631,6 +724,9 @@ class AgentwireREPL(App):
                 track_result(self.state, msg)
                 if getattr(msg, "is_error", False):
                     self._exit_code = 1
+                # Turn complete — clear the action pane so the next turn's
+                # partials start fresh.
+                self._action_sink.clear()
         except Exception as exc:
             self._sink.write(f"[render error: {exc}]\n")
             self._sink.flush()

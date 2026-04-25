@@ -455,7 +455,7 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 - [x] **Phase 1B** — Textual skeleton (#128, 2026-04-25; uses `Input` widget — TextArea/multi-line punted to 2A; sink streams partials choppily, clean on close — proper live streaming arrives with the CurrentAction widget in 2A)
 - [x] **Phase 1C** — persistence, mentions, prompted mode, lifecycle (#129, 2026-04-25)
 - [x] **Phase 1D** — tests + manual smoke (#130, 2026-04-25; 17 textual tests; ready for soak before flag-flip in Phase 2D)
-- [ ] **Phase 2A** — CurrentAction subpane + proportional weights
+- [x] **Phase 2A** — CurrentAction subpane + proportional weights (#131, 2026-04-25)
 - [ ] **Phase 2B** — Header + StatusLine
 - [ ] **Phase 2C** — tool-call collapse + permission ModalScreen
 - [ ] **Phase 2D** — theming + `/layout` + flag default flip

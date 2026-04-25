@@ -376,6 +376,7 @@ def render_message(
     ResultMessage: Any,
     out: Any = sys.stdout,
     stream_state: "_StreamRenderState | None" = None,
+    action_out: Any = None,
 ) -> None:
     """Render one SDK message to the terminal.
 
@@ -384,11 +385,24 @@ def render_message(
     show a one-line preview.
 
     `stream_state` carries cross-message bookkeeping for the partial-message
-    stream (Phase 3 PR ?, 2026-04-25): when partial events have already
-    streamed text/thinking content for an assistant turn, the final
-    AssistantMessage that arrives at message_stop would otherwise re-render
-    everything. We track which content indices were streamed and skip them.
+    stream: when partial events have already streamed text/thinking content
+    for an assistant turn, the final AssistantMessage that arrives at
+    message_stop would otherwise re-render everything. We track which
+    content indices were streamed and skip them.
+
+    `action_out` (Phase 2A, 2026-04-25): optional separate sink for partial-
+    stream events. The Textual REPL passes a dedicated CurrentAction RichLog
+    here so live thinking, byte counters, and heartbeats render in their own
+    docked subpane while finalized snapshot messages go to the chat pane via
+    `out`. When `action_out` is None or the same object as `out`, the legacy
+    behavior is preserved: everything goes to one sink (stdout in the line-
+    mode REPL).
     """
+    # If no separate action sink is provided, partials and snapshots share `out`.
+    if action_out is None:
+        action_out = out
+    dual_panes = action_out is not out
+
     # StreamEvent is a `@dataclass` with fields {uuid, session_id, event,
     # parent_tool_use_id}, delivered when include_partial_messages=True. The
     # `event` payload mirrors Anthropic's streaming API. We render
@@ -403,13 +417,14 @@ def render_message(
         if stream_state is not None:
             payload = getattr(message, "event", None)
             if isinstance(payload, dict):
-                stream_state.handle_partial(payload, out)
+                stream_state.handle_partial(payload, action_out)
         return
 
     # Any non-partial message arriving — close out a pending heartbeat line so
-    # the upcoming render starts on a clean line.
+    # the upcoming render starts on a clean line. Heartbeats live in the
+    # action sink; close them there.
     if stream_state is not None:
-        stream_state._consume_heartbeat(out)
+        stream_state._consume_heartbeat(action_out)
 
     if isinstance(message, SystemMessage):
         if getattr(message, "subtype", None) == "init":
@@ -421,14 +436,22 @@ def render_message(
         return
 
     if isinstance(message, AssistantMessage):
-        # Close any open partial line so the snapshot render starts cleanly.
+        # Close any open partial line so the action pane is left clean.
+        # Partials live in `action_out`; close them there.
         if stream_state is not None and stream_state.partials_active:
-            stream_state.close_open_block(out)
+            stream_state.close_open_block(action_out)
         for block in getattr(message, "content", []) or []:
             btype = _block_type(block)
             if btype == "text":
-                # Text already streamed via partials → skip redundant snapshot render.
-                if stream_state is not None and stream_state.streamed_text:
+                # In single-pane mode, skip snapshot if we already streamed
+                # the same content. In dual-pane mode, the snapshot lives in
+                # chat (out) which is permanent — always render it there
+                # regardless of what landed in the ephemeral action pane.
+                if (
+                    not dual_panes
+                    and stream_state is not None
+                    and stream_state.streamed_text
+                ):
                     continue
                 text = _block_attr(block, "text", "") or ""
                 if text:
@@ -442,8 +465,13 @@ def render_message(
                 line = f"[→ {name}{' ' + summary if summary else ''}]"
                 out.write(_styled(out, line, "bold cyan") + "\n")
             elif btype == "thinking":
-                # Thinking already streamed live via partials → skip snapshot.
-                if stream_state is not None and stream_state.streamed_thinking:
+                # Same dual-pane logic as text — chat keeps the permanent
+                # snapshot even though the action pane streamed live.
+                if (
+                    not dual_panes
+                    and stream_state is not None
+                    and stream_state.streamed_thinking
+                ):
                     continue
                 thinking = _block_attr(block, "thinking", "") or ""
                 first = thinking.split("\n", 1)[0].strip()
