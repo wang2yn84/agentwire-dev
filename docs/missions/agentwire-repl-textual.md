@@ -5,7 +5,7 @@
 A from-scratch rendering layer for `agentwire repl` built on [Textual](https://github.com/textualize/textual). The current `prompt_toolkit` line-oriented loop hit its ceiling: there's no way to keep streaming partial output visible without flooding the chat history, no proportional layout, no borders/titles, no docked status line, no scrollable subregion for "what claude is doing right now". Textual gives all of that out of the box.
 
 **Phase of:** own mission (sibling of `agentwire-repl.md`)
-**Status:** **plans fleshed out (2026-04-25). Ready to execute Phase 1A.** Phase 1-3 implementation plans live in this doc; living checklist at bottom tracks shipping.
+**Status:** **Phase 1 shipped (parity, 2026-04-25). Phase 2A next.** The Textual REPL is feature-complete behind `AGENTWIRE_REPL_TUI=textual` — chat history, slash commands, persistence, mentions, prompted-mode, /clear+/resume lifecycle all parity with the legacy line-mode path. Live partial streaming is intentionally choppy in Phase 1 (one RichLog entry per delta on flush); Phase 2A's CurrentAction subpane fixes that with proper in-place streaming.
 **Depends on:** `agentwire-repl.md` Phases 1-5 (complete) + streaming-visibility quick fixes (#123-#125 shipped 2026-04-25)
 **Blocks:** future REPL feature work that needs richer layout (mode badges, modal permission prompts, inline waveform for /say, etc.)
 
@@ -282,6 +282,18 @@ Mock `claude_agent_sdk.ClaudeSDKClient` with a fake whose `receive_response()` y
 
 **Don't add `pytest-textual-snapshot` here** — that's Phase 3. Snapshot maintenance overhead before parity is shipped is premature.
 
+## Phase 1 ship status (2026-04-25)
+
+Phase 1 is feature-complete behind the flag. To flip the default in Phase 2D, the soak window must validate:
+
+- [ ] No regressions vs legacy REPL across a 1-week daily-driver window
+- [ ] `transcript.jsonl` shape matches legacy (verified via `diff` of golden runs)
+- [ ] `human_gate` non-TTY callers stay on the line-mode path (test_repl_dispatch covers this)
+- [ ] Multi-line input (Alt+Enter) works — currently `Input` is single-line only; Phase 2A swaps to `TextArea` when redesigning the input region
+- [ ] Live partial streaming reads cleanly — currently choppy; Phase 2A's CurrentAction subpane fixes this
+
+When all green: Phase 2D removes the `AGENTWIRE_REPL_TUI` env check, makes `textual` a hard dep, deletes `_run_interactive` (keeping `_run_print_mode` since print mode never moves to Textual).
+
 ## What stays unchanged across all of Phase 1
 
 These files are imported and reused as-is — no edits:
@@ -442,7 +454,7 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 - [x] **Phase 1A** — flag + dispatcher (#127, 2026-04-25)
 - [x] **Phase 1B** — Textual skeleton (#128, 2026-04-25; uses `Input` widget — TextArea/multi-line punted to 2A; sink streams partials choppily, clean on close — proper live streaming arrives with the CurrentAction widget in 2A)
 - [x] **Phase 1C** — persistence, mentions, prompted mode, lifecycle (#129, 2026-04-25)
-- [ ] **Phase 1D** — tests + manual smoke
+- [x] **Phase 1D** — tests + manual smoke (#130, 2026-04-25; 17 textual tests; ready for soak before flag-flip in Phase 2D)
 - [ ] **Phase 2A** — CurrentAction subpane + proportional weights
 - [ ] **Phase 2B** — Header + StatusLine
 - [ ] **Phase 2C** — tool-call collapse + permission ModalScreen
