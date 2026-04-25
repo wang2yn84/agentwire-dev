@@ -137,6 +137,41 @@ def _effort(state: ReplState, args: str, out: TextIO) -> str:
     return RESTART
 
 
+def _say(state: ReplState, args: str, out: TextIO) -> str:
+    """`/say <text>` speaks `text` via `agentwire say`.
+
+    Voice resolution is delegated to `agentwire say` (CLI flag → .agentwire.yml
+    → global config default). We pass `--voice` only if the project config
+    explicitly set one, so a user-level default doesn't get blown away.
+    """
+    text = args.strip()
+    if not text:
+        if state.voice:
+            out.write(f"[say · voice={state.voice}]\nUsage: /say <text>\n")
+        else:
+            out.write("Usage: /say <text>\n")
+        return CONTINUE
+
+    import subprocess
+    cmd = ["agentwire", "say"]
+    if state.voice:
+        cmd += ["--voice", state.voice]
+    cmd += ["--", text]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            out.write(f"[say failed: {proc.stderr.strip() or 'unknown error'}]\n")
+        else:
+            out.write(f"[said · {len(text)} chars]\n")
+    except FileNotFoundError:
+        out.write("[say failed: `agentwire` not found on PATH]\n")
+    except subprocess.TimeoutExpired:
+        out.write("[say timed out after 30s]\n")
+    except Exception as exc:
+        out.write(f"[say error: {exc}]\n")
+    return CONTINUE
+
+
 def _thinking(state: ReplState, args: str, out: TextIO) -> str:
     target = args.strip().lower()
     if not target:
@@ -236,6 +271,7 @@ def _build_registry() -> dict[str, Command]:
         Command(name="/resume", handler=_resume, summary="Resume a saved session (or list)"),
         Command(name="/effort", handler=_effort, summary="Show or set thinking effort (low/medium/high/xhigh/max)"),
         Command(name="/thinking", handler=_thinking, summary="Show or set thinking display (adaptive/summarized/off)"),
+        Command(name="/say", handler=_say, summary="Speak text aloud via agentwire say (uses project voice)"),
         exit_cmd,
     ]
     registry: dict[str, Command] = {}

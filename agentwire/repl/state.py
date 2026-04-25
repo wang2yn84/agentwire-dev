@@ -43,6 +43,11 @@ class ReplState:
     # permission prompt when the user picks 'a'. Survives across turns; reset
     # on /clear via reset_for_restart.
     always_allow_tools: set[str] = field(default_factory=set)
+    # Phase 3 PR 3 — project-level identity surfaced into slash commands and
+    # the banner. Both are static for the session: roles compose the system
+    # prompt at SDK init; voice routes /say.
+    role_names: list[str] = field(default_factory=list)
+    voice: str | None = None
 
 
 def track_system_init(state: ReplState, message: Any) -> None:

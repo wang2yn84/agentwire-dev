@@ -16,6 +16,7 @@ from typing import Any
 
 from agentwire.repl.commands import CONTINUE, EXIT, RESTART, RESUME, dispatch_command
 from agentwire.repl import persistence
+from agentwire.repl.context import SessionContext, load_session_context
 from agentwire.repl.damage_control import make_pre_tool_hook
 from agentwire.repl.mentions import expand_mentions
 from agentwire.repl.state import ReplState, reset_for_restart, track_result, track_system_init
@@ -94,6 +95,7 @@ def run_repl(
     system_prompt: str | None = None,
     session_name: str | None = None,
     resume: str | None = None,
+    roles: list[str] | None = None,
 ) -> int:
     """Run the REPL. Returns exit code.
 
@@ -101,10 +103,13 @@ def run_repl(
       transcript (print mode is fire-and-forget).
     - Interactive: persistent loop with full transcript persistence under
       `~/.agentwire/sessions/repl/<session_name>/`.
+
+    `roles` overrides the role list from `.agentwire.yml` for this session;
+    when None, project config wins.
     """
     if print_prompt is not None:
-        return asyncio.run(_run_print_mode(print_prompt, mode, model, system_prompt))
-    return asyncio.run(_run_interactive(mode, model, system_prompt, session_name, resume))
+        return asyncio.run(_run_print_mode(print_prompt, mode, model, system_prompt, roles))
+    return asyncio.run(_run_interactive(mode, model, system_prompt, session_name, resume, roles))
 
 
 # -------- print mode (SDK-backed) --------
@@ -115,6 +120,7 @@ async def _run_print_mode(
     mode: str,
     model: str | None,
     system_prompt: str | None,
+    roles: list[str] | None = None,
 ) -> int:
     try:
         from claude_agent_sdk import (
@@ -129,7 +135,13 @@ async def _run_print_mode(
         print(f"error: claude-agent-sdk not installed: {e}", file=sys.stderr)
         return 1
 
-    options = build_options(ClaudeAgentOptions, mode, model, system_prompt, cwd=Path.cwd())
+    ctx = load_session_context(Path.cwd(), role_overrides=roles)
+    if ctx.missing_roles:
+        sys.stderr.write(f"[repl: roles not found: {', '.join(ctx.missing_roles)}]\n")
+    options = build_options(
+        ClaudeAgentOptions, mode, model, system_prompt, cwd=Path.cwd(),
+        session_context=ctx,
+    )
 
     # claude-agent-sdk refuses to nest — same CLAUDECODE unset as the workflow runner.
     saved_claudecode = os.environ.pop("CLAUDECODE", None)
@@ -170,6 +182,7 @@ def build_options(
     effort: str = DEFAULT_EFFORT,
     thinking_mode: str = DEFAULT_THINKING_MODE,
     can_use_tool: Any = None,
+    session_context: SessionContext | None = None,
 ) -> Any:
     """Compose `ClaudeAgentOptions` for a REPL session.
 
@@ -226,6 +239,14 @@ def build_options(
                 }
 
     append_parts: list[str] = []
+    # Roles first — they're identity and tool-permission posture, so they
+    # frame everything that follows. Then CLAUDE.md / AGENTS.md (project
+    # facts), then explicit override.
+    if session_context is not None and session_context.role_instructions:
+        append_parts.append(
+            f"--- roles: {', '.join(session_context.role_names)} ---\n"
+            f"{session_context.role_instructions}"
+        )
     if cwd is not None:
         for name in ("CLAUDE.md", "AGENTS.md"):
             found = _find_ancestor_file(cwd, name)
@@ -440,6 +461,7 @@ async def _run_interactive(
     system_prompt: str | None,
     session_name: str | None = None,
     resume: str | None = None,
+    roles: list[str] | None = None,
 ) -> int:
     """Run the interactive REPL.
 
@@ -494,6 +516,12 @@ async def _run_interactive(
         allowed_tools=placeholder_tools,
     )
 
+    ctx = load_session_context(Path.cwd(), role_overrides=roles)
+    state.role_names = list(ctx.role_names)
+    state.voice = ctx.voice
+    if ctx.missing_roles:
+        sys.stderr.write(f"[repl: roles not found: {', '.join(ctx.missing_roles)}]\n")
+
     can_use_tool = _make_can_use_tool(state) if mode == "prompted" else None
 
     options = build_options(
@@ -501,6 +529,7 @@ async def _run_interactive(
         cwd=Path.cwd(), resume_sdk_session_id=resume_sdk_session_id,
         effort=state.effort, thinking_mode=state.thinking_mode,
         can_use_tool=can_use_tool,
+        session_context=ctx,
     )
 
     model_display = model or f"{DEFAULT_MODEL} (default)"
@@ -509,10 +538,14 @@ async def _run_interactive(
         sys.stdout.write(f"Resuming {resume!r} (sdk session {resume_sdk_session_id[:8]}…)\n")
     sys.stdout.write(
         "Interactive mode. Enter to send · Alt+Enter for newline · Ctrl+D to exit · Ctrl+C to cancel.\n"
-        "Type /help for commands. @path/to/file expands inline. /effort and /thinking tune SDK knobs.\n"
+        "Type /help for commands. @path/to/file expands inline. /effort, /thinking, /say tune session.\n"
     )
     if _mcp_enabled():
         sys.stdout.write("agentwire MCP server attached — /tools to see what's wired in.\n")
+    if state.role_names:
+        sys.stdout.write(f"Roles: {', '.join(state.role_names)}\n")
+    if state.voice:
+        sys.stdout.write(f"Voice: {state.voice}\n")
     sys.stdout.write("\n")
     sys.stdout.flush()
 
@@ -598,6 +631,7 @@ async def _run_interactive(
                 cwd=Path.cwd(), resume_sdk_session_id=next_resume_id,
                 effort=state.effort, thinking_mode=state.thinking_mode,
                 can_use_tool=can_use_tool,
+                session_context=ctx,
             )
             transcript.write_event({
                 "type": "restart",

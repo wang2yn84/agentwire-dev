@@ -3443,6 +3443,7 @@ def cmd_repl(args) -> int:
         system_prompt=args.append_system_prompt,
         session_name=getattr(args, "session_name", None),
         resume=getattr(args, "resume", None),
+        roles=getattr(args, "roles", None),
     )
 
 
@@ -10186,6 +10187,10 @@ def main() -> int:
     repl_parser.add_argument(
         "--resume", dest="resume", default=None, metavar="NAME",
         help="Resume the saved session NAME (reuses its sdk_session_id to continue the prior conversation)",
+    )
+    repl_parser.add_argument(
+        "--role", dest="roles", action="append", metavar="NAME",
+        help="Role name to compose into the system prompt (repeatable). Overrides .agentwire.yml roles.",
     )
     repl_parser.set_defaults(func=cmd_repl)
 
