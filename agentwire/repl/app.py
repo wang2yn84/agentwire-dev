@@ -460,10 +460,21 @@ def render_message(
                         out.write("\n")
             elif btype == "tool_use":
                 name = _block_attr(block, "name", "") or ""
+                tool_id = _block_attr(block, "id", "") or ""
                 inp = _block_attr(block, "input", {}) or {}
                 summary = _format_tool_input(name, inp)
-                line = f"[→ {name}{' ' + summary if summary else ''}]"
-                out.write(_styled(out, line, "bold cyan") + "\n")
+                # Tool-call collapse: when a stream_state is provided and we
+                # have a tool_id, defer writing this line — the matching
+                # tool_result will fold them into one `[Tool · args · preview]`.
+                # No id (or no stream_state) → render as before.
+                if stream_state is not None and tool_id:
+                    stream_state.pending_tool_uses[tool_id] = {
+                        "name": name,
+                        "summary": summary,
+                    }
+                else:
+                    line = f"[→ {name}{' ' + summary if summary else ''}]"
+                    out.write(_styled(out, line, "bold cyan") + "\n")
             elif btype == "thinking":
                 # Same dual-pane logic as text — chat keeps the permanent
                 # snapshot even though the action pane streamed live.
@@ -491,12 +502,48 @@ def render_message(
                     result_content = _block_attr(block, "content", None)
                     preview = _format_tool_result(result_content)
                     is_err = bool(_block_attr(block, "is_error", False))
-                    style = "red" if is_err else "green"
-                    label = "error" if is_err else "result"
-                    out.write(_styled(out, f"[← {label}: {preview}]", style) + "\n")
+                    tool_use_id = _block_attr(block, "tool_use_id", "") or ""
+
+                    # Tool-call collapse: if we deferred the matching
+                    # tool_use, fold it into this line.
+                    pending = None
+                    if stream_state is not None and tool_use_id:
+                        pending = stream_state.pending_tool_uses.pop(
+                            tool_use_id, None
+                        )
+
+                    if pending is not None and not is_err:
+                        # Merged: [Tool · args · preview]
+                        name = pending["name"]
+                        summary = pending["summary"]
+                        parts = [name]
+                        if summary:
+                            parts.append(summary)
+                        if preview:
+                            parts.append(preview)
+                        line = f"[{' · '.join(parts)}]"
+                        out.write(_styled(out, line, "cyan") + "\n")
+                    elif pending is not None and is_err:
+                        # Error result with deferred tool_use → emit both lines
+                        # so the user sees the call and the error clearly.
+                        name = pending["name"]
+                        summary = pending["summary"]
+                        call = f"[→ {name}{' ' + summary if summary else ''}]"
+                        out.write(_styled(out, call, "bold cyan") + "\n")
+                        out.write(_styled(out, f"[← error: {preview}]", "red") + "\n")
+                    else:
+                        # Standalone result (no matching deferred tool_use).
+                        style = "red" if is_err else "green"
+                        label = "error" if is_err else "result"
+                        out.write(
+                            _styled(out, f"[← {label}: {preview}]", style) + "\n"
+                        )
         return
 
     if isinstance(message, ResultMessage):
+        # Flush any tool_uses whose results never arrived this turn.
+        if stream_state is not None and stream_state.pending_tool_uses:
+            stream_state.flush_pending_tool_uses(out)
         usage = getattr(message, "usage", {}) or {}
         cost = getattr(message, "total_cost_usd", None)
         duration = getattr(message, "duration_ms", None)
@@ -1153,6 +1200,10 @@ class _StreamRenderState:
         self._heartbeat_started_inline = False
         self._tool_use_name: str | None = None
         self._tool_use_bytes: int = 0
+        # Tool-call collapse (Phase 2C): deferred [→ Tool args] writes,
+        # keyed by tool_use_id. Folded into one line when the matching
+        # tool_result arrives. Unmatched at end of turn → flushed as-is.
+        self.pending_tool_uses: dict[str, dict] = {}
 
     @property
     def partials_active(self) -> bool:
@@ -1281,6 +1332,19 @@ class _StreamRenderState:
         self._heartbeat_started_inline = False
         self._tool_use_name = None
         self._tool_use_bytes = 0
+
+    def flush_pending_tool_uses(self, out: Any) -> None:
+        """Emit any deferred tool_use lines whose tool_result never arrived.
+
+        Called on `ResultMessage` (turn complete) so unfinished tool calls
+        still appear in the chat history.
+        """
+        for pending in self.pending_tool_uses.values():
+            name = pending["name"]
+            summary = pending["summary"]
+            line = f"[→ {name}{' ' + summary if summary else ''}]"
+            out.write(_styled(out, line, "bold cyan") + "\n")
+        self.pending_tool_uses.clear()
 
     def heartbeat(self, out: Any) -> None:
         """Called when the SDK has been silent past `idle_timeout` seconds."""

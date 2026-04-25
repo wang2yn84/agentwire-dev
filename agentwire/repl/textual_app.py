@@ -56,8 +56,10 @@ from typing import Any
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Center, Vertical
 from textual.message import Message
-from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
 
 from agentwire.repl import persistence
 from agentwire.repl.app import (
@@ -242,6 +244,80 @@ class TurnFinished(Message):
         super().__init__()
 
 
+# ----- Permission ModalScreen (Phase 2C) -----------------------------------
+
+
+class PermissionPrompt(ModalScreen[str]):
+    """Centered modal for `sdk-prompted` mode tool-permission decisions.
+
+    Replaces Phase 1C's inline y/n/a placeholder. Returns one of:
+      'allow' | 'deny' | 'always'
+    via `push_screen_wait`.
+    """
+
+    BINDINGS = [
+        Binding("y", "decide('allow')", "Allow"),
+        Binding("n", "decide('deny')", "Deny"),
+        Binding("a", "decide('always')", "Always"),
+        Binding("escape", "decide('deny')", "Deny", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    PermissionPrompt {
+        align: center middle;
+    }
+    PermissionPrompt > Vertical {
+        background: $surface;
+        border: thick $accent;
+        padding: 1 2;
+        width: 80;
+        height: auto;
+    }
+    PermissionPrompt Label {
+        margin-bottom: 1;
+    }
+    PermissionPrompt Static.tool-line {
+        color: $text;
+        margin-bottom: 1;
+    }
+    PermissionPrompt Static.help-line {
+        color: $text 60%;
+    }
+    PermissionPrompt Center {
+        margin-top: 1;
+    }
+    PermissionPrompt Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, tool_name: str, summary: str = "") -> None:
+        super().__init__()
+        self._tool_name = tool_name
+        self._summary = summary
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"Allow {self._tool_name}?")
+            tool_line = self._tool_name + ((" " + self._summary) if self._summary else "")
+            yield Static(tool_line, classes="tool-line")
+            yield Static(
+                "y = allow once · n = deny · a = always allow this session · esc = deny",
+                classes="help-line",
+            )
+            with Center():
+                yield Button("Allow (y)", variant="success", id="allow")
+                yield Button("Deny (n)", variant="error", id="deny")
+                yield Button("Always (a)", variant="primary", id="always")
+
+    def action_decide(self, decision: str) -> None:
+        self.dismiss(decision)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        # Button id matches the decision string verbatim.
+        self.dismiss(event.button.id or "deny")
+
+
 # ----- StatusLine widget ----------------------------------------------------
 
 
@@ -367,11 +443,6 @@ class AgentwireREPL(App):
         self._exit_code = 0
         self._transcript = None
         self._ctx = None
-        # When sdk-prompted is asking for a tool decision, this holds the
-        # asyncio.Future the can_use_tool callback awaits. The input handler
-        # routes the next user submission as the answer instead of as a turn.
-        self._pending_permission: asyncio.Future | None = None
-        self._pending_tool_name: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -547,10 +618,10 @@ class AgentwireREPL(App):
     def _make_can_use_tool(self):
         """Permission callback for `sdk-prompted` mode.
 
-        Phase 1C placeholder — surfaces a `[? allow Tool args? (y/n/a)]`
-        line in the chat log, parks an asyncio.Future, and routes the next
-        user submission as the answer instead of as a turn. Phase 2C
-        replaces this with a centered `ModalScreen`.
+        Phase 2C: pushes a centered `PermissionPrompt` ModalScreen and
+        awaits the dismiss value ('allow' | 'deny' | 'always'). The modal
+        captures keyboard (y/n/a/esc) and clicks; the SDK loop is paused
+        on `push_screen_wait` until the user decides.
         """
         async def _can_use_tool(tool_name: str, tool_input: dict, ctx: Any):
             from claude_agent_sdk import (
@@ -562,31 +633,28 @@ class AgentwireREPL(App):
                 return PermissionResultAllow()
 
             summary = _format_tool_input(tool_name, tool_input or {})
-            line = f"[? allow {tool_name}{' ' + summary if summary else ''}? (y/n/a=always)]"
-            self._sink.write(line + "\n")
-            self._sink.flush()
-
-            loop = asyncio.get_event_loop()
-            future: asyncio.Future = loop.create_future()
-            self._pending_permission = future
-            self._pending_tool_name = tool_name
             try:
-                answer = await future
-            except asyncio.CancelledError:
-                return PermissionResultDeny(message="user denied (cancelled)")
-            finally:
-                self._pending_permission = None
-                self._pending_tool_name = None
+                decision = await self.push_screen_wait(
+                    PermissionPrompt(tool_name=tool_name, summary=summary)
+                )
+            except Exception as exc:
+                # If the modal can't be pushed (e.g. app shutting down),
+                # default to deny rather than allowing silently.
+                self._sink.write(f"[permission modal error: {exc}]\n")
+                self._sink.flush()
+                return PermissionResultDeny(message=f"modal error: {exc}")
 
-            answer = (answer or "").strip().lower()
-            if answer in ("a", "always"):
+            decision = (decision or "deny").lower()
+            if decision == "always":
                 self.state.always_allow_tools.add(tool_name)
                 self._sink.write(
                     f"[allow · {tool_name} now always allowed this session]\n"
                 )
                 self._sink.flush()
                 return PermissionResultAllow()
-            if answer in ("", "y", "yes"):
+            if decision == "allow":
+                self._sink.write(f"[allow · {tool_name}]\n")
+                self._sink.flush()
                 return PermissionResultAllow()
             self._sink.write(f"[deny · {tool_name}]\n")
             self._sink.flush()
@@ -645,13 +713,6 @@ class AgentwireREPL(App):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = (event.value or "").strip()
         event.input.value = ""
-
-        # Permission-pending branch: if sdk-prompted is awaiting a y/n/a
-        # answer, the next submission is the answer (not a slash command,
-        # not a turn).
-        if self._pending_permission is not None and not self._pending_permission.done():
-            self._pending_permission.set_result(text)
-            return
 
         if not text:
             return

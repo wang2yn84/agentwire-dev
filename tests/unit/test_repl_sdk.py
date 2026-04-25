@@ -287,6 +287,105 @@ class TestRenderResult:
         assert "[done" in out
 
 
+class TestToolCallCollapse:
+    """Phase 2C — when stream_state is provided, tool_use + tool_result fold
+    into one `[Tool · args · preview]` line."""
+
+    def _state(self):
+        from agentwire.repl.app import _StreamRenderState
+        return _StreamRenderState()
+
+    def test_tool_use_buffered_until_result(self):
+        from agentwire.repl.app import _StreamRenderState
+        s = _StreamRenderState()
+        out = io.StringIO()
+
+        # AssistantMessage with tool_use(id=tu_1) — should be buffered, NOT
+        # written to out yet.
+        msg = FakeAssistantMessage([{
+            "type": "tool_use", "id": "tu_1", "name": "Bash",
+            "input": {"command": "ls -la"},
+        }])
+        render_message(msg, out=out, stream_state=s, **RENDER_KWARGS)
+        assert out.getvalue() == ""
+        assert "tu_1" in s.pending_tool_uses
+
+        # UserMessage with tool_result(tool_use_id=tu_1) → folds into one line.
+        result = FakeUserMessage([{
+            "type": "tool_result", "tool_use_id": "tu_1", "content": "12 files",
+        }])
+        render_message(result, out=out, stream_state=s, **RENDER_KWARGS)
+        rendered = out.getvalue()
+        assert "Bash" in rendered
+        assert "ls -la" in rendered
+        assert "12 files" in rendered
+        # Folded format — no separate "→" or "← result:" markers
+        assert "→ Bash" not in rendered
+        assert "← result:" not in rendered
+        # Pending cleared.
+        assert "tu_1" not in s.pending_tool_uses
+
+    def test_tool_use_no_stream_state_renders_inline(self):
+        # Without stream_state, tool_use renders as before (legacy path).
+        msg = FakeAssistantMessage([{
+            "type": "tool_use", "id": "tu_1", "name": "Bash",
+            "input": {"command": "ls -la"},
+        }])
+        out = _render(msg)  # no stream_state
+        assert "[→ Bash ls -la]" in out
+
+    def test_tool_use_no_id_renders_inline(self):
+        # Without an id, tool_use can't be matched to a result — render inline.
+        from agentwire.repl.app import _StreamRenderState
+        s = _StreamRenderState()
+        out = io.StringIO()
+        msg = FakeAssistantMessage([{
+            "type": "tool_use", "name": "Bash",  # no id
+            "input": {"command": "ls -la"},
+        }])
+        render_message(msg, out=out, stream_state=s, **RENDER_KWARGS)
+        assert "[→ Bash ls -la]" in out.getvalue()
+        assert s.pending_tool_uses == {}
+
+    def test_unmatched_tool_use_flushed_on_result(self):
+        # Tool_use without matching tool_result should still appear in chat
+        # when the turn ends (via flush_pending_tool_uses).
+        from agentwire.repl.app import _StreamRenderState
+        s = _StreamRenderState()
+        out = io.StringIO()
+        msg = FakeAssistantMessage([{
+            "type": "tool_use", "id": "tu_orphan", "name": "Bash",
+            "input": {"command": "echo x"},
+        }])
+        render_message(msg, out=out, stream_state=s, **RENDER_KWARGS)
+        # ResultMessage finishes the turn → flush.
+        result = FakeResultMessage()
+        render_message(result, out=out, stream_state=s, **RENDER_KWARGS)
+        rendered = out.getvalue()
+        assert "[→ Bash" in rendered
+        assert "[done" in rendered
+
+    def test_error_result_emits_separate_lines(self):
+        # When the tool_result is an error, fold doesn't lose information —
+        # we emit both the call and the error explicitly.
+        from agentwire.repl.app import _StreamRenderState
+        s = _StreamRenderState()
+        out = io.StringIO()
+        msg = FakeAssistantMessage([{
+            "type": "tool_use", "id": "tu_err", "name": "Bash",
+            "input": {"command": "false"},
+        }])
+        render_message(msg, out=out, stream_state=s, **RENDER_KWARGS)
+        result = FakeUserMessage([{
+            "type": "tool_result", "tool_use_id": "tu_err",
+            "content": "exit 1", "is_error": True,
+        }])
+        render_message(result, out=out, stream_state=s, **RENDER_KWARGS)
+        rendered = out.getvalue()
+        assert "[→ Bash" in rendered
+        assert "[← error:" in rendered
+
+
 # --- format helpers ---
 
 class TestFormatToolInput:

@@ -425,30 +425,56 @@ async def test_clear_writes_restart_event(patched_sdk, tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_prompted_mode_routes_answer_to_permission(patched_sdk, tmp_path, monkeypatch):
-    # The next user submission while a permission Future is pending
-    # answers the prompt instead of starting a new turn.
+async def test_permission_modal_dismisses_with_decision(patched_sdk, tmp_path, monkeypatch):
+    # Phase 2C — permission prompts pop a centered ModalScreen rather than
+    # parking an asyncio.Future on the app. Verify push_screen + dismiss
+    # cycle works with the y/n/a key bindings.
     from agentwire.repl import persistence
     monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
-    from agentwire.repl.textual_app import AgentwireREPL
-    from textual.widgets import Input
+    from agentwire.repl.textual_app import AgentwireREPL, PermissionPrompt
 
-    app = AgentwireREPL(mode="bypass")  # bypass so init doesn't need real SDK perms
+    app = AgentwireREPL(mode="bypass")
+    decisions: list = []
+
+    def _capture(decision):
+        decisions.append(decision)
+
     async with app.run_test() as pilot:
         await pilot.pause()
-        # Manually park a Future on the app — simulates can_use_tool awaiting.
-        loop = asyncio.get_event_loop()
-        future = loop.create_future()
-        app._pending_permission = future
-        app._pending_tool_name = "Bash"
+        modal = PermissionPrompt(tool_name="Bash", summary="ls -la")
+        app.push_screen(modal, _capture)
+        for _ in range(5):
+            await pilot.pause()
+        # The modal is up — pressing 'y' triggers action_decide('allow').
+        await pilot.press("y")
+        for _ in range(5):
+            await pilot.pause()
+        assert decisions == ["allow"]
 
-        inp = app.query_one("#input", Input)
-        inp.value = "y"
-        await inp.action_submit()
+
+@pytest.mark.asyncio
+async def test_permission_modal_buttons(patched_sdk, tmp_path, monkeypatch):
+    # Verify the three decision buttons each map to their decision string
+    # via the on_button_pressed handler.
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL, PermissionPrompt
+
+    app = AgentwireREPL(mode="bypass")
+    decisions: list = []
+
+    async with app.run_test() as pilot:
         await pilot.pause()
-
-        assert future.done()
-        assert future.result() == "y"
+        for expected in ("allow", "deny", "always"):
+            modal = PermissionPrompt(tool_name="Bash", summary="ls -la")
+            app.push_screen(modal, decisions.append)
+            for _ in range(5):
+                await pilot.pause()
+            # Click the button by id.
+            await pilot.click(f"#{expected}")
+            for _ in range(5):
+                await pilot.pause()
+        assert decisions == ["allow", "deny", "always"]
 
 
 class TestActionSink:
