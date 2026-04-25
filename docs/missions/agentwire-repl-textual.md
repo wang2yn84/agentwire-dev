@@ -463,4 +463,4 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 - [x] **Phase 3B** — `@`-mention autocomplete (#136, 2026-04-25; live preview in action pane + Tab to complete to top match)
 - [x] **Phase 3C** — slash command palette (#137, 2026-04-25; Ctrl+P opens fuzzy picker)
 - [x] **Phase 3D** — cost sparkline + transcript scrubber (#138, 2026-04-25)
-- [ ] **Phase 3E** — walkthrough doc
+- [x] **Phase 3E** — walkthrough doc (#139, 2026-04-25; `docs/repl-tui.md`. GIFs deferred until daily-driving captures good demo footage)
