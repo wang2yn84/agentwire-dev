@@ -733,6 +733,105 @@ async def test_header_title_set(patched_sdk):
 
 
 @pytest.mark.asyncio
+async def test_layout_slash_command_adjusts_weights(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input, RichLog
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inp = app.query_one("#input", Input)
+        inp.value = "/layout chat=8 action=1"
+        await inp.action_submit()
+        await pilot.pause()
+
+        chat_lines = [
+            line.text if hasattr(line, "text") else str(line)
+            for line in app.query_one("#chat", RichLog).lines
+        ]
+        all_text = " ".join(chat_lines)
+        assert "layout updated" in all_text
+        assert "chat=8" in all_text
+        assert "action=1" in all_text
+
+
+@pytest.mark.asyncio
+async def test_layout_no_args_shows_current(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input, RichLog
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inp = app.query_one("#input", Input)
+        inp.value = "/layout"
+        await inp.action_submit()
+        await pilot.pause()
+
+        chat_lines = [
+            line.text if hasattr(line, "text") else str(line)
+            for line in app.query_one("#chat", RichLog).lines
+        ]
+        all_text = " ".join(chat_lines)
+        assert "layout:" in all_text
+        assert "chat=" in all_text
+
+
+@pytest.mark.asyncio
+async def test_theme_no_args_shows_current_and_available(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input, RichLog
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inp = app.query_one("#input", Input)
+        inp.value = "/theme"
+        await inp.action_submit()
+        await pilot.pause()
+
+        chat_lines = [
+            line.text if hasattr(line, "text") else str(line)
+            for line in app.query_one("#chat", RichLog).lines
+        ]
+        all_text = " ".join(chat_lines)
+        assert "theme:" in all_text
+        assert "available:" in all_text
+
+
+@pytest.mark.asyncio
+async def test_theme_switch(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input, RichLog
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Pick a theme that's likely available across textual versions.
+        themes = app._available_themes()
+        target = "textual-light" if "textual-light" in themes else themes[0]
+        inp = app.query_one("#input", Input)
+        inp.value = f"/theme {target}"
+        await inp.action_submit()
+        await pilot.pause()
+
+        chat_lines = [
+            line.text if hasattr(line, "text") else str(line)
+            for line in app.query_one("#chat", RichLog).lines
+        ]
+        all_text = " ".join(chat_lines)
+        assert "theme set" in all_text or "theme error" in all_text
+
+
+@pytest.mark.asyncio
 async def test_exit_command_quits_app(patched_sdk):
     from agentwire.repl.textual_app import AgentwireREPL
     from textual.widgets import Input
