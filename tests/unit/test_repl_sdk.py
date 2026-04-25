@@ -53,7 +53,7 @@ class TestBuildOptions:
         assert opts.kwargs["allowed_tools"] == FULL_TOOLS
         assert opts.kwargs["model"] == DEFAULT_MODEL
         assert opts.kwargs["effort"] == DEFAULT_EFFORT
-        assert opts.kwargs["thinking"] == {"type": "adaptive"}
+        assert opts.kwargs["thinking"] == {"type": "adaptive", "display": "summarized"}
         assert opts.kwargs["setting_sources"] == ["user"]
 
     def test_prompted_mode(self, tmp_path):
@@ -1015,10 +1015,193 @@ class TestInteractiveLoop:
         assert "prompt_toolkit not installed" in err
 
 
+class TestStreamRenderState:
+    """Partial-message rendering — added 2026-04-25 to fix the silent gap."""
+
+    def _state(self):
+        from agentwire.repl.app import _StreamRenderState
+        return _StreamRenderState()
+
+    def test_text_delta_streams_inline(self):
+        s = self._state()
+        out = io.StringIO()
+        s.handle_partial(
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+            out,
+        )
+        s.handle_partial(
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello "}},
+            out,
+        )
+        s.handle_partial(
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "world"}},
+            out,
+        )
+        s.handle_partial({"type": "content_block_stop"}, out)
+        rendered = out.getvalue()
+        assert "Hello world" in rendered
+        assert s.streamed_text is True
+        assert s.open_block is None
+
+    def test_thinking_delta_streams_inline(self):
+        s = self._state()
+        out = io.StringIO()
+        s.handle_partial(
+            {"type": "content_block_start", "content_block": {"type": "thinking"}},
+            out,
+        )
+        s.handle_partial(
+            {"type": "content_block_delta",
+             "delta": {"type": "thinking_delta", "thinking": "let me\nplan this"}},
+            out,
+        )
+        s.handle_partial({"type": "content_block_stop"}, out)
+        rendered = out.getvalue()
+        assert "[thinking: let me plan this]" in rendered
+        assert s.streamed_thinking is True
+
+    def test_input_json_delta_ignored(self):
+        # Tool input streaming via input_json_delta would dump raw JSON bytes
+        # into the chat — we deliberately swallow these and rely on the
+        # snapshot AssistantMessage's [→ Write file.html] formatted summary.
+        s = self._state()
+        out = io.StringIO()
+        s.handle_partial(
+            {"type": "content_block_start",
+             "content_block": {"type": "tool_use", "name": "Write"}},
+            out,
+        )
+        s.handle_partial(
+            {"type": "content_block_delta",
+             "delta": {"type": "input_json_delta", "partial_json": '{"file_path": "x"}'}},
+            out,
+        )
+        # No raw JSON in output
+        assert '"file_path"' not in out.getvalue()
+
+    def test_assistant_skips_streamed_text(self, monkeypatch):
+        # When partials already streamed text, the snapshot AssistantMessage
+        # text block should NOT re-render.
+        from agentwire.repl.app import render_message, _StreamRenderState
+        s = _StreamRenderState()
+        s.streamed_text = True
+        out = io.StringIO()
+
+        msg = FakeAssistantMessage(content=[{"type": "text", "text": "full reply"}])
+        render_message(
+            msg,
+            AssistantMessage=FakeAssistantMessage,
+            UserMessage=FakeUserMessage,
+            SystemMessage=FakeSystemMessage,
+            ResultMessage=FakeResultMessage,
+            out=out,
+            stream_state=s,
+        )
+        assert "full reply" not in out.getvalue()
+        # state resets after snapshot
+        assert s.streamed_text is False
+
+    def test_assistant_renders_when_no_partials(self):
+        from agentwire.repl.app import render_message, _StreamRenderState
+        s = _StreamRenderState()
+        out = io.StringIO()
+        msg = FakeAssistantMessage(content=[{"type": "text", "text": "full reply"}])
+        render_message(
+            msg,
+            AssistantMessage=FakeAssistantMessage,
+            UserMessage=FakeUserMessage,
+            SystemMessage=FakeSystemMessage,
+            ResultMessage=FakeResultMessage,
+            out=out,
+            stream_state=s,
+        )
+        assert "full reply" in out.getvalue()
+
+    def test_heartbeat_inline_when_open_block(self):
+        s = self._state()
+        out = io.StringIO()
+        s.handle_partial(
+            {"type": "content_block_start", "content_block": {"type": "thinking"}},
+            out,
+        )
+        s.heartbeat(out)
+        s.heartbeat(out)
+        # Two dots appended to the open thinking line.
+        rendered = out.getvalue()
+        assert rendered.count("·") == 2
+
+    def test_heartbeat_standalone_when_idle(self):
+        s = self._state()
+        out = io.StringIO()
+        s.heartbeat(out)
+        s.heartbeat(out)
+        # Forms a single status line: "[…still working · 5s · 10s"
+        # (no trailing ] until a real event consumes it)
+        rendered = out.getvalue()
+        assert "still working" in rendered
+        assert "5s" in rendered and "10s" in rendered
+
+    def test_heartbeat_consumed_by_real_event(self):
+        s = self._state()
+        out = io.StringIO()
+        s.heartbeat(out)
+        # Real event arrives → consumes the open heartbeat line
+        s.handle_partial(
+            {"type": "content_block_start", "content_block": {"type": "text"}},
+            out,
+        )
+        rendered = out.getvalue()
+        # Heartbeat line was closed (saw "]\n" before any content).
+        assert "still working" in rendered
+        assert rendered.index("]") < rendered.rindex("\n")
+
+
+class TestHeartbeatIter:
+    def test_emits_heartbeat_on_idle(self):
+        from agentwire.repl.app import _heartbeat_iter, _HEARTBEAT
+        import asyncio
+
+        async def slow_source():
+            await asyncio.sleep(0.15)
+            yield "done"
+
+        async def collect():
+            results = []
+            async for x in _heartbeat_iter(slow_source(), idle_timeout=0.05):
+                results.append(x)
+                if x == "done":
+                    break
+            return results
+
+        results = asyncio.run(collect())
+        assert _HEARTBEAT in results
+        assert "done" in results
+
+    def test_no_heartbeat_when_fast(self):
+        from agentwire.repl.app import _heartbeat_iter, _HEARTBEAT
+        import asyncio
+
+        async def fast_source():
+            yield 1
+            yield 2
+
+        async def collect():
+            results = []
+            async for x in _heartbeat_iter(fast_source(), idle_timeout=1.0):
+                results.append(x)
+            return results
+
+        results = asyncio.run(collect())
+        assert results == [1, 2]
+        assert _HEARTBEAT not in results
+
+
 class TestThinkingConfig:
     def test_adaptive_default(self):
+        # adaptive now defaults to display:summarized (Opus 4.7 hides
+        # thinking by default; we always want it visible in the REPL).
         from agentwire.repl.app import _thinking_config
-        assert _thinking_config("adaptive") == {"type": "adaptive"}
+        assert _thinking_config("adaptive") == {"type": "adaptive", "display": "summarized"}
 
     def test_summarized_sets_display(self):
         from agentwire.repl.app import _thinking_config
@@ -1030,7 +1213,7 @@ class TestThinkingConfig:
 
     def test_unknown_falls_back_adaptive(self):
         from agentwire.repl.app import _thinking_config
-        assert _thinking_config("nonsense") == {"type": "adaptive"}
+        assert _thinking_config("nonsense") == {"type": "adaptive", "display": "summarized"}
 
 
 class TestBottomToolbar:

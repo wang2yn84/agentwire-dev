@@ -78,14 +78,22 @@ def _damage_control_enabled() -> bool:
 
 
 def _thinking_config(mode: str) -> dict | None:
-    """Translate the REPL's `/thinking` mode into an SDK thinking config."""
+    """Translate the REPL's `/thinking` mode into an SDK thinking config.
+
+    `adaptive` defaults to `display: "summarized"` so users see reasoning
+    progress rather than a long silent pause — Opus 4.7 omits thinking
+    content by default, which made the REPL look frozen during a long
+    write-the-whole-html-file turn (real user report 2026-04-25). Set
+    `/thinking off` to disable thinking entirely; there's no separate
+    "adaptive but hidden" mode anymore — wasn't useful in practice.
+    """
     if mode == "adaptive":
-        return {"type": "adaptive"}
+        return {"type": "adaptive", "display": "summarized"}
     if mode == "summarized":
         return {"type": "adaptive", "display": "summarized"}
     if mode == "off":
         return {"type": "disabled"}
-    return {"type": "adaptive"}
+    return {"type": "adaptive", "display": "summarized"}
 
 
 def run_repl(
@@ -154,7 +162,13 @@ async def _run_print_mode(
     try:
         async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
-            async for message in client.receive_response():
+            stream_state = _StreamRenderState()
+            async for message in _heartbeat_iter(
+                client.receive_response(), idle_timeout=5.0,
+            ):
+                if message is _HEARTBEAT:
+                    stream_state.heartbeat(sys.stdout)
+                    continue
                 try:
                     render_message(
                         message,
@@ -163,6 +177,7 @@ async def _run_print_mode(
                         SystemMessage=SystemMessage,
                         ResultMessage=ResultMessage,
                         out=sys.stdout,
+                        stream_state=stream_state,
                     )
                     if isinstance(message, ResultMessage) and getattr(message, "is_error", False):
                         exit_code = 1
@@ -210,7 +225,12 @@ def build_options(
         "permission_mode": PERMISSION_MODE_MAP.get(mode, "bypassPermissions"),
         "allowed_tools": allowed,
         "setting_sources": ["user"],       # load ~/.claude/hooks — damage-control
-        "include_partial_messages": False,
+        # Partial messages stream incremental thinking text and tool input
+        # as it's generated. Without this, an Opus 4.7 turn that writes a
+        # 10KB HTML file inside a Write tool input shows nothing for ~120s
+        # between [→ Write ...] and the final result. With it, the user
+        # sees thinking summaries and tool input streaming in real time.
+        "include_partial_messages": True,
         "effort": effort,
         "thinking": _thinking_config(thinking_mode),
     }
@@ -322,13 +342,35 @@ def render_message(
     SystemMessage: Any,
     ResultMessage: Any,
     out: Any = sys.stdout,
+    stream_state: "_StreamRenderState | None" = None,
 ) -> None:
     """Render one SDK message to the terminal.
 
     Compact, human-readable output matching the spirit of pi's JSONL but for
     a terminal reader. Tools like `Read`/`Bash` show the target; tool results
     show a one-line preview.
+
+    `stream_state` carries cross-message bookkeeping for the partial-message
+    stream (Phase 3 PR ?, 2026-04-25): when partial events have already
+    streamed text/thinking content for an assistant turn, the final
+    AssistantMessage that arrives at message_stop would otherwise re-render
+    everything. We track which content indices were streamed and skip them.
     """
+    # StreamEvent is a TypedDict (`{uuid, session_id, event, parent_tool_use_id}`)
+    # delivered when include_partial_messages=True. The `event` payload mirrors
+    # Anthropic's streaming API. We render thinking_delta + text_delta inline so
+    # users see reasoning + reply assembling in real time. Other event types
+    # (input_json_delta, message_delta, message_stop) are noise here.
+    if isinstance(message, dict) and "event" in message and "uuid" in message:
+        if stream_state is not None:
+            stream_state.handle_partial(message["event"], out)
+        return
+
+    # Any non-partial message arriving — close out a pending heartbeat line so
+    # the upcoming render starts on a clean line.
+    if stream_state is not None:
+        stream_state._consume_heartbeat(out)
+
     if isinstance(message, SystemMessage):
         if getattr(message, "subtype", None) == "init":
             data = getattr(message, "data", {}) or {}
@@ -339,9 +381,15 @@ def render_message(
         return
 
     if isinstance(message, AssistantMessage):
+        # Close any open partial line so the snapshot render starts cleanly.
+        if stream_state is not None and stream_state.partials_active:
+            stream_state.close_open_block(out)
         for block in getattr(message, "content", []) or []:
             btype = _block_type(block)
             if btype == "text":
+                # Text already streamed via partials → skip redundant snapshot render.
+                if stream_state is not None and stream_state.streamed_text:
+                    continue
                 text = _block_attr(block, "text", "") or ""
                 if text:
                     out.write(text)
@@ -353,11 +401,16 @@ def render_message(
                 summary = _format_tool_input(name, inp)
                 out.write(f"[→ {name}{' ' + summary if summary else ''}]\n")
             elif btype == "thinking":
+                # Thinking already streamed live via partials → skip snapshot.
+                if stream_state is not None and stream_state.streamed_thinking:
+                    continue
                 thinking = _block_attr(block, "thinking", "") or ""
                 first = thinking.split("\n", 1)[0].strip()
                 if first:
                     preview = first if len(first) <= 80 else first[:77] + "..."
                     out.write(f"[thinking: {preview}]\n")
+        if stream_state is not None:
+            stream_state.reset_for_next_assistant_turn()
         return
 
     if isinstance(message, UserMessage):
@@ -743,7 +796,13 @@ async def _run_sdk_session(
 
             try:
                 await client.query(expanded_text)
-                async for message in client.receive_response():
+                stream_state = _StreamRenderState()
+                async for message in _heartbeat_iter(
+                    client.receive_response(), idle_timeout=5.0,
+                ):
+                    if message is _HEARTBEAT:
+                        stream_state.heartbeat(sys.stdout)
+                        continue
                     try:
                         render_message(
                             message,
@@ -752,6 +811,7 @@ async def _run_sdk_session(
                             SystemMessage=SystemMessage,
                             ResultMessage=ResultMessage,
                             out=sys.stdout,
+                            stream_state=stream_state,
                         )
                         sys.stdout.flush()
                         _persist_sdk_message(
@@ -854,3 +914,148 @@ def _prompt_sync(prompt: str) -> str:
     sys.stdout.write(prompt)
     sys.stdout.flush()
     return sys.stdin.readline()
+
+
+# -------- streaming visibility (2026-04-25) --------
+
+# Sentinel yielded by _heartbeat_iter when the inner async iter has stalled
+# past idle_timeout. The render loop watches for this and prints a heartbeat.
+_HEARTBEAT = object()
+
+
+async def _heartbeat_iter(async_iter, idle_timeout: float):
+    """Yield items from `async_iter`; yield `_HEARTBEAT` when idle.
+
+    `client.receive_response()` is an async iterator that may sit silent for
+    tens of seconds while the model thinks or writes a long tool input.
+    On each idle timeout we yield `_HEARTBEAT` so the renderer can show
+    progress, but we keep the underlying `__anext__` task pending — using
+    `asyncio.wait_for` would cancel it and lose the pending event.
+    """
+    iterator = async_iter.__aiter__()
+    pending: asyncio.Task | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(iterator.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=idle_timeout)
+            if pending in done:
+                try:
+                    yield pending.result()
+                except StopAsyncIteration:
+                    pending = None
+                    return
+                pending = None
+            else:
+                yield _HEARTBEAT
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+
+
+class _StreamRenderState:
+    """Per-turn bookkeeping for partial-message rendering.
+
+    The SDK delivers StreamEvents (TypedDict with a `uuid` + `event` payload)
+    when `include_partial_messages=True`. We render thinking_delta and
+    text_delta deltas inline so the user sees progress; the snapshot
+    AssistantMessage at message_stop then skips re-rendering anything we
+    already showed.
+    """
+
+    def __init__(self) -> None:
+        self.streamed_text = False
+        self.streamed_thinking = False
+        self.open_block: str | None = None  # "thinking" | "text" | None
+        self._heartbeat_count = 0
+        self._heartbeat_started_inline = False
+
+    @property
+    def partials_active(self) -> bool:
+        return self.streamed_text or self.streamed_thinking or self.open_block is not None
+
+    def handle_partial(self, event: dict, out: Any) -> None:
+        """Render one StreamEvent.event payload."""
+        if not isinstance(event, dict):
+            return
+        etype = event.get("type")
+        # Heartbeat may have left a `[…still working]` line that we want to
+        # consume before showing real content.
+        if etype in ("content_block_start", "content_block_delta", "message_delta"):
+            self._consume_heartbeat(out)
+
+        if etype == "content_block_start":
+            block = event.get("content_block") or {}
+            btype = block.get("type")
+            if btype == "thinking":
+                out.write("[thinking: ")
+                self.open_block = "thinking"
+                self.streamed_thinking = True
+            elif btype == "text":
+                # Newline before assistant text so it doesn't pile onto the
+                # previous line (often a tool result preview).
+                out.write("\n")
+                self.open_block = "text"
+                self.streamed_text = True
+            # tool_use partials surface their input via input_json_delta —
+            # we don't show JSON bytes mid-stream; the snapshot AssistantMessage
+            # gives the formatted summary at end of turn.
+
+        elif etype == "content_block_delta":
+            delta = event.get("delta") or {}
+            dtype = delta.get("type")
+            if dtype == "thinking_delta" and self.open_block == "thinking":
+                text = delta.get("thinking", "") or ""
+                if text:
+                    # Collapse newlines inside thinking to keep the line flowing.
+                    out.write(text.replace("\n", " "))
+            elif dtype == "text_delta" and self.open_block == "text":
+                out.write(delta.get("text", "") or "")
+
+        elif etype == "content_block_stop":
+            if self.open_block == "thinking":
+                out.write("]\n")
+            elif self.open_block == "text":
+                out.write("\n")
+            self.open_block = None
+
+    def close_open_block(self, out: Any) -> None:
+        """Force-close any in-flight open block (e.g. before snapshot render)."""
+        if self.open_block == "thinking":
+            out.write("]\n")
+        elif self.open_block == "text":
+            out.write("\n")
+        self.open_block = None
+
+    def reset_for_next_assistant_turn(self) -> None:
+        """Snapshot rendered → flags reset so the next assistant turn (within
+        the same SDK call, if it tool-uses then text-replies) is unambiguous."""
+        self.streamed_text = False
+        self.streamed_thinking = False
+        self.open_block = None
+        self._heartbeat_count = 0
+        self._heartbeat_started_inline = False
+
+    def heartbeat(self, out: Any) -> None:
+        """Called when the SDK has been silent past `idle_timeout` seconds."""
+        self._heartbeat_count += 1
+        elapsed = self._heartbeat_count * 5
+        # If we're mid-stream inside an open block, append a tiny "·" to that
+        # line so the user sees liveness without breaking flow. Otherwise
+        # write a standalone status line.
+        if self.open_block is not None:
+            out.write("·")
+            out.flush() if hasattr(out, "flush") else None
+            return
+        if not self._heartbeat_started_inline:
+            out.write(f"[…still working · {elapsed}s")
+            self._heartbeat_started_inline = True
+        else:
+            out.write(f" · {elapsed}s")
+        out.flush() if hasattr(out, "flush") else None
+
+    def _consume_heartbeat(self, out: Any) -> None:
+        if self._heartbeat_started_inline:
+            out.write("]\n")
+            self._heartbeat_started_inline = False
+            self._heartbeat_count = 0
