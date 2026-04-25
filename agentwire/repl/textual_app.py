@@ -1,4 +1,4 @@
-"""Textual-based rendering layer for `agentwire repl` (Phase 1B skeleton).
+"""Textual-based rendering layer for `agentwire repl` (Phase 1C parity).
 
 Layout (Phase 1 — minimal; Phase 2 splits into chat + current-action with
 proportional weights):
@@ -24,8 +24,11 @@ Event flow:
 
 Workers MUST use `self.post_message(...)` — never call RichLog.write directly.
 
-Phase 1B scope: chat history + input + slash dispatch + SDK streaming. No
-persistence, no @-mentions, no permission prompts (those land in Phase 1C).
+Phase 1C scope: full feature parity with the legacy line-mode REPL —
+transcript persistence, @-mention expansion, sdk-prompted permission
+prompts (inline placeholder), /clear and /resume lifecycle (close+reopen
+ClaudeSDKClient with new options), CLAUDECODE env handling, resume
+lookup via persistence.load_session.
 
 See `docs/missions/agentwire-repl-textual.md` for the full plan.
 """
@@ -44,6 +47,7 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import Footer, Header, Input, RichLog
 
+from agentwire.repl import persistence
 from agentwire.repl.app import (
     BANNER,
     DEFAULT_MODEL,
@@ -51,8 +55,10 @@ from agentwire.repl.app import (
     RESTRICTED_TOOLS,
     _HEARTBEAT,
     _StreamRenderState,
+    _format_tool_input,
     _heartbeat_iter,
     _mcp_enabled,
+    _persist_sdk_message,
     build_options,
     render_message,
 )
@@ -64,7 +70,13 @@ from agentwire.repl.commands import (
     dispatch_command,
 )
 from agentwire.repl.context import load_session_context
-from agentwire.repl.state import ReplState, track_result, track_system_init
+from agentwire.repl.mentions import expand_mentions
+from agentwire.repl.state import (
+    ReplState,
+    reset_for_restart,
+    track_result,
+    track_system_init,
+)
 
 
 # ----- adapters -------------------------------------------------------------
@@ -224,6 +236,13 @@ class AgentwireREPL(App):
         self._sdk_classes: dict[str, Any] | None = None
         self._saved_claudecode: str | None = None
         self._exit_code = 0
+        self._transcript = None
+        self._ctx = None
+        # When sdk-prompted is asking for a tool decision, this holds the
+        # asyncio.Future the can_use_tool callback awaits. The input handler
+        # routes the next user submission as the answer instead of as a turn.
+        self._pending_permission: asyncio.Future | None = None
+        self._pending_tool_name: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -257,6 +276,12 @@ class AgentwireREPL(App):
         except Exception:
             # Never raise during shutdown.
             pass
+        if self._transcript is not None and self.state is not None:
+            try:
+                persistence.finalize(self._transcript, self.state)
+                self._transcript.close()
+            except Exception:
+                pass
         if self._saved_claudecode is not None:
             os.environ["CLAUDECODE"] = self._saved_claudecode
 
@@ -282,6 +307,19 @@ class AgentwireREPL(App):
             "ResultMessage": ResultMessage,
         }
 
+        # Resume lookup — find the prior session's last sdk_session_id.
+        resume_sdk_session_id: str | None = None
+        if self._cfg["resume"]:
+            prior = persistence.load_session(self._cfg["resume"])
+            if prior is None:
+                raise RuntimeError(
+                    f"no session named {self._cfg['resume']!r} under "
+                    f"{persistence.DEFAULT_REPL_HOME}"
+                )
+            ids = prior.get("sdk_session_ids") or []
+            if ids:
+                resume_sdk_session_id = ids[-1]
+
         # Build state.
         mode = self._cfg["mode"]
         placeholder = (RESTRICTED_TOOLS if mode == "restricted" else FULL_TOOLS).copy()
@@ -292,22 +330,23 @@ class AgentwireREPL(App):
         )
 
         # Roles + voice.
-        ctx = load_session_context(Path.cwd(), role_overrides=self._cfg["roles"])
-        self.state.role_names = list(ctx.role_names)
-        self.state.voice = ctx.voice
+        self._ctx = load_session_context(Path.cwd(), role_overrides=self._cfg["roles"])
+        self.state.role_names = list(self._ctx.role_names)
+        self.state.voice = self._ctx.voice
 
-        # Build options + open client. No can_use_tool yet (Phase 1C).
+        # Build options + open client. can_use_tool only in sdk-prompted.
+        can_use_tool = self._make_can_use_tool() if mode == "prompted" else None
         options = build_options(
             ClaudeAgentOptions,
             mode,
             self._cfg["model"],
             self._cfg["system_prompt"],
             cwd=Path.cwd(),
-            resume_sdk_session_id=None,
+            resume_sdk_session_id=resume_sdk_session_id,
             effort=self.state.effort,
             thinking_mode=self.state.thinking_mode,
-            can_use_tool=None,
-            session_context=ctx,
+            can_use_tool=can_use_tool,
+            session_context=self._ctx,
         )
         self.state.allowed_tools = (
             list(options.allowed_tools)
@@ -315,8 +354,25 @@ class AgentwireREPL(App):
             else list(getattr(options, "kwargs", {}).get("allowed_tools", []))
         )
 
+        # Transcript persistence (mirrors legacy REPL).
+        self._transcript = persistence.create_session(
+            mode=mode,
+            model=self._cfg["model"] or DEFAULT_MODEL,
+            allowed_tools=self.state.allowed_tools,
+            name=self._cfg["session_name"],
+        )
+        self.state.session_dir = str(self._transcript.session_dir)
+        self.state.transcript_name = self._transcript.name
+
         # Banner into chat.
         self._render_banner()
+        if resume_sdk_session_id:
+            self._sink.write(
+                f"Resuming {self._cfg['resume']!r} "
+                f"(sdk session {resume_sdk_session_id[:8]}…)\n"
+            )
+        self._sink.write(f"[transcript → {self._transcript.session_dir}]\n\n")
+        self._sink.flush()
 
         # CLAUDECODE env nesting fix (mirrors _run_interactive).
         self._saved_claudecode = os.environ.pop("CLAUDECODE", None)
@@ -346,12 +402,115 @@ class AgentwireREPL(App):
         self._sink.write("\n")
         self._sink.flush()
 
+    def _make_can_use_tool(self):
+        """Permission callback for `sdk-prompted` mode.
+
+        Phase 1C placeholder — surfaces a `[? allow Tool args? (y/n/a)]`
+        line in the chat log, parks an asyncio.Future, and routes the next
+        user submission as the answer instead of as a turn. Phase 2C
+        replaces this with a centered `ModalScreen`.
+        """
+        async def _can_use_tool(tool_name: str, tool_input: dict, ctx: Any):
+            from claude_agent_sdk import (
+                PermissionResultAllow,
+                PermissionResultDeny,
+            )
+
+            if tool_name in self.state.always_allow_tools:
+                return PermissionResultAllow()
+
+            summary = _format_tool_input(tool_name, tool_input or {})
+            line = f"[? allow {tool_name}{' ' + summary if summary else ''}? (y/n/a=always)]"
+            self._sink.write(line + "\n")
+            self._sink.flush()
+
+            loop = asyncio.get_event_loop()
+            future: asyncio.Future = loop.create_future()
+            self._pending_permission = future
+            self._pending_tool_name = tool_name
+            try:
+                answer = await future
+            except asyncio.CancelledError:
+                return PermissionResultDeny(message="user denied (cancelled)")
+            finally:
+                self._pending_permission = None
+                self._pending_tool_name = None
+
+            answer = (answer or "").strip().lower()
+            if answer in ("a", "always"):
+                self.state.always_allow_tools.add(tool_name)
+                self._sink.write(
+                    f"[allow · {tool_name} now always allowed this session]\n"
+                )
+                self._sink.flush()
+                return PermissionResultAllow()
+            if answer in ("", "y", "yes"):
+                return PermissionResultAllow()
+            self._sink.write(f"[deny · {tool_name}]\n")
+            self._sink.flush()
+            return PermissionResultDeny(message="user denied")
+
+        return _can_use_tool
+
+    async def _restart_session(self) -> None:
+        """Close+reopen the SDK client for /clear, /resume, /effort, /thinking."""
+        assert self.state is not None
+        assert self._sdk_classes is not None
+
+        next_resume_id = self.state.pending_resume_sdk_session_id
+        self.state.pending_resume_sdk_session_id = None
+
+        # Close current client first.
+        try:
+            if self._client_ctx is not None:
+                await self._client_ctx.__aexit__(None, None, None)
+        except Exception:
+            pass
+        self._client = None
+        self._client_ctx = None
+
+        # Rebuild options with possibly-new effort/thinking/resume.
+        can_use_tool = (
+            self._make_can_use_tool() if self._cfg["mode"] == "prompted" else None
+        )
+        options = build_options(
+            self._sdk_classes["ClaudeAgentOptions"],
+            self._cfg["mode"],
+            self._cfg["model"],
+            self._cfg["system_prompt"],
+            cwd=Path.cwd(),
+            resume_sdk_session_id=next_resume_id,
+            effort=self.state.effort,
+            thinking_mode=self.state.thinking_mode,
+            can_use_tool=can_use_tool,
+            session_context=self._ctx,
+        )
+
+        # Record the restart.
+        if self._transcript is not None:
+            self._transcript.write_event({
+                "type": "restart",
+                "resume_sdk_session_id": next_resume_id,
+            })
+        reset_for_restart(self.state)
+
+        # Reopen.
+        self._client_ctx = self._sdk_classes["ClaudeSDKClient"](options=options)
+        self._client = await self._client_ctx.__aenter__()
+
     # ------ input handling ------
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = (event.value or "").strip()
-        # Clear input field for next turn.
         event.input.value = ""
+
+        # Permission-pending branch: if sdk-prompted is awaiting a y/n/a
+        # answer, the next submission is the answer (not a slash command,
+        # not a turn).
+        if self._pending_permission is not None and not self._pending_permission.done():
+            self._pending_permission.set_result(text)
+            return
+
         if not text:
             return
         assert self._sink is not None
@@ -368,17 +527,36 @@ class AgentwireREPL(App):
                 self.exit(self._exit_code)
                 return
             if action in (RESTART, RESUME):
-                # Phase 1C wires the actual restart lifecycle. For now flag
-                # that this isn't yet implemented so users aren't surprised.
-                self._sink.write(
-                    "[/clear and /resume restart the SDK session — wired in Phase 1C]\n"
+                self.run_worker(
+                    self._restart_session(),
+                    exclusive=True,
+                    name="sdk-restart",
                 )
-                self._sink.flush()
             return
 
-        # Plain user turn — fire SDK in a worker.
+        # Expand @path mentions before sending (mirrors legacy REPL).
+        expanded_text, expansions = expand_mentions(text, cwd=Path.cwd())
+        if expansions:
+            count = len(expansions)
+            self._sink.write(
+                f"[expanded {count} mention"
+                f"{'s' if count != 1 else ''}: "
+                f"{', '.join(e.raw for e in expansions)}]\n"
+            )
+            self._sink.flush()
+
+        # Persist the user turn before firing the SDK.
+        if self._transcript is not None:
+            event_data: dict = {"type": "user_input", "text": text}
+            if expansions:
+                event_data["expanded_text"] = expanded_text
+                event_data["mentions"] = [
+                    {"raw": e.raw, "target": e.target} for e in expansions
+                ]
+            self._transcript.write_event(event_data)
+
         self.run_worker(
-            self._run_turn(text),
+            self._run_turn(expanded_text),
             exclusive=True,
             name="sdk-turn",
         )
@@ -434,8 +612,21 @@ class AgentwireREPL(App):
                 stream_state=self._stream_state,
             )
             self._sink.flush()
+            if self._transcript is not None:
+                _persist_sdk_message(
+                    msg,
+                    self._transcript,
+                    self._sdk_classes["AssistantMessage"],
+                    self._sdk_classes["UserMessage"],
+                    self._sdk_classes["SystemMessage"],
+                    self._sdk_classes["ResultMessage"],
+                )
             if isinstance(msg, self._sdk_classes["SystemMessage"]):
                 track_system_init(self.state, msg)
+                if self.state.session_id and self._transcript is not None:
+                    persistence.record_session_id(
+                        self._transcript, self.state.session_id
+                    )
             elif isinstance(msg, self._sdk_classes["ResultMessage"]):
                 track_result(self.state, msg)
                 if getattr(msg, "is_error", False):
