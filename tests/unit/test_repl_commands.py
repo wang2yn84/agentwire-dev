@@ -148,6 +148,17 @@ class TestTools:
         dispatch_command("/tools", state, out)
         assert "mode=restricted" in out.getvalue()
 
+    def test_mcp_attachment_called_out(self):
+        out = io.StringIO()
+        dispatch_command("/tools", _state(allowed_tools=["Read", "mcp__agentwire"]), out)
+        rendered = out.getvalue()
+        assert "MCP server attached" in rendered
+
+    def test_mcp_not_present_no_extra_line(self):
+        out = io.StringIO()
+        dispatch_command("/tools", _state(allowed_tools=["Read", "Bash"]), out)
+        assert "MCP server attached" not in out.getvalue()
+
 
 # --- /model ---
 

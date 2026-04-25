@@ -96,6 +96,11 @@ def _tools(state: ReplState, args: str, out: TextIO) -> str:
         out.write("[no tools allowed]\n")
         return CONTINUE
     out.write(f"[allowed tools (mode={state.mode}): {', '.join(state.allowed_tools)}]\n")
+    if any(t.startswith("mcp__agentwire") for t in state.allowed_tools):
+        out.write(
+            "[agentwire MCP server attached — sessions, panes, voice, scheduler, "
+            "channels, workflows, etc. are first-class tool calls]\n"
+        )
     return CONTINUE
 
 
