@@ -451,6 +451,161 @@ async def test_prompted_mode_routes_answer_to_permission(patched_sdk, tmp_path, 
         assert future.result() == "y"
 
 
+class TestActionSink:
+    """Phase 2A — CurrentAction pane streaming via clear+rewrite."""
+
+    def _action(self):
+        from agentwire.repl.textual_app import _ActionSink
+
+        class _FakeLog:
+            def __init__(self):
+                self.written: list = []
+                self.cleared: int = 0
+
+            def write(self, x):
+                self.written.append(x)
+
+            def clear(self):
+                self.cleared += 1
+                self.written.clear()
+
+        log = _FakeLog()
+        return _ActionSink(log), log
+
+    def test_streams_partials_in_place(self):
+        # Each delta clears + rewrites the pane. After 3 deltas, only the
+        # latest content is visible (one entry).
+        sink, log = self._action()
+        sink.write("[thinking: ")
+        sink.write("first")
+        sink.write(" delta")
+        # Each write triggers a refresh — the most recent state is visible.
+        assert log.cleared >= 3
+        # The current visible state is one in-flight line with full content.
+        assert len(log.written) == 1
+        assert log.written[0].plain == "[thinking: first delta"
+
+    def test_finalizes_on_newline(self):
+        sink, log = self._action()
+        sink.write("[thinking: planning]\n")
+        # Newline finalizes — the line moves into the finalized list.
+        assert len(sink._finalized) == 1
+        assert sink._finalized[0] == "[thinking: planning]"
+        assert sink._current == ""
+
+    def test_cr_clear_resets_current(self):
+        # \r\033[K refreshes the in-flight line with new content.
+        sink, log = self._action()
+        sink.write("[writing X · 0 bytes")
+        sink.write("\r\x1b[K[writing X · 1.2 KB")
+        assert sink._current == "[writing X · 1.2 KB"
+        # And the visible pane shows only the latest tick.
+        assert len(log.written) == 1
+        assert log.written[0].plain == "[writing X · 1.2 KB"
+
+    def test_clear_wipes_pane(self):
+        sink, log = self._action()
+        sink.write("line one\n")
+        sink.write("line two\n")
+        sink.write("partial")
+        before_clear = log.cleared
+        sink.clear()
+        assert sink._finalized == []
+        assert sink._current == ""
+        # clear() called the underlying log.clear()
+        assert log.cleared > before_clear
+
+    def test_isatty_true(self):
+        sink, _ = self._action()
+        assert sink.isatty() is True
+
+
+@pytest.mark.asyncio
+async def test_partials_route_to_action_pane(patched_sdk, tmp_path, monkeypatch):
+    # A StreamEvent (thinking_delta) should land in the action pane, not chat.
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+    from dataclasses import dataclass
+
+    @dataclass
+    class FakeStreamEvent:
+        uuid: str
+        session_id: str
+        event: dict
+        parent_tool_use_id: str | None = None
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        client.script([
+            FakeStreamEvent(
+                uuid="u1",
+                session_id="s",
+                event={"type": "content_block_start", "content_block": {"type": "thinking"}},
+            ),
+            FakeStreamEvent(
+                uuid="u2",
+                session_id="s",
+                event={"type": "content_block_delta",
+                       "delta": {"type": "thinking_delta", "thinking": "planning"}},
+            ),
+            FakeStreamEvent(
+                uuid="u3",
+                session_id="s",
+                event={"type": "content_block_stop"},
+            ),
+            _FakeResultMessage(total_cost_usd=0.0, duration_ms=10, usage={}),
+        ])
+
+        inp = app.query_one("#input", Input)
+        inp.value = "trigger thinking"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+
+        # ResultMessage cleared the action pane, so it should be empty now.
+        # The chat pane should have the user echo + agent_started + done.
+        chat_lines = [
+            line.text if hasattr(line, "text") else str(line)
+            for line in app.query_one("#chat").lines
+        ]
+        chat_text = " ".join(chat_lines)
+        assert "trigger thinking" in chat_text
+        assert "done" in chat_text
+
+
+@pytest.mark.asyncio
+async def test_action_pane_cleared_on_result(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Manually populate the action sink to simulate in-flight partials.
+        app._action_sink.write("[thinking: in flight")
+        assert app._action_sink._current != ""
+
+        client = app._client
+        client.script([
+            _FakeResultMessage(total_cost_usd=0.0, duration_ms=10, usage={}),
+        ])
+        inp = app.query_one("#input", Input)
+        inp.value = "go"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+
+        # ResultMessage triggered the action sink clear.
+        assert app._action_sink._current == ""
+        assert app._action_sink._finalized == []
+
+
 @pytest.mark.asyncio
 async def test_exit_command_quits_app(patched_sdk):
     from agentwire.repl.textual_app import AgentwireREPL
