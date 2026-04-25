@@ -32,7 +32,10 @@ export function renderCard(s) {
     const activity = activityStates.get(name) || s.activity || 'idle';
     const dotClass = activity === 'idle' ? 'dot-idle' : activity === 'processing' ? 'dot-processing' : activity === 'generating' ? 'dot-generating' : 'dot-playing';
     const tags = [];
-    if (s.type) tags.push(`<span class="sidebar-tag">${s.type}</span>`);
+    if (s.type) {
+        const typeClass = String(s.type).startsWith('sdk-') ? 'sidebar-tag sidebar-tag-sdk' : 'sidebar-tag';
+        tags.push(`<span class="${typeClass}">${s.type}</span>`);
+    }
     if (machine) tags.push(`<span class="sidebar-tag">@${machine}</span>`);
     const roles = (s.roles || []).map(r => `<span class="sidebar-tag sidebar-tag-role">${r}</span>`).join('');
     const path = s.path ? s.path.replace(/^\/Users\/[^/]+\//, '~/') : '';
