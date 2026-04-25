@@ -1145,6 +1145,59 @@ class TestStreamRenderState:
         assert s.open_block == "text"
         assert s.streamed_text is True
 
+    def test_no_ansi_codes_for_non_tty_output(self):
+        # Tests run with StringIO as `out` — isatty()==False — so no ANSI
+        # codes should ever leak into the captured output. Substring asserts
+        # in the rest of the suite depend on this.
+        s = self._state()
+        out = io.StringIO()
+        s.handle_partial(
+            {"type": "content_block_start", "content_block": {"type": "thinking"}},
+            out,
+        )
+        s.handle_partial(
+            {"type": "content_block_delta",
+             "delta": {"type": "thinking_delta", "thinking": "plan"}},
+            out,
+        )
+        s.handle_partial({"type": "content_block_stop"}, out)
+        rendered = out.getvalue()
+        assert "\x1b[" not in rendered  # no ANSI escapes
+        assert "[thinking: plan]" in rendered
+
+    def test_ansi_codes_emitted_for_tty_output(self):
+        # When out.isatty() is True, dim-style ANSI codes wrap the thinking
+        # block. This is the visual hierarchy: thinking is secondary noise,
+        # dim makes it recede.
+        from agentwire.repl.app import _StreamRenderState
+
+        class _TTYBuffer:
+            def __init__(self):
+                self.buf = io.StringIO()
+
+            def write(self, s):
+                self.buf.write(s)
+
+            def flush(self):
+                pass
+
+            def isatty(self):
+                return True
+
+            def getvalue(self):
+                return self.buf.getvalue()
+
+        s = _StreamRenderState()
+        out = _TTYBuffer()
+        s.handle_partial(
+            {"type": "content_block_start", "content_block": {"type": "thinking"}},
+            out,
+        )
+        s.handle_partial({"type": "content_block_stop"}, out)
+        rendered = out.getvalue()
+        assert "\x1b[" in rendered  # ANSI present
+        assert "[thinking: " in rendered  # raw text still recoverable
+
     def test_heartbeat_silent_during_tool_use(self):
         # The byte counter IS the liveness signal during tool_use — adding
         # `·` dots would corrupt the in-place CR rewrite.

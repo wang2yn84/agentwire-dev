@@ -384,7 +384,7 @@ def render_message(
             model = data.get("model", "") or ""
             sid = (data.get("session_id") or data.get("sessionId") or "")[:8]
             parts = [p for p in [model, f"session {sid}" if sid else ""] if p]
-            out.write(f"[agent started · {' · '.join(parts)}]\n")
+            out.write(_styled(out, f"[agent started · {' · '.join(parts)}]", "dim cyan") + "\n")
         return
 
     if isinstance(message, AssistantMessage):
@@ -406,7 +406,8 @@ def render_message(
                 name = _block_attr(block, "name", "") or ""
                 inp = _block_attr(block, "input", {}) or {}
                 summary = _format_tool_input(name, inp)
-                out.write(f"[→ {name}{' ' + summary if summary else ''}]\n")
+                line = f"[→ {name}{' ' + summary if summary else ''}]"
+                out.write(_styled(out, line, "bold cyan") + "\n")
             elif btype == "thinking":
                 # Thinking already streamed live via partials → skip snapshot.
                 if stream_state is not None and stream_state.streamed_thinking:
@@ -415,7 +416,7 @@ def render_message(
                 first = thinking.split("\n", 1)[0].strip()
                 if first:
                     preview = first if len(first) <= 80 else first[:77] + "..."
-                    out.write(f"[thinking: {preview}]\n")
+                    out.write(_styled(out, f"[thinking: {preview}]", "dim") + "\n")
         if stream_state is not None:
             stream_state.reset_for_next_assistant_turn()
         return
@@ -428,7 +429,10 @@ def render_message(
                 if btype == "tool_result":
                     result_content = _block_attr(block, "content", None)
                     preview = _format_tool_result(result_content)
-                    out.write(f"[← result: {preview}]\n")
+                    is_err = bool(_block_attr(block, "is_error", False))
+                    style = "red" if is_err else "green"
+                    label = "error" if is_err else "result"
+                    out.write(_styled(out, f"[← {label}: {preview}]", style) + "\n")
         return
 
     if isinstance(message, ResultMessage):
@@ -449,9 +453,9 @@ def render_message(
         if getattr(message, "is_error", False):
             err = getattr(message, "result", None) or "unknown error"
             category = _classify_sdk_error("ResultMessage", str(err))
-            out.write(f"[error · {category}{suffix}] {err}\n")
+            out.write(_styled(out, f"[error · {category}{suffix}] {err}", "bold red") + "\n")
         else:
-            out.write(f"[done{suffix}]\n")
+            out.write(_styled(out, f"[done{suffix}]", "dim green") + "\n")
         return
 
 
@@ -967,6 +971,100 @@ def _flush(out: Any) -> None:
         flush()
 
 
+# --- Color / style ----------------------------------------------------------
+#
+# Visual hierarchy goal: the user's eye should land on the assistant's actual
+# answer first; everything bracketed is metadata and should recede. We use
+# Rich for styling because:
+#   1. It's the rendering layer Textual is built on, so the markup we write
+#      here translates 1:1 to RichLog content when we do the Textual rewrite
+#      (mission: docs/missions/agentwire-repl-textual.md).
+#   2. It handles TTY detection, NO_COLOR, color-system fallback, etc., so we
+#      don't have to.
+#
+# Style scheme (Rich style strings — translate to Textual identically):
+#   thinking      → dim                (secondary; reasoning noise)
+#   tool_progress → dim yellow         (in-flight; "byte counter ticking")
+#   tool_done     → cyan               (closed; "wrote N KB")
+#   tool_call     → bold cyan          ([→ Tool args] — the action)
+#   tool_result   → green              ([← result: ...])
+#   heartbeat     → dim                ([…still working · 5s])
+#   agent_meta    → dim cyan           ([agent started · ...])
+#   done          → dim green          ([done · tok · cost · time])
+#   error         → bold red           ([error · ...])
+#
+# Assistant text + thinking content stay uncolored — default fg is the
+# brightest, which is what we want for the actual reading material.
+
+from io import StringIO as _StyleStringIO
+
+try:
+    from rich.console import Console as _RichConsole
+
+    _STYLE_BUF = _StyleStringIO()
+    _STYLE_CONSOLE = _RichConsole(
+        file=_STYLE_BUF,
+        force_terminal=True,
+        color_system="truecolor",
+        highlight=False,
+        markup=True,
+        emoji=False,
+        soft_wrap=True,
+    )
+    _RICH_AVAILABLE = True
+except ImportError:  # pragma: no cover — rich is a required dep but stay safe
+    _RICH_AVAILABLE = False
+
+
+def _ansi_pair(style: str) -> tuple[str, str]:
+    """Return `(open, close)` ANSI sequences for a Rich style string.
+
+    Cached implicitly via the dict below — the renderer hits the same handful
+    of styles thousands of times per turn.
+    """
+    if not _RICH_AVAILABLE or not style:
+        return ("", "")
+    cached = _STYLE_CACHE.get(style)
+    if cached is not None:
+        return cached
+    _STYLE_BUF.seek(0)
+    _STYLE_BUF.truncate()
+    # Sentinel \x00 splits open codes from close codes in Rich's output.
+    _STYLE_CONSOLE.print(f"[{style}]\x00[/{style}]", end="")
+    raw = _STYLE_BUF.getvalue()
+    open_, _sep, close = raw.partition("\x00")
+    pair = (open_, close)
+    _STYLE_CACHE[style] = pair
+    return pair
+
+
+_STYLE_CACHE: dict[str, tuple[str, str]] = {}
+
+
+def _styled(out: Any, text: str, style: str) -> str:
+    """Wrap `text` in ANSI codes for `style` if `out` is a TTY, else plain."""
+    if not style:
+        return text
+    if not getattr(out, "isatty", lambda: False)():
+        return text
+    open_, close = _ansi_pair(style)
+    return f"{open_}{text}{close}"
+
+
+def _open(out: Any, style: str) -> str:
+    """Open ANSI for `style` if `out` is a TTY (used to span multiple writes)."""
+    if not style or not getattr(out, "isatty", lambda: False)():
+        return ""
+    return _ansi_pair(style)[0]
+
+
+def _close(out: Any, style: str) -> str:
+    """Close ANSI for `style` (matches `_open`)."""
+    if not style or not getattr(out, "isatty", lambda: False)():
+        return ""
+    return _ansi_pair(style)[1]
+
+
 def _format_bytes(n: int) -> str:
     """Human-readable byte count: `42 bytes`, `1.2 KB`, `3.4 MB`."""
     if n < 1024:
@@ -1013,12 +1111,16 @@ class _StreamRenderState:
             block = event.get("content_block") or {}
             btype = block.get("type")
             if btype == "thinking":
-                out.write("[thinking: ")
+                # Whole thinking block is dim — the bracket marker AND the
+                # streamed reasoning text inside. ANSI styling is sticky
+                # across writes until we emit the close on content_block_stop.
+                out.write(_open(out, "dim") + "[thinking: ")
                 self.open_block = "thinking"
                 self.streamed_thinking = True
             elif btype == "text":
                 # Newline before assistant text so it doesn't pile onto the
-                # previous line (often a tool result preview).
+                # previous line (often a tool result preview). No style — the
+                # answer is the brightest thing on screen by default.
                 out.write("\n")
                 self.open_block = "text"
                 self.streamed_text = True
@@ -1032,7 +1134,10 @@ class _StreamRenderState:
                 self._tool_use_name = name
                 self._tool_use_bytes = 0
                 self.open_block = "tool_use"
-                out.write(f"[writing {name} input · 0 bytes")
+                out.write(
+                    _open(out, "dim yellow")
+                    + f"[writing {name} input · 0 bytes"
+                )
                 _flush(out)
 
         elif etype == "content_block_delta":
@@ -1042,6 +1147,7 @@ class _StreamRenderState:
                 text = delta.get("thinking", "") or ""
                 if text:
                     # Collapse newlines inside thinking to keep the line flowing.
+                    # Style is already opened via _open — just write text.
                     out.write(text.replace("\n", " "))
                     _flush(out)
             elif dtype == "text_delta" and self.open_block == "text":
@@ -1051,22 +1157,33 @@ class _StreamRenderState:
                 partial = delta.get("partial_json") or ""
                 self._tool_use_bytes += len(partial)
                 # Refresh the line in place via CR+clear-to-EOL so the byte
-                # count ticks live without spamming new lines.
+                # count ticks live without spamming new lines. Re-open the
+                # style each time because \033[K clears any prior ANSI state.
                 out.write(
-                    f"\r\033[K[writing {self._tool_use_name} input · "
-                    f"{_format_bytes(self._tool_use_bytes)}"
+                    "\r\033[K"
+                    + _open(out, "dim yellow")
+                    + f"[writing {self._tool_use_name} input · "
+                    + _format_bytes(self._tool_use_bytes)
                 )
                 _flush(out)
 
         elif etype == "content_block_stop":
             if self.open_block == "thinking":
-                out.write("]\n")
+                out.write("]" + _close(out, "dim") + "\n")
             elif self.open_block == "text":
                 out.write("\n")
             elif self.open_block == "tool_use":
+                # Closed counter switches from dim-yellow (in-flight) to cyan
+                # (settled) — visual signal the write phase is done.
                 out.write(
-                    f"\r\033[K[wrote {self._tool_use_name} input · "
-                    f"{_format_bytes(self._tool_use_bytes)}]\n"
+                    "\r\033[K"
+                    + _styled(
+                        out,
+                        f"[wrote {self._tool_use_name} input · "
+                        f"{_format_bytes(self._tool_use_bytes)}]",
+                        "cyan",
+                    )
+                    + "\n"
                 )
                 self._tool_use_name = None
                 self._tool_use_bytes = 0
@@ -1075,13 +1192,19 @@ class _StreamRenderState:
     def close_open_block(self, out: Any) -> None:
         """Force-close any in-flight open block (e.g. before snapshot render)."""
         if self.open_block == "thinking":
-            out.write("]\n")
+            out.write("]" + _close(out, "dim") + "\n")
         elif self.open_block == "text":
             out.write("\n")
         elif self.open_block == "tool_use":
             out.write(
-                f"\r\033[K[wrote {self._tool_use_name} input · "
-                f"{_format_bytes(self._tool_use_bytes)}]\n"
+                "\r\033[K"
+                + _styled(
+                    out,
+                    f"[wrote {self._tool_use_name} input · "
+                    f"{_format_bytes(self._tool_use_bytes)}]",
+                    "cyan",
+                )
+                + "\n"
             )
             self._tool_use_name = None
             self._tool_use_bytes = 0
@@ -1113,7 +1236,9 @@ class _StreamRenderState:
             _flush(out)
             return
         if not self._heartbeat_started_inline:
-            out.write(f"[…still working · {elapsed}s")
+            # Open dim style; close on _consume_heartbeat when a real event
+            # arrives. Same dim treatment as thinking — both are "noise."
+            out.write(_open(out, "dim") + f"[…still working · {elapsed}s")
             self._heartbeat_started_inline = True
         else:
             out.write(f" · {elapsed}s")
@@ -1121,6 +1246,6 @@ class _StreamRenderState:
 
     def _consume_heartbeat(self, out: Any) -> None:
         if self._heartbeat_started_inline:
-            out.write("]\n")
+            out.write("]" + _close(out, "dim") + "\n")
             self._heartbeat_started_inline = False
             self._heartbeat_count = 0
