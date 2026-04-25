@@ -356,14 +356,21 @@ def render_message(
     AssistantMessage that arrives at message_stop would otherwise re-render
     everything. We track which content indices were streamed and skip them.
     """
-    # StreamEvent is a TypedDict (`{uuid, session_id, event, parent_tool_use_id}`)
-    # delivered when include_partial_messages=True. The `event` payload mirrors
-    # Anthropic's streaming API. We render thinking_delta + text_delta inline so
-    # users see reasoning + reply assembling in real time. Other event types
-    # (input_json_delta, message_delta, message_stop) are noise here.
-    if isinstance(message, dict) and "event" in message and "uuid" in message:
+    # StreamEvent is a `@dataclass` with fields {uuid, session_id, event,
+    # parent_tool_use_id}, delivered when include_partial_messages=True. The
+    # `event` payload mirrors Anthropic's streaming API. We render
+    # thinking_delta + text_delta inline so users see reasoning + reply
+    # assembling in real time. Other event types (input_json_delta,
+    # message_delta, message_stop) are noise here.
+    #
+    # Detection by duck-type rather than isinstance — keeps render_message
+    # decoupled from claude-agent-sdk's exact class (and matches the rest
+    # of the renderer's pattern of accepting structurally-typed fakes).
+    if hasattr(message, "event") and hasattr(message, "uuid") and not hasattr(message, "content"):
         if stream_state is not None:
-            stream_state.handle_partial(message["event"], out)
+            payload = getattr(message, "event", None)
+            if isinstance(payload, dict):
+                stream_state.handle_partial(payload, out)
         return
 
     # Any non-partial message arriving — close out a pending heartbeat line so
@@ -953,6 +960,22 @@ async def _heartbeat_iter(async_iter, idle_timeout: float):
             pending.cancel()
 
 
+def _flush(out: Any) -> None:
+    """Best-effort flush — StringIO has flush, real stdout has flush, fakes may not."""
+    flush = getattr(out, "flush", None)
+    if callable(flush):
+        flush()
+
+
+def _format_bytes(n: int) -> str:
+    """Human-readable byte count: `42 bytes`, `1.2 KB`, `3.4 MB`."""
+    if n < 1024:
+        return f"{n} bytes"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
 class _StreamRenderState:
     """Per-turn bookkeeping for partial-message rendering.
 
@@ -966,9 +989,11 @@ class _StreamRenderState:
     def __init__(self) -> None:
         self.streamed_text = False
         self.streamed_thinking = False
-        self.open_block: str | None = None  # "thinking" | "text" | None
+        self.open_block: str | None = None  # "thinking" | "text" | "tool_use" | None
         self._heartbeat_count = 0
         self._heartbeat_started_inline = False
+        self._tool_use_name: str | None = None
+        self._tool_use_bytes: int = 0
 
     @property
     def partials_active(self) -> bool:
@@ -997,9 +1022,18 @@ class _StreamRenderState:
                 out.write("\n")
                 self.open_block = "text"
                 self.streamed_text = True
-            # tool_use partials surface their input via input_json_delta —
-            # we don't show JSON bytes mid-stream; the snapshot AssistantMessage
-            # gives the formatted summary at end of turn.
+            elif btype == "tool_use":
+                # Long tool inputs (e.g. Write with 10KB of HTML) used to
+                # generate in silence for ~100s. Show a live byte counter so
+                # the user knows the model is still working. We don't dump
+                # the raw JSON bytes — the snapshot AssistantMessage that
+                # follows gives the formatted [→ Write file.html] summary.
+                name = block.get("name") or "tool"
+                self._tool_use_name = name
+                self._tool_use_bytes = 0
+                self.open_block = "tool_use"
+                out.write(f"[writing {name} input · 0 bytes")
+                _flush(out)
 
         elif etype == "content_block_delta":
             delta = event.get("delta") or {}
@@ -1009,14 +1043,33 @@ class _StreamRenderState:
                 if text:
                     # Collapse newlines inside thinking to keep the line flowing.
                     out.write(text.replace("\n", " "))
+                    _flush(out)
             elif dtype == "text_delta" and self.open_block == "text":
                 out.write(delta.get("text", "") or "")
+                _flush(out)
+            elif dtype == "input_json_delta" and self.open_block == "tool_use":
+                partial = delta.get("partial_json") or ""
+                self._tool_use_bytes += len(partial)
+                # Refresh the line in place via CR+clear-to-EOL so the byte
+                # count ticks live without spamming new lines.
+                out.write(
+                    f"\r\033[K[writing {self._tool_use_name} input · "
+                    f"{_format_bytes(self._tool_use_bytes)}"
+                )
+                _flush(out)
 
         elif etype == "content_block_stop":
             if self.open_block == "thinking":
                 out.write("]\n")
             elif self.open_block == "text":
                 out.write("\n")
+            elif self.open_block == "tool_use":
+                out.write(
+                    f"\r\033[K[wrote {self._tool_use_name} input · "
+                    f"{_format_bytes(self._tool_use_bytes)}]\n"
+                )
+                self._tool_use_name = None
+                self._tool_use_bytes = 0
             self.open_block = None
 
     def close_open_block(self, out: Any) -> None:
@@ -1025,6 +1078,13 @@ class _StreamRenderState:
             out.write("]\n")
         elif self.open_block == "text":
             out.write("\n")
+        elif self.open_block == "tool_use":
+            out.write(
+                f"\r\033[K[wrote {self._tool_use_name} input · "
+                f"{_format_bytes(self._tool_use_bytes)}]\n"
+            )
+            self._tool_use_name = None
+            self._tool_use_bytes = 0
         self.open_block = None
 
     def reset_for_next_assistant_turn(self) -> None:
@@ -1035,24 +1095,29 @@ class _StreamRenderState:
         self.open_block = None
         self._heartbeat_count = 0
         self._heartbeat_started_inline = False
+        self._tool_use_name = None
+        self._tool_use_bytes = 0
 
     def heartbeat(self, out: Any) -> None:
         """Called when the SDK has been silent past `idle_timeout` seconds."""
         self._heartbeat_count += 1
         elapsed = self._heartbeat_count * 5
-        # If we're mid-stream inside an open block, append a tiny "·" to that
+        # tool_use already has its own live byte counter — leave it alone.
+        if self.open_block == "tool_use":
+            return
+        # If we're mid-stream inside thinking/text, append a tiny "·" to that
         # line so the user sees liveness without breaking flow. Otherwise
         # write a standalone status line.
         if self.open_block is not None:
             out.write("·")
-            out.flush() if hasattr(out, "flush") else None
+            _flush(out)
             return
         if not self._heartbeat_started_inline:
             out.write(f"[…still working · {elapsed}s")
             self._heartbeat_started_inline = True
         else:
             out.write(f" · {elapsed}s")
-        out.flush() if hasattr(out, "flush") else None
+        _flush(out)
 
     def _consume_heartbeat(self, out: Any) -> None:
         if self._heartbeat_started_inline:
