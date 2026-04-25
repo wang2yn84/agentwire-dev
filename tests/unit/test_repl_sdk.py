@@ -38,6 +38,13 @@ class FakeOptions:
 # --- build_options ---
 
 class TestBuildOptions:
+    @pytest.fixture(autouse=True)
+    def _disable_mcp(self, monkeypatch):
+        # These tests assert exact tool-list shape — turn off the auto-attached
+        # agentwire MCP server so allowed_tools matches the static FULL_TOOLS /
+        # RESTRICTED_TOOLS arrays. MCP attachment has its own dedicated tests.
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+
     def test_bypass_mode(self, tmp_path):
         opts = build_options(FakeOptions, "bypass", None, None, cwd=tmp_path)
         assert opts.kwargs["permission_mode"] == "bypassPermissions"
@@ -567,6 +574,10 @@ class TestInteractiveLoop:
         from agentwire.repl import persistence
         monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl_home")
         self._repl_home = tmp_path / "repl_home"
+        # The fake SDK doesn't actually spawn the MCP subprocess, but disable
+        # the attachment so allowed_tools / banner / /tools assertions match
+        # the pre-Phase-3-PR-1 shape. MCP wiring has its own dedicated tests.
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
 
     def test_eof_exits_clean(self, monkeypatch, capsys):
         _install_fake_sdk(monkeypatch, [])
@@ -1099,6 +1110,58 @@ class TestPermissionCallback:
         result = asyncio.run(cb("Read", {}, self._ctx()))
         from claude_agent_sdk import PermissionResultAllow
         assert isinstance(result, PermissionResultAllow)
+
+
+class TestMcpBakedIn:
+    def test_mcp_servers_attached_by_default(self, monkeypatch):
+        from agentwire.repl.app import build_options, MCP_SERVER_NAME, MCP_TOOL_PREFIX
+        monkeypatch.delenv("AGENTWIRE_REPL_MCP", raising=False)
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(FakeOptions, mode="bypass", model="m", system_prompt=None, cwd=None)
+        assert MCP_SERVER_NAME in captured["mcp_servers"]
+        cfg = captured["mcp_servers"][MCP_SERVER_NAME]
+        assert cfg["type"] == "stdio"
+        assert cfg["args"] == ["-m", "agentwire", "mcp"]
+        assert MCP_TOOL_PREFIX in captured["allowed_tools"]
+
+    def test_mcp_disabled_via_env(self, monkeypatch):
+        from agentwire.repl.app import build_options, MCP_TOOL_PREFIX
+        monkeypatch.setenv("AGENTWIRE_REPL_MCP", "0")
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(FakeOptions, mode="bypass", model="m", system_prompt=None, cwd=None)
+        assert "mcp_servers" not in captured
+        assert MCP_TOOL_PREFIX not in captured["allowed_tools"]
+
+    def test_restricted_mode_keeps_mcp(self, monkeypatch):
+        # MCP tools include lots of read-only inspection tools (sessions_list,
+        # panes_list); blocking the entire server in restricted mode loses too
+        # much. Plan-mode permission_mode still gates execution.
+        from agentwire.repl.app import build_options, MCP_TOOL_PREFIX
+        monkeypatch.delenv("AGENTWIRE_REPL_MCP", raising=False)
+
+        captured = {}
+
+        class FakeOptions:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.allowed_tools = kwargs.get("allowed_tools", [])
+
+        build_options(FakeOptions, mode="restricted", model="m", system_prompt=None, cwd=None)
+        assert MCP_TOOL_PREFIX in captured["allowed_tools"]
 
 
 class TestSdkErrorClassify:

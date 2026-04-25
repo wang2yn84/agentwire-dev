@@ -43,6 +43,32 @@ DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_EFFORT = "high"
 DEFAULT_THINKING_MODE = "adaptive"
 
+# Agentwire MCP server, auto-attached to every REPL session. The differentiator
+# we promise in docs/missions/agentwire-repl.md Phase 3: ~87 agentwire tools
+# (panes, voice, scheduler, channels, etc.) available first-class without any
+# per-session configuration. Set AGENTWIRE_REPL_MCP=0 to opt out.
+MCP_SERVER_NAME = "agentwire"
+MCP_TOOL_PREFIX = f"mcp__{MCP_SERVER_NAME}"
+
+
+def _agentwire_mcp_config() -> dict:
+    """Stdio MCP server config that re-invokes this same Python interpreter.
+
+    Using sys.executable + `-m agentwire mcp` (rather than spawning the
+    `agentwire` console script) keeps the REPL and the MCP server pinned to
+    the exact same install. Avoids a second `agentwire` on PATH starting a
+    different version mid-session.
+    """
+    return {
+        "type": "stdio",
+        "command": sys.executable,
+        "args": ["-m", "agentwire", "mcp"],
+    }
+
+
+def _mcp_enabled() -> bool:
+    return os.environ.get("AGENTWIRE_REPL_MCP", "1") != "0"
+
 
 def _thinking_config(mode: str) -> dict | None:
     """Translate the REPL's `/thinking` mode into an SDK thinking config."""
@@ -146,15 +172,26 @@ def build_options(
     CLAUDE.md + AGENTS.md + an optional explicit append. `resume_sdk_session_id`
     passes through to the SDK's `resume` field to continue a prior conversation.
     """
+    base_tools = RESTRICTED_TOOLS if mode == "restricted" else FULL_TOOLS
+    allowed = list(base_tools)
+    mcp_servers: dict[str, Any] = {}
+    if _mcp_enabled():
+        mcp_servers[MCP_SERVER_NAME] = _agentwire_mcp_config()
+        # `mcp__<server>` allows all tools from that server in claude-agent-sdk's
+        # tool gating (same convention Claude Code uses).
+        allowed.append(MCP_TOOL_PREFIX)
+
     kwargs: dict[str, Any] = {
         "model": model or DEFAULT_MODEL,
         "permission_mode": PERMISSION_MODE_MAP.get(mode, "bypassPermissions"),
-        "allowed_tools": RESTRICTED_TOOLS if mode == "restricted" else FULL_TOOLS,
+        "allowed_tools": allowed,
         "setting_sources": ["user"],       # load ~/.claude/hooks — damage-control
         "include_partial_messages": False,
         "effort": effort,
         "thinking": _thinking_config(thinking_mode),
     }
+    if mcp_servers:
+        kwargs["mcp_servers"] = mcp_servers
     if cwd is not None:
         kwargs["cwd"] = str(cwd)
     if resume_sdk_session_id:
@@ -446,8 +483,11 @@ async def _run_interactive(
         sys.stdout.write(f"Resuming {resume!r} (sdk session {resume_sdk_session_id[:8]}…)\n")
     sys.stdout.write(
         "Interactive mode. Enter to send · Alt+Enter for newline · Ctrl+D to exit · Ctrl+C to cancel.\n"
-        "Type /help for commands. @path/to/file expands inline. /effort and /thinking tune SDK knobs.\n\n"
+        "Type /help for commands. @path/to/file expands inline. /effort and /thinking tune SDK knobs.\n"
     )
+    if _mcp_enabled():
+        sys.stdout.write("agentwire MCP server attached — /tools to see what's wired in.\n")
+    sys.stdout.write("\n")
     sys.stdout.flush()
 
     allowed_tools = (
