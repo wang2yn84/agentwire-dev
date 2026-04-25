@@ -966,6 +966,18 @@ class TestInteractiveLoop:
         assert "expanded_text" not in ui
         assert "mentions" not in ui
 
+    def test_seed_message_runs_first_then_eof_exits(self, monkeypatch, capsys):
+        # Seed turn fires before prompt_async is consulted. Empty fake script
+        # → prompt_async raises EOFError on the second iteration → clean exit.
+        turn = [FakeResultMessage(usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=10)]
+        state = _install_fake_sdk(monkeypatch, [turn])
+        _install_fake_prompt_toolkit(monkeypatch, [])  # next prompt → EOF
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass", seed_message="please review this plan")
+        assert rc == 0
+        assert state["queries"] == ["please review this plan"]
+
     def test_multiline_input_sent_as_one_turn(self, monkeypatch, capsys):
         # The fake PromptSession just returns a string — so a multi-line
         # string acts like the user typed Alt+Enter then hit Enter.

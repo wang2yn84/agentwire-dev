@@ -137,6 +137,40 @@ def _effort(state: ReplState, args: str, out: TextIO) -> str:
     return RESTART
 
 
+def _run_workflow(state: ReplState, args: str, out: TextIO) -> str:
+    """`/run-workflow <name> [-v]` runs `agentwire workflow run <name>`.
+
+    Streaming the workflow's stdout into the REPL terminal in real time.
+    Phase 4 reverse-direction primitive — REPL spawns a workflow with the
+    current cwd; output is plain text (the workflow's own log lines), not
+    folded into the SDK conversation.
+    """
+    parts = args.split()
+    if not parts:
+        out.write("Usage: /run-workflow <name> [extra args]\n")
+        return CONTINUE
+
+    import subprocess
+    cmd = ["agentwire", "workflow", "run", *parts]
+    out.write(f"[running: {' '.join(cmd)}]\n")
+    out.flush() if hasattr(out, "flush") else None
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
+        for line in proc.stdout:
+            out.write(line)
+        proc.wait()
+        out.write(f"[workflow exited with code {proc.returncode}]\n")
+    except FileNotFoundError:
+        out.write("[run-workflow failed: `agentwire` not found on PATH]\n")
+    except Exception as exc:
+        out.write(f"[run-workflow error: {exc}]\n")
+    return CONTINUE
+
+
 def _say(state: ReplState, args: str, out: TextIO) -> str:
     """`/say <text>` speaks `text` via `agentwire say`.
 
@@ -272,6 +306,7 @@ def _build_registry() -> dict[str, Command]:
         Command(name="/effort", handler=_effort, summary="Show or set thinking effort (low/medium/high/xhigh/max)"),
         Command(name="/thinking", handler=_thinking, summary="Show or set thinking display (adaptive/summarized/off)"),
         Command(name="/say", handler=_say, summary="Speak text aloud via agentwire say (uses project voice)"),
+        Command(name="/run-workflow", handler=_run_workflow, summary="Run an agentwire workflow and stream output here"),
         exit_cmd,
     ]
     registry: dict[str, Command] = {}
