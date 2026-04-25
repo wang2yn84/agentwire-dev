@@ -17,12 +17,18 @@ from pathlib import Path
 from agentwire.project_config import load_project_config
 from agentwire.roles import load_roles, merge_roles
 
+# When there's no `.agentwire.yml` and no `--role`, the REPL still wants an
+# agentwire-aware identity by default — pulls the bundled `agentwire` role
+# (agentwire/roles/agentwire.md) so the model knows about MCP tools, voice
+# routing, etc. without each project re-declaring it.
+DEFAULT_ROLE = "agentwire"
+
 
 @dataclass
 class SessionContext:
     role_names: list[str]
     role_instructions: str | None  # None when no roles resolved
-    voice: str | None  # from .agentwire.yml
+    voice: str | None  # from .agentwire.yml or global config default
     missing_roles: list[str]  # names in config that didn't resolve
 
 
@@ -34,21 +40,25 @@ def load_session_context(
     """Load roles + voice for a REPL session.
 
     Order of precedence for role names:
-      1. `role_overrides` (from `--role` CLI flag, if any)
+      1. `role_overrides` (from `--role` CLI flag, if any) — including `[]`
+         to explicitly opt out of all roles
       2. `roles:` in the nearest `.agentwire.yml`
-      3. empty list
+      3. `[DEFAULT_ROLE]` — the bundled `agentwire` role, so a bare
+         `agentwire repl` outside any project still has agentwire identity
 
-    Voice is taken from `.agentwire.yml` only — `/say` defers to `agentwire
-    say`'s own resolution (CLI flag → .agentwire.yml → global default), so
-    here we only need to surface what the project declares.
+    Voice precedence:
+      1. `.agentwire.yml` `voice:`
+      2. Global config `tts.default_voice` (we only run one voice these
+         days; surfacing it in the REPL state means /say + the banner show
+         the right voice without per-project setup)
     """
     cfg = load_project_config(cwd)
     if role_overrides is not None:
         names = list(role_overrides)
-    elif cfg is not None:
+    elif cfg is not None and cfg.roles:
         names = list(cfg.roles)
     else:
-        names = []
+        names = [DEFAULT_ROLE]
 
     if names:
         roles, missing = load_roles(names, project_path=cwd)
@@ -58,10 +68,27 @@ def load_session_context(
         roles, missing = [], []
         instructions = None
 
-    voice = cfg.voice if cfg is not None else None
+    voice: str | None = cfg.voice if cfg is not None else None
+    if not voice:
+        voice = _global_default_voice()
+
     return SessionContext(
         role_names=[r.name for r in roles],
         role_instructions=instructions,
         voice=voice,
         missing_roles=missing,
     )
+
+
+def _global_default_voice() -> str | None:
+    """Read tts.default_voice from ~/.agentwire/config.yaml. None on failure."""
+    try:
+        from agentwire.config import load_config
+        cfg = load_config()
+        voice = getattr(getattr(cfg, "tts", None), "default_voice", None)
+        # Guard the placeholder string the config dataclass uses pre-config-file.
+        if voice and voice != "default":
+            return voice
+    except Exception:
+        return None
+    return None
