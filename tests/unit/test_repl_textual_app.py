@@ -831,6 +831,97 @@ async def test_theme_switch(patched_sdk, tmp_path, monkeypatch):
         assert "theme set" in all_text or "theme error" in all_text
 
 
+class TestMentionPrefixDetect:
+    """Phase 3B — _current_at_prefix detects @-mention typing context."""
+
+    def test_detects_after_space(self):
+        from agentwire.repl.textual_app import AgentwireREPL
+        # Cursor at end of "summarize @notes"
+        text = "summarize @notes"
+        assert AgentwireREPL._current_at_prefix(text, len(text)) == "notes"
+
+    def test_detects_at_start(self):
+        from agentwire.repl.textual_app import AgentwireREPL
+        text = "@README"
+        assert AgentwireREPL._current_at_prefix(text, len(text)) == "README"
+
+    def test_skips_inside_email(self):
+        from agentwire.repl.textual_app import AgentwireREPL
+        # `foo@bar.com` shouldn't trigger — @ not preceded by whitespace.
+        text = "foo@bar.com"
+        assert AgentwireREPL._current_at_prefix(text, len(text)) is None
+
+    def test_returns_none_if_no_at(self):
+        from agentwire.repl.textual_app import AgentwireREPL
+        assert AgentwireREPL._current_at_prefix("just text", 9) is None
+
+    def test_terminates_at_whitespace_after_prefix(self):
+        from agentwire.repl.textual_app import AgentwireREPL
+        # "@notes hello" — cursor at end, the @prefix already terminated.
+        text = "@notes hello"
+        assert AgentwireREPL._current_at_prefix(text, len(text)) is None
+
+    def test_partial_prefix_at_cursor(self):
+        from agentwire.repl.textual_app import AgentwireREPL
+        # Cursor right after "REA" — text up to cursor is "look at @REA",
+        # which is 12 chars.
+        text = "look at @REA and stuff"
+        assert AgentwireREPL._current_at_prefix(text, 12) == "REA"
+
+
+@pytest.mark.asyncio
+async def test_at_mention_preview_shows_in_action_pane(
+    patched_sdk, tmp_path, monkeypatch
+):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "alpha.txt").write_text("a")
+    (tmp_path / "alfred.md").write_text("b")
+    (tmp_path / "beta.txt").write_text("c")
+
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inp = app.query_one("#input", Input)
+        # Simulate typing "@al" — the on_input_changed handler should
+        # populate the action pane with matches.
+        inp.value = "@al"
+        inp.cursor_position = len(inp.value)
+        # Force the changed-event callback to run.
+        app.on_input_changed(Input.Changed(inp, "@al"))
+        await pilot.pause()
+
+        # The action sink should now have entries containing alpha + alfred.
+        joined = "\n".join(app._action_sink._finalized + [app._action_sink._current])
+        assert "alpha" in joined or "alfred" in joined
+
+
+@pytest.mark.asyncio
+async def test_tab_completes_mention(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "README.md").write_text("readme")
+
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inp = app.query_one("#input", Input)
+        inp.value = "look at @REA"
+        inp.cursor_position = len(inp.value)
+        app.action_complete_mention()
+        await pilot.pause()
+
+        assert "@README.md" in inp.value
+
+
 @pytest.mark.asyncio
 async def test_exit_command_quits_app(patched_sdk):
     from agentwire.repl.textual_app import AgentwireREPL

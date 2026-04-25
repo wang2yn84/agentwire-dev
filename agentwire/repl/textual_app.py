@@ -409,6 +409,7 @@ class AgentwireREPL(App):
     BINDINGS = [
         Binding("ctrl+d", "quit", "Exit"),
         Binding("ctrl+c", "cancel_turn", "Cancel turn"),
+        Binding("tab", "complete_mention", "Complete @mention", show=False),
     ]
 
     def __init__(
@@ -855,6 +856,120 @@ class AgentwireREPL(App):
         except Exception as exc:
             self._sink.write(f"[render error: {exc}]\n")
             self._sink.flush()
+
+    # ------ @-mention autocomplete (Phase 3B) ------
+
+    _MENTION_PREVIEW_CAP = 8
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Update the action pane with @-mention candidates as the user types."""
+        if self._action_sink is None:
+            return
+        prefix = self._current_at_prefix(event.value, event.input.cursor_position)
+        if prefix is None:
+            # Not in an @-mention context — only clear if we previously
+            # populated candidates (avoid clobbering live SDK output).
+            if getattr(self, "_last_mention_prefix", None) is not None:
+                self._action_sink.clear()
+                self._last_mention_prefix = None
+            return
+
+        self._last_mention_prefix = prefix
+        matches = self._glob_mention_matches(prefix)
+        self._action_sink.clear()
+        if not matches:
+            self._action_sink.write(f"[mentions @{prefix}: no matches in {Path.cwd().name}/]\n")
+        else:
+            shown = matches[: self._MENTION_PREVIEW_CAP]
+            self._action_sink.write(
+                "[mentions: " + " · ".join(shown) + "]\n"
+            )
+            if len(matches) > self._MENTION_PREVIEW_CAP:
+                self._action_sink.write(
+                    f"[+{len(matches) - self._MENTION_PREVIEW_CAP} more — keep typing to filter, Tab to accept first]\n"
+                )
+            else:
+                self._action_sink.write("[Tab to accept first match]\n")
+
+    @staticmethod
+    def _current_at_prefix(text: str, cursor: int) -> str | None:
+        """Return the @-prefix the cursor is currently inside, or None."""
+        if not text:
+            return None
+        # Look at the text up to the cursor; find the last `@` after a
+        # whitespace boundary (or start).
+        head = text[:cursor]
+        if "@" not in head:
+            return None
+        at_idx = head.rfind("@")
+        # Must be preceded by whitespace or start-of-string (mirror mentions.py).
+        if at_idx > 0 and not head[at_idx - 1].isspace():
+            return None
+        # Path chars only (no spaces) — terminate at first whitespace.
+        rest = head[at_idx + 1:]
+        if any(c.isspace() for c in rest):
+            return None
+        return rest
+
+    def _glob_mention_matches(self, prefix: str) -> list[str]:
+        """Glob-match files under cwd whose path starts with `prefix`.
+
+        Empty prefix → top files in cwd by mtime. Caps at 50 results.
+        """
+        cwd = Path.cwd()
+        if not prefix:
+            try:
+                entries = sorted(
+                    [p for p in cwd.iterdir() if not p.name.startswith(".")],
+                    key=lambda p: -p.stat().st_mtime,
+                )[:50]
+                return [p.name + ("/" if p.is_dir() else "") for p in entries]
+            except Exception:
+                return []
+
+        # Match prefix against names + paths under cwd. Glob with `**` would
+        # be too broad; instead walk the prefix's parent.
+        pat_parent = Path(prefix).parent
+        pat_name = Path(prefix).name
+        search_dir = cwd / pat_parent
+        if not search_dir.exists():
+            return []
+        try:
+            candidates = []
+            for p in search_dir.iterdir():
+                if p.name.startswith("."):
+                    continue
+                if p.name.startswith(pat_name):
+                    rel = p.relative_to(cwd)
+                    candidates.append(str(rel) + ("/" if p.is_dir() else ""))
+            candidates.sort(key=lambda s: (0 if s.endswith("/") else 1, s.lower()))
+            return candidates[:50]
+        except Exception:
+            return []
+
+    def action_complete_mention(self) -> None:
+        """Tab in the input completes the current @prefix to the top match."""
+        try:
+            inp = self.query_one("#input", Input)
+        except Exception:
+            return
+        prefix = self._current_at_prefix(inp.value, inp.cursor_position)
+        if prefix is None:
+            return
+        matches = self._glob_mention_matches(prefix)
+        if not matches:
+            return
+        # Replace the @prefix with the top match.
+        head = inp.value[:inp.cursor_position]
+        tail = inp.value[inp.cursor_position:]
+        at_idx = head.rfind("@")
+        new_head = head[:at_idx + 1] + matches[0]
+        inp.value = new_head + tail
+        inp.cursor_position = len(new_head)
+        # Clear the action pane preview now that the mention is locked in.
+        if self._action_sink is not None:
+            self._action_sink.clear()
+            self._last_mention_prefix = None
 
     # ------ Textual-only slash commands (Phase 2D) ------
 
