@@ -5,8 +5,8 @@
 A from-scratch rendering layer for `agentwire repl` built on [Textual](https://github.com/textualize/textual). The current `prompt_toolkit` line-oriented loop hit its ceiling: there's no way to keep streaming partial output visible without flooding the chat history, no proportional layout, no borders/titles, no docked status line, no scrollable subregion for "what claude is doing right now". Textual gives all of that out of the box.
 
 **Phase of:** own mission (sibling of `agentwire-repl.md`)
-**Status:** **draft — scoping (2026-04-25). No code yet.**
-**Depends on:** `agentwire-repl.md` Phases 1-5 (complete)
+**Status:** **plans fleshed out (2026-04-25). Ready to execute Phase 1A.** Phase 1-3 implementation plans live in this doc; living checklist at bottom tracks shipping.
+**Depends on:** `agentwire-repl.md` Phases 1-5 (complete) + streaming-visibility quick fixes (#123-#125 shipped 2026-04-25)
 **Blocks:** future REPL feature work that needs richer layout (mode badges, modal permission prompts, inline waveform for /say, etc.)
 
 ## Why this rewrite
@@ -147,3 +147,308 @@ The rewrite is the rendering layer only. Everything below is intact.
 
 - `textual >= 0.80` (latest stable as of 2026-04)
 - `pytest-textual-snapshot` (test-only, Phase 3)
+
+---
+
+# Phase 1 — Implementation Plan: Parity
+
+> **Status:** ready to execute (planned 2026-04-25). Behind `AGENTWIRE_REPL_TUI=textual` flag for the entire phase. Default-flip is a follow-up PR after a parity-soak window.
+
+## PR breakdown
+
+1. **PR 1A — Plumbing**: feature flag, dispatcher fork, TTY detection, dependency add. No Textual code yet; just the entry-point branch + a `textual_app.run_textual_repl(...)` stub that raises `NotImplementedError`.
+2. **PR 1B — Skeleton app**: Textual `App` with `RichLog` + `TextArea` + `Footer`, SDK worker pumping messages into the log via `app.post_message`, slash dispatch wired through. No persistence, no mentions, no permissions yet.
+3. **PR 1C — Parity wiring**: transcript persistence, `@`-mentions, `seed_message`, `/clear` + `/resume` lifecycle (close/reopen client), `sdk-prompted` inline y/n/a, `track_result`/`track_system_init`, banner.
+4. **PR 1D — Test pass + flag-flip readiness**: unit tests via Textual's `Pilot` headless runner, manual smoke verification, this plan's "Phase 1 — Implementation Plan" section becomes "shipped".
+
+Each PR is independently reviewable and shippable; the flag stays `off` until a separate default-flip PR after Phase 1+2 prove out.
+
+## PR 1A — Plumbing (entry-point fork)
+
+**Goal.** Add `AGENTWIRE_REPL_TUI=textual` feature flag and a TTY-aware dispatcher in `run_repl`.
+
+**Files.**
+- `pyproject.toml` — add `textual>=0.80` to dependencies.
+- `agentwire/repl/app.py` — add `_should_use_textual()` and dispatch fork.
+- `agentwire/repl/textual_app.py` *(new)* — stub with `async def run_textual_repl(...)` raising `NotImplementedError`.
+
+**Approach.** Decision rule, in order:
+1. `print_prompt is not None` → existing `_run_print_mode` (Textual is **never** used in print mode — print stays a single-shot stdout pipe; that contract is load-bearing for `agentwire workflow run`, scheduler tasks, and `human_gate`).
+2. Not TTY (`sys.stdin.isatty() and sys.stdout.isatty()` False) → existing `_run_interactive`. Protects piped stdin, scheduler, captured stdout, `human_gate` non-interactive seeds.
+3. Flag set + `import textual` succeeds → `run_textual_repl(...)`.
+4. Else → existing `_run_interactive`.
+
+Lazy `import textual` inside the dispatcher keeps it optional during rollout — if the user has the flag set but no `textual` installed, fall back rather than crash.
+
+**Test plan.** New `tests/unit/test_repl_dispatch.py`: flag off → `_run_interactive`; flag on + TTY mocked True → `run_textual_repl`; flag on + non-TTY → `_run_interactive`; print mode short-circuits regardless.
+
+**Success criteria.** `pytest` green; unset flag = identical behavior; `AGENTWIRE_REPL_TUI=textual agentwire repl` raises `NotImplementedError` from the stub (proves dispatch).
+
+## PR 1B — Textual skeleton with streaming SDK worker
+
+**Goal.** Replace stub with a working app: RichLog + TextArea + Footer, SDK worker pipes events into log, slash commands work. No persistence/mentions/permissions yet.
+
+**Files.**
+- `agentwire/repl/textual_app.py` — full implementation.
+
+**Event flow.**
+```
+User types → TextArea Submitted → app.action_send(text) → app.run_worker(_run_turn(text), exclusive=True)
+                                                            ↓
+                                                       client.query(text)
+                                                       async for msg in _heartbeat_iter(client.receive_response()):
+                                                           self.post_message(SdkEvent(msg))   # thread-safe
+                                                           
+App.on_sdk_event(SdkEvent) → render_message(msg, ..., out=_RichLogSink) on UI thread
+```
+
+`SdkEvent` is a Textual `Message` subclass. All rendering on UI thread; workers never touch widgets directly. `exclusive=True` cancels any in-flight turn (matches today's Ctrl+C).
+
+**Streaming adapter — `_RichLogSink`.** Buffers writes until `\n`, then `RichLog.write(Text.from_ansi(line))`. Existing `_styled()` ANSI emits are parsed faithfully — Rich markup translates 1:1. `_RichLogSink.isatty() → True` so `_styled()` keeps emitting ANSI.
+
+The byte-counter `\r\033[K` rewrite needs special handling: when buffered content begins with `\r\033[K`, pop the last RichLog line before writing the new one. Verify against installed Textual; fall back to "every tick is a new line" if `RichLog.lines.pop()` is unsupported.
+
+**Layout (Phase 1 — minimal).**
+```python
+CSS = """
+Screen { layout: vertical; }
+#chat { height: 1fr; border: tall $accent; }
+#input { dock: bottom; height: 5; }
+Footer { dock: bottom; }
+"""
+```
+`TextArea` (not `Input`) so Alt+Enter newline + Enter submit work. Phase 2 splits chat into chat + current-action with proportional weights.
+
+**Slash dispatch.** `TextArea.Submitted` (or our action) checks for `/` prefix, calls existing `dispatch_command(text, state, sink)`. `commands.py` writes to `out: TextIO` — our `_RichLogSink` quacks fine. Zero changes to `commands.py`.
+
+**Heartbeat.** Phase 1 keeps heartbeats in the same `RichLog`; Phase 2 docks them in CurrentAction.
+
+**Test plan.** `tests/unit/test_repl_textual_app.py` using Textual's `App.run_test()` async pilot:
+```python
+async with AgentwireREPL(...mock client...).run_test() as pilot:
+    await pilot.press(*"hi"); await pilot.press("enter")
+    assert "hi" in app.query_one("#chat", RichLog).lines[-1].text
+```
+Mock `claude_agent_sdk.ClaudeSDKClient` with a fake whose `receive_response()` yields a recorded sequence. Slash test: submit `/help`, assert "Available commands" in chat. ANSI parse test: write `\x1b[1mhello\x1b[0m\n` to sink, assert bold style on appended line.
+
+**Pitfalls.**
+- Workers MUST use `self.post_message(...)` — never call `RichLog.write` from a worker.
+- Cancellation: wrap `_run_turn` body in `try/except asyncio.CancelledError` to print `[turn cancelled]` matching today's Ctrl+C.
+- `\r\033[K` byte-counter rewrite: see Streaming adapter above.
+- `TextArea` key bindings: `Enter` submits, `Alt+Enter`/`Ctrl+J` insert newline. Match today's UX.
+
+## PR 1C — Persistence, mentions, prompted-mode, lifecycle
+
+**Goal.** Full feature parity with `_run_sdk_session`.
+
+**Files.** Modify `agentwire/repl/textual_app.py`.
+
+**What gets wired in.**
+1. **Transcript persistence.** `persistence.create_session(...)` in `on_mount`. Each rendered SDK message → `_persist_sdk_message(...)`. Each user turn → `user_input` event before `client.query(...)`. `on_unmount` → `persistence.finalize(transcript, state)` + `transcript.close()`.
+2. **`@`-mentions.** In input handler, after slash branch, call `expand_mentions(text, cwd=Path.cwd())`. Print `[expanded N mention(s)]` notice via sink. Pass expanded text to worker; record raw + expanded in transcript event (mirrors `app.py` lines 786-806).
+3. **`/clear`, `/resume`, `/effort`, `/thinking` lifecycle.** These return `RESTART`/`RESUME` from `dispatch_command`. Wrap in `_restart_session()` worker:
+   - Read + clear `state.pending_resume_sdk_session_id`.
+   - `await self._client_ctx.__aexit__(None, None, None)`.
+   - Rebuild options with new `resume_sdk_session_id` / `effort` / `thinking_mode`.
+   - Open new client.
+   - Write `{"type": "restart", ...}` event.
+   - `reset_for_restart(state)`.
+   This is the outer `while True` loop in `_run_interactive` lines 681-716, lifted into a method.
+4. **`sdk-prompted` permission prompt — Phase 1 placeholder.** Inline RichLog y/n/a (Phase 2 → ModalScreen). `state._pending_permission: asyncio.Future` on the app; the SDK's `can_use_tool` callback awaits the future, the input handler resolves it (this branch comes BEFORE slash/turn branches).
+5. **Banner.** Mirror `app.py` lines 605-622 — write into RichLog on mount before any turn.
+
+**Pitfalls.**
+- Manual `__aenter__`/`__aexit__` for `ClaudeSDKClient` (Textual lifecycle is `on_mount`/`on_unmount`, not `async with`). Wrap unmount in try/except — never raise during shutdown.
+- `CLAUDECODE` env var unset/restore (`app.py` lines 674, 718-719). SDK refuses to nest without it.
+- `can_use_tool` reentrancy: handle PERMISSION-pending state in input router BEFORE slash/turn branches.
+- Worker cancellation must drain the heartbeat iter cleanly — `_heartbeat_iter`'s `finally` already handles it; verify.
+
+## PR 1D — Test pass + pre-flip verification
+
+**Goal.** Round out tests, manual smoke, mark Phase 1 shipped.
+
+**Test patterns.**
+- `App.run_test()` returns a `Pilot`. Use `pilot.press(...)`, `pilot.click(...)`, `pilot.pause()`.
+- Inspect via `app.query_one("#chat", RichLog).lines` (each entry's `.text` is readable).
+- Mock SDK by patching `claude_agent_sdk.ClaudeSDKClient` to return a fake whose `receive_response()` is a pre-recorded async iterator (same fake-class pattern as `test_repl_sdk.py::FakeOptions`).
+- Async tests under `pytest-asyncio`'s `asyncio_mode = auto`.
+
+**Coverage targets.**
+- Persistence: golden-test transcript shape vs current REPL (diff empty).
+- `@`-mention expansion + transcript event with `mentions[]`.
+- `/clear` increments `state.restart_count`, writes `restart` event.
+- `sdk-prompted` placeholder: mock tool-use, pilot answers `y`, assert allow.
+- Manual smoke: 5KB Write tool input, observe byte-counter ticking and tool-call summary; compare with-flag vs without-flag for behavior parity.
+
+**Don't add `pytest-textual-snapshot` here** — that's Phase 3. Snapshot maintenance overhead before parity is shipped is premature.
+
+## What stays unchanged across all of Phase 1
+
+These files are imported and reused as-is — no edits:
+- `agentwire/repl/state.py` (`ReplState`)
+- `agentwire/repl/commands.py` (slash handlers — `out: TextIO` signature already compatible with `_RichLogSink`)
+- `agentwire/repl/persistence.py` (transcript JSONL)
+- `agentwire/repl/mentions.py` (`@path` expansion)
+- `agentwire/repl/damage_control.py` (`make_pre_tool_hook`)
+- `agentwire/repl/context.py` (role/voice loading)
+- `agentwire/__main__.py::cmd_repl` and `repl_parser` (no CLI changes; flag is purely env)
+- `_run_print_mode`, `_run_interactive`, `build_options`, `render_message`, `_StreamRenderState`, `_heartbeat_iter` — remain in `app.py`, imported by both paths.
+
+---
+
+# Phase 2 — Implementation Plan: Layout features
+
+> **Status:** planned (2026-04-25). Begins after Phase 1 ships and the flag-default flip lands. Where this rewrite earns its keep.
+
+## PR breakdown
+
+1. **PR 2A — Layout split**: introduce CurrentAction subpane (`fr=2`), chat pane (`fr=6`), input (3 lines). Partials route to CurrentAction; finalized turns route to chat.
+2. **PR 2B — Header + StatusLine**: session metadata Header pinned top; custom StatusLine Footer reading running totals from `state` every event.
+3. **PR 2C — Tool-call collapse + permission ModalScreen**: finalized tool calls in chat collapse to one-liners (`[Bash · ls -la · 12 files]`); `sdk-prompted` permission prompts replace inline placeholder with a centered ModalScreen.
+4. **PR 2D — Theming + `/layout` slash command + flag default flip**: pull `repl.theme` from `~/.agentwire/config.yaml`; new `/layout` slash command tweaks `chat=N action=M`; flip `AGENTWIRE_REPL_TUI=textual` default ON, make textual a hard runtime dep, delete `_run_interactive`.
+
+## PR 2A — Layout split (CurrentAction subpane)
+
+**Goal.** Partial-message stream lives in its own scrollable bordered subpane; chat history shows finalized turns only.
+
+**Files.**
+- `agentwire/repl/textual_app.py` — split layout; route partials to CurrentAction widget.
+- `agentwire/repl/textual_render.py` *(new — extract from `app.py`)* — owns the routing decision (partial vs finalized, which sink to write to).
+
+**Layout.**
+```css
+#chat { height: 6fr; border: tall $accent; border-title-color: $text 50%; }
+#action { height: 2fr; border: tall $warning; border-title: "Current action"; }
+#input { dock: bottom; height: 3; }
+Header { dock: top; }
+Footer { dock: bottom; }
+```
+
+**Routing rule.** `_StreamRenderState` partial events → `_action_sink` (CurrentAction RichLog). Finalized snapshot Messages (`AssistantMessage`, `UserMessage`, `ResultMessage`, `SystemMessage`) → `_chat_sink`. On `content_block_stop` for `text` block: action pane gets a fade marker, chat pane gets the final snapshot rendering.
+
+**Action pane lifecycle.** Cleared on `ResultMessage` (turn complete). Tool-input byte counter, thinking, partial assistant text all live here. Heartbeat docks here too (no longer in chat).
+
+**`render_message` signature change.** Accept `chat_out` and `action_out` instead of single `out`. Call sites in `_run_interactive` (existing path) pass the same sink for both — no behavior change for the existing path. `textual_app.py` passes the two distinct sinks.
+
+**Test plan.** Pilot tests: partial event → asserts `query_one("#action", RichLog).lines` non-empty, `#chat` empty. Finalize → asserts `#chat` has snapshot, `#action` cleared.
+
+**Success criteria.** The 120-second silent gap is gone — partials are always visible in CurrentAction; chat shows only the settled, scannable turn history.
+
+## PR 2B — Header + StatusLine
+
+**Goal.** Session metadata at top; running totals at bottom; both refresh on every SDK event.
+
+**Files.**
+- `agentwire/repl/textual_app.py` — `Header` content + custom `StatusLine` widget.
+
+**Header.** `agentwire repl · {mode} · {model} · roles: {a, b} · voice: {v}`. Static after mount unless `/model` / `/effort` / role swap. Refresh hook: state-changing slash commands call `app.refresh_header()`.
+
+**StatusLine.** Right-aligned: `{turns} turns · {tok} tok · ${cost:.4f} · effort={e} · thinking={t}`. Reads `state` directly each render. Subscribed to `SdkEvent` so it refreshes on `ResultMessage` (cost/tok update) and on slash-command state changes (`/effort`, `/thinking`).
+
+**Implementation.** Custom `Static` widget docked below `Footer`; `app.bell()` is unaffected. Footer keeps Textual's binding hints — StatusLine sits above it.
+
+**Test plan.** Pilot: simulate ResultMessage with usage → assert StatusLine text matches expected. Submit `/effort low` → assert StatusLine reflects `effort=low`.
+
+## PR 2C — Tool-call collapse + permission ModalScreen
+
+**Goal.** Two independent UX wins.
+
+**Tool-call collapse.** Finalized `[→ Tool {summary}]` lines in chat compress further: `Bash`/`Read`/`Edit`/`Write` get one-line summaries with key arg. The renderer already produces concise summaries via `_format_tool_input`; this PR adds a *result-aware* finalization where `[← result: ...]` immediately following a tool_use gets folded into the same line: `[Bash · ls -la · 12 files]`. Implementation: in `textual_render.py` buffer the last tool_use line; on the matching tool_result, replace the tool_use line with the merged version.
+
+**Permission ModalScreen.** Replace Phase 1's inline y/n/a placeholder with a centered modal:
+```python
+class PermissionPrompt(ModalScreen[str]):
+    BINDINGS = [Binding("y", "decide('allow')"), Binding("n", "decide('deny')"), Binding("a", "decide('always')")]
+    def compose(self): yield Static(self.message); yield Horizontal(Button("Allow", id="allow"), Button("Deny"), Button("Always allow"))
+```
+SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`. Decision threads back through the SDK's `permissionDecision`. Removes `state._pending_permission` future.
+
+**Test plan.** Pilot: trigger tool use, assert ModalScreen pushed. `pilot.press("y")` → assert allow returned.
+
+**Success criteria.** Tool calls are skim-friendly one-liners; permission prompts are obviously centered modals with keyboard + button paths.
+
+## PR 2D — Theming + /layout + default flip
+
+**Goal.** User customization + retire the legacy path.
+
+**Theming.** Read `repl.theme` from `~/.agentwire/config.yaml`. Map to Textual's design tokens (`$accent`, `$warning`, `$text`). Fall back to default. Tie to existing `tts.theme` if not separately defined.
+
+**`/layout`.** New slash command: `/layout chat=8 action=1` adjusts proportional weights at runtime. Persists for the session only; written to transcript metadata. Validates that weights sum > 0.
+
+**Flag default flip.**
+- Default `AGENTWIRE_REPL_TUI=textual` (or remove the env check entirely; flag stays as opt-OUT for legacy path).
+- Make `textual>=0.80` a hard runtime dep.
+- Delete `_run_interactive` from `app.py`. Keep `_run_print_mode` (print mode never moves to Textual). Migrate the few tests that hit `_run_interactive` directly to the Textual test patterns.
+- Document migration in `docs/missions/agentwire-repl-textual.md` ("Phase 2 shipped 2026-XX-XX").
+
+**Pitfalls.** Don't flip the default until Phase 1 + 2A-C have been daily-driven for at least a week. The flip is destructive (deletes `_run_interactive`); a separate PR after a soak window is the right unit.
+
+---
+
+# Phase 3 — Implementation Plan: Polish
+
+> **Status:** planned (2026-04-25). Trigger-driven within the phase — the order below is suggested, not mandatory. Each PR is independent and can ship when it's ready.
+
+## PR breakdown
+
+1. **PR 3A — Snapshot test infra**: add `pytest-textual-snapshot` to dev deps; baseline snapshots for chat / action / status states; CI runs them.
+2. **PR 3B — `@`-mention autocomplete**: as the user types `@`, dropdown overlay shows matching files (Glob against cwd).
+3. **PR 3C — Slash command palette (`Ctrl+P`)**: fuzzy command picker overlay.
+4. **PR 3D — Cost sparkline + transcript scrubber**: per-turn cost mini-graph in StatusLine; jump-to-prior-turn UX.
+5. **PR 3E — `docs/repl-tui.md` walkthrough**: short doc with screenshots.
+
+## PR 3A — Snapshot test infrastructure
+
+**Files.** `pyproject.toml` (dev dep `pytest-textual-snapshot`); `tests/snapshot/` directory; baseline `.svg` snapshots committed.
+
+**Approach.** One snapshot test per major UI state: empty REPL boot, mid-turn (partials in CurrentAction), finished turn (settled in chat, cost in StatusLine), permission modal pushed, transcript-scrubbed view (Phase 3D adds the latter).
+
+**CI.** Add `pytest --snapshot-update=no` to existing test run; failures emit a diff page that the dev opens in browser.
+
+## PR 3B — `@`-mention autocomplete
+
+**Files.** `agentwire/repl/textual_app.py` adds `@MentionDropdown` widget (a `OptionList` floated near cursor).
+
+**Approach.** Hook `TextArea.on_change`; when current word starts with `@`, glob `**/{rest}*` from cwd, populate dropdown with top 10 matches sorted by mtime. `Tab`/Enter accepts; Esc dismisses. Reuses `mentions.expand_mentions()` for the actual expansion at submit time — autocomplete is purely UI sugar.
+
+**Test plan.** Pilot: type `@RE`, assert dropdown shows `README.md`. `pilot.press("tab")` → assert TextArea contains `@README.md `.
+
+## PR 3C — Slash command palette (Ctrl+P)
+
+**Files.** `agentwire/repl/textual_app.py` adds `CommandPalette` modal.
+
+**Approach.** Lift command list from `commands.py::COMMANDS` (already a dict). `Ctrl+P` pushes `CommandPalette` modal; fuzzy-filter on input; Enter submits the selected command. Same dispatch path as typed slash command.
+
+**Pitfall.** Don't conflict with Textual's own command palette (Ctrl+\ by default). Use `Ctrl+P` exclusively.
+
+## PR 3D — Cost sparkline + transcript scrubber
+
+**Cost sparkline.** Last N turns' cost as a unicode-block sparkline rendered into StatusLine. `▁▃▅▇█▇▅▃` etc. Updates on `ResultMessage`. Caps at 20 turns of history; older drops off.
+
+**Transcript scrubber.** New slash command `/scrub` opens a `ListView` of prior turns from the current session's transcript JSONL. Selecting a turn jumps the chat scroll position. Read-only — doesn't mutate state.
+
+**Test plan.** Cost: assert sparkline character count == turn count. Scrubber: assert ListView populated from transcript file.
+
+## PR 3E — Walkthrough doc
+
+**Files.** `docs/repl-tui.md` *(new)* — short page with the layout diagram (lifted from this mission), GIFs of: boot, streaming partial in CurrentAction, modal permission prompt, command palette, mention autocomplete, transcript scrubber.
+
+**Capture.** Use `agentwire pane gif` (existing tool) or `asciinema` for the recordings. GIFs live under `docs/assets/repl-tui/`.
+
+---
+
+# Living checklist (update as we ship)
+
+- [ ] **Phase 1A** — flag + dispatcher
+- [ ] **Phase 1B** — Textual skeleton
+- [ ] **Phase 1C** — persistence, mentions, prompted mode, lifecycle
+- [ ] **Phase 1D** — tests + manual smoke
+- [ ] **Phase 2A** — CurrentAction subpane + proportional weights
+- [ ] **Phase 2B** — Header + StatusLine
+- [ ] **Phase 2C** — tool-call collapse + permission ModalScreen
+- [ ] **Phase 2D** — theming + `/layout` + flag default flip
+- [ ] **Phase 3A** — snapshot test infra
+- [ ] **Phase 3B** — `@`-mention autocomplete
+- [ ] **Phase 3C** — slash command palette
+- [ ] **Phase 3D** — cost sparkline + transcript scrubber
+- [ ] **Phase 3E** — walkthrough doc
