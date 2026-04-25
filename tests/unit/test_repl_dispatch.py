@@ -110,15 +110,23 @@ class TestDispatch:
         assert calls == ["textual"]
 
 
-class TestStubRaises:
-    """Until Phase 1B lands, the stub raises NotImplementedError."""
+class TestTextualEntryPoint:
+    """Phase 1B replaces the stub with an AgentwireREPL App. Verify the
+    entry point exists and is async (without booting the actual TUI here —
+    that lives in test_repl_textual_app.py)."""
 
-    def test_stub_raises(self):
-        import asyncio
+    def test_run_textual_repl_exists(self):
+        import inspect
         from agentwire.repl.textual_app import run_textual_repl
 
-        with pytest.raises(NotImplementedError, match="Textual REPL not yet implemented"):
-            asyncio.run(run_textual_repl())
+        assert inspect.iscoroutinefunction(run_textual_repl)
+
+    def test_app_class_exposed(self):
+        from agentwire.repl.textual_app import AgentwireREPL
+
+        # Just verify the class is importable; full lifecycle tests are in
+        # test_repl_textual_app.py.
+        assert AgentwireREPL.__name__ == "AgentwireREPL"
 
 
 class TestImportFallback:
