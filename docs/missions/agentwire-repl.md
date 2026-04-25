@@ -5,9 +5,25 @@
 A clean-room interactive harness built on `claude-agent-sdk`, living inside agentwire as a session type. Complementary to Claude Code, not a replacement. The differentiator is **agentwire-native integration** — MCP baked in, workflow bridging, voice, damage control, role layering — things Anthropic has no reason to build into Claude Code because they're long-tail specialized cases.
 
 **Phase of:** own mission (peer to `pi-harness-overview.md`)
-**Status:** **draft — scoping phase (2026-04-22). No code yet.**
+**Status:** **Phases 1-5 shipped (2026-04-25).** Phase 6+ is trigger-driven. See "Shipping log" below.
 **Depends on:** Phase 6 Anthropic SDK workflow runner — complete
-**Blocks:** nothing immediate; implementation PRs gated on user approval of this scope
+**Blocks:** nothing
+
+## Shipping log
+
+| Phase | What landed | PRs |
+|---|---|---|
+| 1 | MVP loop, print mode, sdk-* session types, banner, model + adaptive thinking + effort defaults | merged earlier |
+| 2 PR 1 | `/help`, `/exit`, `/clear`, `/cost`, `/tools`, `/model` | #111 |
+| 2 PR 2 | Transcript persistence + `/save` + `/resume` | #112 |
+| 2 PR 3 | Multi-line input + `@`-mention expansion (with TTY fallback) | #113 |
+| 2 PR 4 | Cost-line bottom toolbar + `/effort` + `/thinking` + sdk-prompted inline y/n/a + classify | #114 |
+| 3 PR 1 | Agentwire MCP server auto-attached (~87 tools first-class) | #115 |
+| 3 PR 2 | Python damage control via SDK PreToolUse hook (mirror of shell hook patterns) | #116 |
+| 3 PR 3 | `.agentwire.yml` roles + voice + `--role` + `/say` | #117 |
+| 3 PR 4 | Portal sidebar SDK type-tag (teal) + artifact hint | #118 |
+| 4 | `human_gate` workflow runner + `/run-workflow` slash command + `seed_message` | #119 |
+| 5 | Scheduler accepts sdk-* task type; overnight resume injection guarded to claude-* (also fixed a latent rfind bug) | (this PR) |
 
 ## Why build this
 

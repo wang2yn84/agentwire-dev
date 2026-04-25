@@ -90,6 +90,29 @@ def generate_id() -> str:
     return uuid.uuid4().hex[:6]
 
 
+def _inject_resume_flags(agent_cmd: str, session_type: str, resume_session_id: str) -> str:
+    """Insert `--resume <id> --fork-session` after the `claude` binary token.
+
+    Phase 5: claude-* only. Other session types (sdk-*, pi-zai-*) have their
+    own resume conventions and the claude-style UUID we record doesn't apply.
+    A no-op when there's nothing to resume or the type doesn't qualify.
+
+    The previous form used `rfind("claude")` which was buggy for commands
+    that also carry `--model claude-opus-4-7` — it would match inside the
+    model arg and produce a malformed command.
+    """
+    if not resume_session_id or not session_type.startswith("claude"):
+        return agent_cmd
+    if not agent_cmd.startswith("claude "):
+        return agent_cmd
+    insert_pos = len("claude")
+    return (
+        agent_cmd[:insert_pos]
+        + f" --resume {resume_session_id} --fork-session"
+        + agent_cmd[insert_pos:]
+    )
+
+
 # ---------------------------------------------------------------------------
 # Queue CRUD
 # ---------------------------------------------------------------------------
@@ -540,16 +563,7 @@ def dispatch_item(item: OvernightItem, config) -> bool:
         _log_event("dispatch_failed", item_id=item.id, error=item.error)
         return False
 
-    # Inject --resume <id> --fork-session
-    if item.resume_session_id:
-        claude_pos = agent_cmd.rfind("claude")
-        if claude_pos >= 0:
-            insert_pos = claude_pos + len("claude")
-            agent_cmd = (
-                agent_cmd[:insert_pos]
-                + f" --resume {item.resume_session_id} --fork-session"
-                + agent_cmd[insert_pos:]
-            )
+    agent_cmd = _inject_resume_flags(agent_cmd, item.session_type, item.resume_session_id)
 
     # Launch agent
     subprocess.run(
