@@ -457,7 +457,7 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 - [x] **Phase 1D** — tests + manual smoke (#130, 2026-04-25; 17 textual tests; ready for soak before flag-flip in Phase 2D)
 - [x] **Phase 2A** — CurrentAction subpane + proportional weights (#131, 2026-04-25)
 - [x] **Phase 2B** — Header + StatusLine (#132, 2026-04-25)
-- [ ] **Phase 2C** — tool-call collapse + permission ModalScreen
+- [x] **Phase 2C** — tool-call collapse + permission ModalScreen (#133, 2026-04-25)
 - [ ] **Phase 2D** — theming + `/layout` + flag default flip
 - [ ] **Phase 3A** — snapshot test infra
 - [ ] **Phase 3B** — `@`-mention autocomplete
