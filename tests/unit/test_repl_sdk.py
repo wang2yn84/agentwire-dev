@@ -1060,10 +1060,11 @@ class TestStreamRenderState:
         assert "[thinking: let me plan this]" in rendered
         assert s.streamed_thinking is True
 
-    def test_input_json_delta_ignored(self):
+    def test_input_json_delta_shows_byte_counter(self):
         # Tool input streaming via input_json_delta would dump raw JSON bytes
-        # into the chat — we deliberately swallow these and rely on the
-        # snapshot AssistantMessage's [→ Write file.html] formatted summary.
+        # into the chat. Instead we show a live byte counter — the snapshot
+        # AssistantMessage that follows gives the formatted [→ Write file.html]
+        # summary with parsed args.
         s = self._state()
         out = io.StringIO()
         s.handle_partial(
@@ -1076,8 +1077,90 @@ class TestStreamRenderState:
              "delta": {"type": "input_json_delta", "partial_json": '{"file_path": "x"}'}},
             out,
         )
-        # No raw JSON in output
-        assert '"file_path"' not in out.getvalue()
+        rendered = out.getvalue()
+        # Counter line is written, raw JSON is not.
+        assert "writing Write input" in rendered
+        assert '"file_path"' not in rendered
+        assert s.open_block == "tool_use"
+        assert s._tool_use_bytes == len('{"file_path": "x"}')
+
+    def test_tool_use_close_finalizes_byte_counter(self):
+        s = self._state()
+        out = io.StringIO()
+        s.handle_partial(
+            {"type": "content_block_start",
+             "content_block": {"type": "tool_use", "name": "Write"}},
+            out,
+        )
+        # 2 KB of fake JSON across two deltas
+        s.handle_partial(
+            {"type": "content_block_delta",
+             "delta": {"type": "input_json_delta", "partial_json": "x" * 1024}},
+            out,
+        )
+        s.handle_partial(
+            {"type": "content_block_delta",
+             "delta": {"type": "input_json_delta", "partial_json": "x" * 1024}},
+            out,
+        )
+        s.handle_partial({"type": "content_block_stop"}, out)
+        rendered = out.getvalue()
+        assert "wrote Write input" in rendered
+        assert "2.0 KB" in rendered
+        assert s.open_block is None
+        assert s._tool_use_bytes == 0  # reset after close
+
+    def test_streamevent_dataclass_detected_by_render_message(self, monkeypatch):
+        # StreamEvent is a @dataclass, not a dict. Earlier code did
+        # `isinstance(message, dict)` and silently dropped every partial event.
+        # Verify duck-type detection works for dataclass-shaped objects.
+        from dataclasses import dataclass
+        from agentwire.repl.app import render_message, _StreamRenderState
+
+        @dataclass
+        class FakeStreamEvent:
+            uuid: str
+            session_id: str
+            event: dict
+            parent_tool_use_id: str | None = None
+
+        s = _StreamRenderState()
+        out = io.StringIO()
+        evt = FakeStreamEvent(
+            uuid="abc",
+            session_id="s",
+            event={"type": "content_block_start", "content_block": {"type": "text"}},
+        )
+        render_message(
+            evt,
+            AssistantMessage=FakeAssistantMessage,
+            UserMessage=FakeUserMessage,
+            SystemMessage=FakeSystemMessage,
+            ResultMessage=FakeResultMessage,
+            out=out,
+            stream_state=s,
+        )
+        # text block opened — render_message routed the partial through
+        # handle_partial. (Before the duck-type fix this was a no-op.)
+        assert s.open_block == "text"
+        assert s.streamed_text is True
+
+    def test_heartbeat_silent_during_tool_use(self):
+        # The byte counter IS the liveness signal during tool_use — adding
+        # `·` dots would corrupt the in-place CR rewrite.
+        s = self._state()
+        out = io.StringIO()
+        s.handle_partial(
+            {"type": "content_block_start",
+             "content_block": {"type": "tool_use", "name": "Write"}},
+            out,
+        )
+        before = out.getvalue()
+        s.heartbeat(out)
+        s.heartbeat(out)
+        after = out.getvalue()
+        # Heartbeat is a no-op during tool_use.
+        assert before == after
 
     def test_assistant_skips_streamed_text(self, monkeypatch):
         # When partials already streamed text, the snapshot AssistantMessage
