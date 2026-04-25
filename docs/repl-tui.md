@@ -1,0 +1,211 @@
+# Agentwire REPL — Textual TUI walkthrough
+
+> The Textual rewrite of `agentwire repl`. Behind `AGENTWIRE_REPL_TUI=textual`
+> until the soak window unlocks the default flip. See the mission doc at
+> `docs/missions/agentwire-repl-textual.md` for design and ship history.
+
+## Quick start
+
+```bash
+AGENTWIRE_REPL_TUI=textual agentwire repl
+```
+
+The flag must be set on a real TTY. Print mode (`-p`) and non-TTY callers
+(scheduler, workflow `human_gate`, piped stdin) keep using the line-mode
+REPL. Without the flag, every invocation behaves exactly as before.
+
+## Layout
+
+```
+┌─ Header ──────────────────────────────────────────────────┐
+│  agentwire repl — bypass · opus-4-7                       │
+├─ ChatLog (RichLog, fr=6) ─────────────────────────────────┤
+│  > previous user turn                                     │
+│  [agent started · claude-opus-4-7 · session 0657172a]     │
+│  assistant text streamed live                             │
+│  [Bash · ls -la · 12 files (collapsed call+result)]       │
+│  [done · 7+9086 tok · $0.4499 · 106.7s]                   │
+├─ CurrentAction (RichLog, fr=2, titled) ───────────────────┤
+│  ╭─ Current action ─────────────────────────────────────╮ │
+│  │ [thinking: planning the file structure...]           │ │
+│  │ [writing Write input · 4.2 KB live tick]             │ │
+│  │ […still working · 5s]                                │ │
+│  ╰──────────────────────────────────────────────────────╯ │
+├─ Input (dock=bottom) ─────────────────────────────────────┤
+│  > tell me about prompt caching                           │
+├─ StatusLine ──────────────────────────────────────────────┤
+│  3 turns ▁▃█ · 350 tok · $0.0421 · effort=high · thinking=adaptive │
+└─ Footer ──────────────────────────────────────────────────┘
+```
+
+- **ChatLog** — finalized turns. Tool calls collapse to one-liners
+  (`[Bash · ls /tmp · 12 files]`).
+- **CurrentAction** — live partial-message stream. Cleared on every
+  ResultMessage so the next turn starts fresh.
+- **StatusLine** — running totals + sparkline of last-20-turn cost.
+- **Footer** — Textual binding hints (Ctrl+P, Ctrl+D, Ctrl+C).
+
+## Slash commands
+
+Standard commands work identically to the line-mode REPL:
+
+| Command | What it does |
+|---|---|
+| `/help` | List all commands |
+| `/clear` | Reset conversation (fresh context) |
+| `/cost` | Show session token + cost totals |
+| `/tools` | List allowed tools |
+| `/model` | Show current model + session id |
+| `/save` | Show transcript path + resume hint |
+| `/resume <name>` | Resume a saved session |
+| `/effort <level>` | Set thinking effort (low/medium/high/xhigh/max) |
+| `/thinking <mode>` | Set thinking display (adaptive/summarized/off) |
+| `/say <text>` | Speak text via `agentwire say` |
+| `/run-workflow <name>` | Run an agentwire workflow |
+| `/exit` (alias `/quit`) | Exit |
+
+Textual-only additions:
+
+| Command | What it does |
+|---|---|
+| `/layout chat=N action=M` | Adjust pane proportional weights |
+| `/layout` | Show current weights |
+| `/theme <name>` | Switch Textual theme |
+| `/theme` | Show current + list available |
+| `/scrub` | Open transcript scrubber (read-only viewer) |
+
+## Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `Enter` | Submit current input |
+| `Tab` | Complete `@`-mention to top match |
+| `Ctrl+P` | Open command palette |
+| `Ctrl+C` | Cancel current turn |
+| `Ctrl+D` | Exit |
+| `Esc` | Dismiss modal / close palette |
+| `y` / `n` / `a` | Permission prompt (allow / deny / always-allow) |
+
+## `@`-mention autocomplete
+
+As you type `@`, the action pane shows live mention candidates globbed
+from cwd. **Tab** completes the prefix to the top match.
+
+```
+> summarize @REA█
+
+[mentions: README.md · README-tutorial.md]
+[Tab to accept first match]
+```
+
+After `Tab`:
+
+```
+> summarize @README.md █
+```
+
+The mention is then expanded into the full file contents at submit time
+(same as the line-mode REPL).
+
+## Permission prompts (sdk-prompted mode)
+
+In `--mode prompted`, every tool call pops a centered modal:
+
+```
+        ╭─ Allow Bash? ──────────────────────────────╮
+        │  Bash ls -la                              │
+        │  y = allow once · n = deny · a = always   │
+        │  [Allow (y)]  [Deny (n)]  [Always (a)]    │
+        ╰────────────────────────────────────────────╯
+```
+
+Pressing `a` adds the tool name to the per-session always-allow set so
+subsequent calls of the same tool skip the prompt. Reset on `/clear`.
+
+## Command palette (Ctrl+P)
+
+Fuzzy picker over the slash command registry. Opens centered, filters
+live as you type. Selecting a command writes it into the input field
+with a trailing space so you can add args before submitting.
+
+```
+        ╭─ /co_ ─────────────────────────────────╮
+        │  /cost  —  Show session token + cost   │
+        │  /clear —  Reset conversation          │
+        ╰────────────────────────────────────────╯
+```
+
+Leading `/` on the query is normalized — both `/co` and `co` match
+`/cost`.
+
+## Cost sparkline
+
+The StatusLine embeds a unicode-block sparkline of per-turn cost over
+the last 20 turns. As the session grows you see at a glance which
+turns were expensive:
+
+```
+3 turns ▁▃█ · 350 tok · $0.0421 · effort=high · thinking=adaptive
+```
+
+`▁` is the cheapest turn; `█` is the most expensive in the visible
+window. Bars rescale relative to the current peak.
+
+## Transcript scrubber
+
+`/scrub` opens a read-only viewer listing every user turn this
+session with a 100-char preview. Useful when scrollback gets long.
+Esc / `q` to close.
+
+## Theming
+
+Built-in Textual themes work out of the box:
+
+```
+> /theme
+[theme: textual-dark]
+[available: catppuccin-latte, catppuccin-mocha, dracula, flexoki,
+gruvbox, monokai, nord, solarized-light, textual-dark, textual-light,
+tokyo-night]
+
+> /theme dracula
+[theme set: dracula]
+```
+
+## Layout customization
+
+Resize the chat / action panes at runtime:
+
+```
+> /layout
+[layout: chat=6fr action=2fr]
+
+> /layout chat=10 action=1
+[layout updated · chat=10 · action=1]
+```
+
+Useful when running long sessions where you mostly want chat history,
+or when watching a tool-heavy turn where you want more action visibility.
+
+## Persistence
+
+Identical to the line-mode REPL — `~/.agentwire/sessions/repl/<name>/`
+contains:
+
+- `metadata.json` — session config + running totals (updated on close)
+- `transcript.jsonl` — one JSON object per line, event stream
+
+Both files are byte-identical to what the line-mode path produces, so
+`/resume` works across both implementations.
+
+## What's next
+
+- **Phase 2D follow-up**: flip `AGENTWIRE_REPL_TUI=textual` to default
+  on after the 1-week daily-driver soak window completes. Removes the
+  env-flag gate, makes `textual` a hard runtime dep, deletes
+  `_run_interactive`.
+- **Trigger-driven**: snapshot tests for new visual changes (Phase 3A
+  laid the infra; run via `pytest -m snapshots`).
+
+See `docs/missions/agentwire-repl-textual.md` for the living checklist
+and shipping log.
