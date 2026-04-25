@@ -57,7 +57,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
-from textual.widgets import Footer, Header, Input, RichLog
+from textual.widgets import Footer, Header, Input, RichLog, Static
 
 from agentwire.repl import persistence
 from agentwire.repl.app import (
@@ -242,6 +242,50 @@ class TurnFinished(Message):
         super().__init__()
 
 
+# ----- StatusLine widget ----------------------------------------------------
+
+
+class StatusLine(Static):
+    """Single-line widget showing running totals + tunables.
+
+    Renders one of two formats depending on whether any turns have completed:
+    - pre-turn: `{mode} · {model} · effort={e} · thinking={t}`
+    - post-turn: `{N turns} · {tok} tok · ${cost:.4f} · effort={e} · thinking={t}`
+
+    `refresh_from_state(state)` is called by the App on every SdkEvent so
+    the line stays current with cost/token totals + slash-command tunable
+    changes (`/effort`, `/thinking`).
+    """
+
+    DEFAULT_CSS = """
+    StatusLine {
+        height: 1;
+        padding: 0 1;
+        color: $text 60%;
+        background: $surface;
+    }
+    """
+
+    def refresh_from_state(self, state: ReplState | None) -> None:
+        if state is None:
+            self.update("")
+            return
+        if state.turn_count == 0:
+            self.update(
+                f"{state.mode} · {state.model} · effort={state.effort} · "
+                f"thinking={state.thinking_mode}"
+            )
+            return
+        total = state.total_input_tokens + state.total_output_tokens
+        plural = "s" if state.turn_count != 1 else ""
+        self.update(
+            f"{state.turn_count} turn{plural} · "
+            f"{total} tok ({state.total_input_tokens} in / {state.total_output_tokens} out) · "
+            f"${state.total_cost_usd:.4f} · effort={state.effort} · "
+            f"thinking={state.thinking_mode}"
+        )
+
+
 # ----- the App --------------------------------------------------------------
 
 
@@ -333,6 +377,7 @@ class AgentwireREPL(App):
         yield Header(show_clock=False)
         yield RichLog(id="chat", markup=False, highlight=False, wrap=True, auto_scroll=True)
         yield RichLog(id="action", markup=False, highlight=False, wrap=True, auto_scroll=True)
+        yield StatusLine(id="status")
         yield Input(id="input", placeholder="> ")
         yield Footer()
 
@@ -345,12 +390,20 @@ class AgentwireREPL(App):
         self._sink = _RichLogSink(chat)
         self._action_sink = _ActionSink(action)
         self.query_one("#input", Input).focus()
+
+        # Header content — set after we know the mode/model.
+        self.title = "agentwire repl"
+        model_short = (self._cfg["model"] or DEFAULT_MODEL).replace("claude-", "")
+        self.sub_title = f"{self._cfg['mode']} · {model_short}"
         try:
             await self._open_session()
         except Exception as exc:
             self._sink.write(f"[startup error: {exc}]\n")
             self._sink.flush()
             return
+        # Initial status line after state is built.
+        self._refresh_status()
+
         if self._cfg["seed_message"]:
             self.run_worker(
                 self._run_turn(self._cfg["seed_message"]),
@@ -612,6 +665,8 @@ class AgentwireREPL(App):
         if text.startswith("/"):
             action = dispatch_command(text, self.state, self._sink)
             self._sink.flush()
+            # /effort and /thinking mutate state — reflect immediately.
+            self._refresh_status()
             if action == EXIT:
                 self.exit(self._exit_code)
                 return
@@ -727,9 +782,16 @@ class AgentwireREPL(App):
                 # Turn complete — clear the action pane so the next turn's
                 # partials start fresh.
                 self._action_sink.clear()
+            self._refresh_status()
         except Exception as exc:
             self._sink.write(f"[render error: {exc}]\n")
             self._sink.flush()
+
+    def _refresh_status(self) -> None:
+        try:
+            self.query_one("#status", StatusLine).refresh_from_state(self.state)
+        except Exception:
+            pass
 
     def on_turn_finished(self, event: TurnFinished) -> None:
         assert self._sink is not None

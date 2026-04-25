@@ -606,6 +606,106 @@ async def test_action_pane_cleared_on_result(patched_sdk, tmp_path, monkeypatch)
         assert app._action_sink._finalized == []
 
 
+class TestStatusLine:
+    """Phase 2B — running totals widget."""
+
+    def test_pre_turn_format(self):
+        from agentwire.repl.state import ReplState
+        from agentwire.repl.textual_app import StatusLine
+
+        line = StatusLine()
+        # Patch update() to capture instead of needing a mounted app.
+        captured: list = []
+        line.update = lambda content="": captured.append(content)
+
+        state = ReplState(mode="bypass", model="claude-opus-4-7", allowed_tools=[])
+        line.refresh_from_state(state)
+        assert captured
+        text = captured[-1]
+        assert "bypass" in text
+        assert "claude-opus-4-7" in text
+        assert "effort=high" in text
+        assert "thinking=adaptive" in text
+
+    def test_post_turn_format(self):
+        from agentwire.repl.state import ReplState
+        from agentwire.repl.textual_app import StatusLine
+
+        line = StatusLine()
+        captured: list = []
+        line.update = lambda content="": captured.append(content)
+
+        state = ReplState(mode="bypass", model="claude-opus-4-7", allowed_tools=[])
+        state.turn_count = 3
+        state.total_input_tokens = 100
+        state.total_output_tokens = 250
+        state.total_cost_usd = 0.0421
+        line.refresh_from_state(state)
+        text = captured[-1]
+        assert "3 turns" in text
+        assert "350 tok" in text
+        assert "$0.0421" in text
+        assert "100 in" in text and "250 out" in text
+
+    def test_singular_turn(self):
+        from agentwire.repl.state import ReplState
+        from agentwire.repl.textual_app import StatusLine
+
+        line = StatusLine()
+        captured: list = []
+        line.update = lambda content="": captured.append(content)
+
+        state = ReplState(mode="bypass", model="x", allowed_tools=[])
+        state.turn_count = 1
+        line.refresh_from_state(state)
+        assert "1 turn" in captured[-1]
+        assert "1 turns" not in captured[-1]
+
+
+@pytest.mark.asyncio
+async def test_status_line_refreshes_on_result(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL, StatusLine
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass", model="claude-opus-4-7")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        client.script([
+            _FakeResultMessage(
+                total_cost_usd=0.05,
+                duration_ms=1000,
+                usage={"input_tokens": 10, "output_tokens": 20},
+            ),
+        ])
+        inp = app.query_one("#input", Input)
+        inp.value = "hi"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+
+        status = app.query_one("#status", StatusLine)
+        # Static.update() stores content in private state; query via render().
+        rendered = status.render()
+        text = str(rendered) if rendered is not None else ""
+        assert "1 turn" in text
+        assert "$0.0500" in text
+
+
+@pytest.mark.asyncio
+async def test_header_title_set(patched_sdk):
+    from agentwire.repl.textual_app import AgentwireREPL
+
+    app = AgentwireREPL(mode="bypass", model="claude-opus-4-7")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.title == "agentwire repl"
+        assert "bypass" in app.sub_title
+        assert "opus-4-7" in app.sub_title
+
+
 @pytest.mark.asyncio
 async def test_exit_command_quits_app(patched_sdk):
     from agentwire.repl.textual_app import AgentwireREPL
