@@ -439,8 +439,8 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 
 # Living checklist (update as we ship)
 
-- [ ] **Phase 1A** — flag + dispatcher
-- [ ] **Phase 1B** — Textual skeleton
+- [x] **Phase 1A** — flag + dispatcher (#127, 2026-04-25)
+- [x] **Phase 1B** — Textual skeleton (#128, 2026-04-25; uses `Input` widget — TextArea/multi-line punted to 2A; sink streams partials choppily, clean on close — proper live streaming arrives with the CurrentAction widget in 2A)
 - [ ] **Phase 1C** — persistence, mentions, prompted mode, lifecycle
 - [ ] **Phase 1D** — tests + manual smoke
 - [ ] **Phase 2A** — CurrentAction subpane + proportional weights
