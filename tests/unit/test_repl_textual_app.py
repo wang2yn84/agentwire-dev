@@ -465,3 +465,84 @@ async def test_exit_command_quits_app(patched_sdk):
         await pilot.pause()
         # After /exit, the app exits — return_code is set.
         assert app.return_code == 0 or not app.is_running
+
+
+@pytest.mark.asyncio
+async def test_result_with_error_sets_exit_code(patched_sdk, tmp_path, monkeypatch):
+    # Parity with legacy REPL: a ResultMessage carrying is_error=True should
+    # set exit_code=1 so the process returns non-zero.
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        client.script([
+            _FakeResultMessage(total_cost_usd=0.0, duration_ms=10, usage={},
+                               is_error=True, result="boom"),
+        ])
+        inp = app.query_one("#input", Input)
+        inp.value = "trigger error"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+        assert app._exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_seed_message_fires_first_turn(patched_sdk, tmp_path, monkeypatch):
+    # Workflow human_gate runners pass seed_message — it should fire as the
+    # first turn after on_mount instead of waiting for user input.
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+
+    app = AgentwireREPL(mode="bypass", seed_message="hello from seed")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        # Worker fires immediately on mount because seed_message is set.
+        # The worker calls client.query — verify it received the seed text.
+        for _ in range(10):
+            await pilot.pause()
+            if getattr(client, "_last_query", None) == "hello from seed":
+                break
+        assert client._last_query == "hello from seed"
+
+
+@pytest.mark.asyncio
+async def test_unmount_finalizes_transcript_with_running_totals(
+    patched_sdk, tmp_path, monkeypatch
+):
+    # metadata.json on unmount should reflect cost/token totals from any
+    # ResultMessages tracked during the session.
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        client.script([
+            _FakeResultMessage(
+                total_cost_usd=0.5,
+                duration_ms=2000,
+                usage={"input_tokens": 100, "output_tokens": 200},
+            ),
+        ])
+        inp = app.query_one("#input", Input)
+        inp.value = "go"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+        session_dir = app.state.session_dir
+
+    # After context exit (on_unmount fired): metadata reflects totals.
+    metadata = json.loads((Path(session_dir) / "metadata.json").read_text())
+    assert metadata["turn_count"] >= 1
+    assert metadata["total_cost_usd"] >= 0.5
