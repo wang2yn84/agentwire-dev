@@ -16,6 +16,7 @@ from typing import Any
 
 from agentwire.repl.commands import CONTINUE, EXIT, RESTART, RESUME, dispatch_command
 from agentwire.repl import persistence
+from agentwire.repl.mentions import expand_mentions
 from agentwire.repl.state import ReplState, reset_for_restart, track_result, track_system_init
 
 
@@ -382,6 +383,7 @@ async def _run_interactive(
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.history import InMemoryHistory
+        from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.patch_stdout import patch_stdout
     except ImportError as e:
         print(f"error: prompt_toolkit not installed: {e}", file=sys.stderr)
@@ -411,8 +413,8 @@ async def _run_interactive(
     if resume_sdk_session_id:
         sys.stdout.write(f"Resuming {resume!r} (sdk session {resume_sdk_session_id[:8]}…)\n")
     sys.stdout.write(
-        "Interactive mode. Enter to send · Ctrl+D to exit · Ctrl+C to cancel current turn.\n"
-        "Type /help for commands.\n\n"
+        "Interactive mode. Enter to send · Alt+Enter for newline · Ctrl+D to exit · Ctrl+C to cancel.\n"
+        "Type /help for commands. @path/to/file expands inline.\n\n"
     )
     sys.stdout.flush()
 
@@ -437,7 +439,34 @@ async def _run_interactive(
     state.session_dir = str(transcript.session_dir)
     state.transcript_name = transcript.name
 
-    prompt_session = PromptSession(history=InMemoryHistory())
+    # Multi-line input: only meaningful when stdin is a real TTY. With piped
+    # stdin (smoke tests, scripts, scheduler invocations) prompt_toolkit's
+    # multi-line mode treats every \n as literal and never submits on EOF,
+    # so we fall back to single-line in that case.
+    is_tty = sys.stdin.isatty()
+    if is_tty:
+        kb = KeyBindings()
+
+        @kb.add("escape", "enter")
+        def _(event):
+            event.current_buffer.insert_text("\n")
+
+        @kb.add("c-j")  # Ctrl-J fallback for terminals that don't pass Alt
+        def _(event):
+            event.current_buffer.insert_text("\n")
+
+        @kb.add("enter")
+        def _(event):
+            event.current_buffer.validate_and_handle()
+
+        prompt_session = PromptSession(
+            history=InMemoryHistory(),
+            multiline=True,
+            key_bindings=kb,
+            prompt_continuation="… ",
+        )
+    else:
+        prompt_session = PromptSession(history=InMemoryHistory())
 
     saved_claudecode = os.environ.pop("CLAUDECODE", None)
     exit_code = 0
@@ -529,11 +558,33 @@ async def _run_sdk_session(
                     return True, False, exit_code
                 continue
 
-            # Record the user's input as a first-class event.
-            transcript.write_event({"type": "user_input", "text": text})
+            # Expand @path mentions before sending. Record both raw and
+            # expanded text so transcripts capture user intent + what the
+            # model actually saw.
+            expanded_text, expansions = expand_mentions(text, cwd=Path.cwd())
+            if expansions:
+                sys.stdout.write(
+                    f"[expanded {len(expansions)} mention"
+                    f"{'s' if len(expansions) != 1 else ''}: "
+                    f"{', '.join(e.raw for e in expansions)}]\n"
+                )
+                sys.stdout.flush()
+
+            transcript.write_event({
+                "type": "user_input",
+                "text": text,
+                **(
+                    {
+                        "expanded_text": expanded_text,
+                        "mentions": [{"raw": e.raw, "target": e.target} for e in expansions],
+                    }
+                    if expansions
+                    else {}
+                ),
+            })
 
             try:
-                await client.query(text)
+                await client.query(expanded_text)
                 async for message in client.receive_response():
                     try:
                         render_message(

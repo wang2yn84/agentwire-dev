@@ -512,12 +512,20 @@ def _install_fake_prompt_toolkit(monkeypatch, script):
     fake_pt = types.ModuleType("prompt_toolkit")
     fake_history = types.ModuleType("prompt_toolkit.history")
     fake_patch = types.ModuleType("prompt_toolkit.patch_stdout")
+    fake_kb = types.ModuleType("prompt_toolkit.key_binding")
 
     class FakeInMemoryHistory:
         def __init__(self): pass
 
+    class FakeKeyBindings:
+        def __init__(self): pass
+        def add(self, *a, **kw):
+            # Returns a decorator that just returns the function unchanged.
+            def deco(fn): return fn
+            return deco
+
     class FakePromptSession:
-        def __init__(self, history=None):
+        def __init__(self, history=None, multiline=False, key_bindings=None, prompt_continuation=None):
             self.idx = 0
 
         async def prompt_async(self, text):
@@ -538,10 +546,12 @@ def _install_fake_prompt_toolkit(monkeypatch, script):
 
     fake_pt.PromptSession = FakePromptSession
     fake_history.InMemoryHistory = FakeInMemoryHistory
+    fake_kb.KeyBindings = FakeKeyBindings
     fake_patch.patch_stdout = patch_stdout
 
     monkeypatch.setitem(_sys.modules, "prompt_toolkit", fake_pt)
     monkeypatch.setitem(_sys.modules, "prompt_toolkit.history", fake_history)
+    monkeypatch.setitem(_sys.modules, "prompt_toolkit.key_binding", fake_kb)
     monkeypatch.setitem(_sys.modules, "prompt_toolkit.patch_stdout", fake_patch)
 
 
@@ -871,6 +881,82 @@ class TestInteractiveLoop:
         # First had no resume; second should.
         assert all_opts[0].kwargs.get("resume") is None
         assert all_opts[1].kwargs.get("resume") == "prior-sdk-id"
+
+    def test_mention_expanded_before_sdk_query(self, monkeypatch, capsys, tmp_path):
+        # File in CWD that the user mentions
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "note.txt").write_text("the secret is bananas")
+        monkeypatch.chdir(proj)
+
+        turn = [
+            FakeResultMessage(usage={"input_tokens": 5, "output_tokens": 1}, duration_ms=10),
+        ]
+        state = _install_fake_sdk(monkeypatch, [turn])
+        _install_fake_prompt_toolkit(monkeypatch, ["summarize @note.txt please"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass", session_name="mention-test")
+        assert rc == 0
+        # The string sent to the SDK includes the expanded file contents.
+        assert len(state["queries"]) == 1
+        sent = state["queries"][0]
+        assert "the secret is bananas" in sent
+        assert "@note.txt" not in sent  # original mention replaced
+        # Notice line shown
+        out = capsys.readouterr().out
+        assert "expanded 1 mention" in out
+
+    def test_mention_recorded_in_transcript(self, monkeypatch, capsys, tmp_path):
+        import json
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "data.txt").write_text("payload-text")
+        monkeypatch.chdir(proj)
+
+        turn = [FakeResultMessage(usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=10)]
+        _install_fake_sdk(monkeypatch, [turn])
+        _install_fake_prompt_toolkit(monkeypatch, ["check @data.txt"])
+
+        from agentwire.repl.app import run_repl
+        run_repl(mode="bypass", session_name="mention-record")
+
+        events_path = self._repl_home / "mention-record" / "transcript.jsonl"
+        events = [json.loads(line) for line in events_path.read_text().splitlines()]
+        ui = next(e for e in events if e["type"] == "user_input")
+        # Raw text preserved
+        assert ui["text"] == "check @data.txt"
+        # Expanded text + mentions metadata recorded
+        assert "payload-text" in ui["expanded_text"]
+        assert ui["mentions"] == [{"raw": "@data.txt", "target": "data.txt"}]
+
+    def test_no_mention_no_expanded_field(self, monkeypatch, capsys):
+        # Plain text → no expanded_text/mentions keys in user_input event.
+        import json
+        turn = [FakeResultMessage(usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=10)]
+        _install_fake_sdk(monkeypatch, [turn])
+        _install_fake_prompt_toolkit(monkeypatch, ["plain hello"])
+
+        from agentwire.repl.app import run_repl
+        run_repl(mode="bypass", session_name="no-mention")
+
+        events_path = self._repl_home / "no-mention" / "transcript.jsonl"
+        events = [json.loads(line) for line in events_path.read_text().splitlines()]
+        ui = next(e for e in events if e["type"] == "user_input")
+        assert "expanded_text" not in ui
+        assert "mentions" not in ui
+
+    def test_multiline_input_sent_as_one_turn(self, monkeypatch, capsys):
+        # The fake PromptSession just returns a string — so a multi-line
+        # string acts like the user typed Alt+Enter then hit Enter.
+        turn = [FakeResultMessage(usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=10)]
+        state = _install_fake_sdk(monkeypatch, [turn])
+        _install_fake_prompt_toolkit(monkeypatch, ["line one\nline two\nline three"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        assert rc == 0
+        assert state["queries"] == ["line one\nline two\nline three"]
 
     def test_missing_prompt_toolkit_returns_one(self, monkeypatch, capsys):
         _install_fake_sdk(monkeypatch, [])
