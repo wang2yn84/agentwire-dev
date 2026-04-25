@@ -3431,11 +3431,9 @@ def cmd_repl(args) -> int:
     """Agentwire REPL — interactive harness built on claude-agent-sdk.
 
     Invoked by build_agent_command when a session is spawned with --type sdk-*.
-    The user never calls this directly; it runs inside a tmux pane created by
-    `agentwire new -s <name> --type sdk-bypass`.
-
-    Phase 1 scaffold — proves the session-type plumbing works end-to-end.
-    SDK integration lands in PR 2.
+    Interactive mode auto-persists every turn under
+    `~/.agentwire/sessions/repl/<session-name>/`; `--resume NAME` continues a
+    prior session by reusing its sdk_session_id.
     """
     from agentwire.repl.app import run_repl
     return run_repl(
@@ -3443,6 +3441,8 @@ def cmd_repl(args) -> int:
         model=args.model,
         print_prompt=args.print,
         system_prompt=args.append_system_prompt,
+        session_name=getattr(args, "session_name", None),
+        resume=getattr(args, "resume", None),
     )
 
 
@@ -10178,6 +10178,14 @@ def main() -> int:
     repl_parser.add_argument(
         "--append-system-prompt", dest="append_system_prompt", default=None, metavar="TEXT",
         help="Additional system prompt content (appended after base prompt)",
+    )
+    repl_parser.add_argument(
+        "--session-name", dest="session_name", default=None, metavar="NAME",
+        help="Transcript directory name under ~/.agentwire/sessions/repl/ (default: auto-generated timestamp+hash)",
+    )
+    repl_parser.add_argument(
+        "--resume", dest="resume", default=None, metavar="NAME",
+        help="Resume the saved session NAME (reuses its sdk_session_id to continue the prior conversation)",
     )
     repl_parser.set_defaults(func=cmd_repl)
 

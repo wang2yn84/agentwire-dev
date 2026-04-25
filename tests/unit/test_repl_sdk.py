@@ -450,9 +450,13 @@ class TestPrintModeIntegration:
 
 # --- interactive loop (mocked prompt_toolkit + SDK) ---
 
-def _install_fake_sdk(monkeypatch, messages_per_turn):
+def _install_fake_sdk(monkeypatch, messages_per_turn, tmp_path=None):
     """Install a fake claude_agent_sdk module. messages_per_turn is a list of
-    lists; one inner list per .query() call, each yielded by receive_response."""
+    lists; one inner list per .query() call, each yielded by receive_response.
+
+    If tmp_path is provided, persistence.DEFAULT_REPL_HOME is redirected there
+    so interactive-loop tests don't pollute ~/.agentwire/sessions/repl/.
+    """
     import sys as _sys
     import types
 
@@ -467,7 +471,8 @@ def _install_fake_sdk(monkeypatch, messages_per_turn):
 
     class MockClient:
         def __init__(self, options):
-            state["options"] = options
+            state.setdefault("all_options", []).append(options)
+            state["options"] = options  # last one
             state["closed"] = False
 
         async def __aenter__(self):
@@ -489,6 +494,12 @@ def _install_fake_sdk(monkeypatch, messages_per_turn):
 
     fake_sdk.ClaudeSDKClient = MockClient
     monkeypatch.setitem(_sys.modules, "claude_agent_sdk", fake_sdk)
+
+    # Redirect persistence to tmp_path so tests don't create real session dirs.
+    if tmp_path is not None:
+        from agentwire.repl import persistence as _persistence
+        monkeypatch.setattr(_persistence, "DEFAULT_REPL_HOME", tmp_path / "repl_home")
+
     return state
 
 
@@ -535,6 +546,14 @@ def _install_fake_prompt_toolkit(monkeypatch, script):
 
 
 class TestInteractiveLoop:
+    @pytest.fixture(autouse=True)
+    def _isolate_persistence(self, tmp_path, monkeypatch):
+        # Every interactive-loop test spawns a real transcript on disk — point
+        # persistence at a tmp_path so we don't pollute ~/.agentwire/sessions/.
+        from agentwire.repl import persistence
+        monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl_home")
+        self._repl_home = tmp_path / "repl_home"
+
     def test_eof_exits_clean(self, monkeypatch, capsys):
         _install_fake_sdk(monkeypatch, [])
         _install_fake_prompt_toolkit(monkeypatch, [])  # empty → EOFError
@@ -728,6 +747,130 @@ class TestInteractiveLoop:
         assert "unknown command" in out
         assert "/foo" in out
         assert state["queries"] == []
+
+    def test_transcript_written_for_each_turn(self, monkeypatch, capsys):
+        import json
+        turn = [
+            FakeSystemMessage("init", {"model": "claude-opus-4-7", "session_id": "sdk-abc"}),
+            FakeAssistantMessage([{"type": "text", "text": "hi"}]),
+            FakeResultMessage(usage={"input_tokens": 5, "output_tokens": 3}, duration_ms=100),
+        ]
+        _install_fake_sdk(monkeypatch, [turn])
+        _install_fake_prompt_toolkit(monkeypatch, ["hello there"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        assert rc == 0
+
+        # A session dir was created under the patched home
+        sessions = list(self._repl_home.iterdir())
+        assert len(sessions) == 1
+        sess = sessions[0]
+        meta = json.loads((sess / "metadata.json").read_text())
+        assert meta["mode"] == "bypass"
+        assert meta["turn_count"] == 1
+        assert meta["total_input_tokens"] == 5
+        assert meta["total_output_tokens"] == 3
+        assert "sdk-abc" in meta["sdk_session_ids"]
+
+        lines = (sess / "transcript.jsonl").read_text().splitlines()
+        events = [json.loads(line) for line in lines]
+        types = [e["type"] for e in events]
+        assert "user_input" in types
+        assert "session" in types
+        assert "agent_start" in types
+        assert "message_end" in types
+        assert "turn_end" in types
+        assert "agent_end" in types
+        # user_input has the literal text
+        ui = next(e for e in events if e["type"] == "user_input")
+        assert ui["text"] == "hello there"
+
+    def test_explicit_session_name(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, [])
+
+        from agentwire.repl.app import run_repl
+        run_repl(mode="bypass", session_name="explicit-name")
+
+        assert (self._repl_home / "explicit-name").is_dir()
+
+    def test_save_command_reflects_transcript(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, ["/save"])
+
+        from agentwire.repl.app import run_repl
+        run_repl(mode="bypass", session_name="save-test")
+        out = capsys.readouterr().out
+        assert "save-test" in out
+        assert str(self._repl_home / "save-test") in out
+
+    def test_resume_fails_gracefully_when_session_absent(self, monkeypatch, capsys):
+        _install_fake_sdk(monkeypatch, [])
+        _install_fake_prompt_toolkit(monkeypatch, [])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass", resume="missing")
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "no session named 'missing'" in err
+
+    def test_resume_passes_sdk_session_id_to_options(self, monkeypatch, capsys):
+        # First run creates a session and records its sdk_session_id.
+        first_turn = [
+            FakeSystemMessage("init", {"model": "claude-opus-4-7", "session_id": "first-sdk-id"}),
+            FakeResultMessage(usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=10),
+        ]
+        state1 = _install_fake_sdk(monkeypatch, [first_turn])
+        _install_fake_prompt_toolkit(monkeypatch, ["hi"])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass", session_name="resumable")
+        assert rc == 0
+
+        # Second run resumes — fake SDK should see `resume=first-sdk-id`
+        # in the options passed to ClaudeSDKClient.
+        state2 = _install_fake_sdk(monkeypatch, [[]])
+        _install_fake_prompt_toolkit(monkeypatch, [])
+
+        rc = run_repl(mode="bypass", resume="resumable")
+        assert rc == 0
+        # New FakeOptions built for this run should carry the resume id.
+        opts = state2["options"]
+        assert opts.kwargs.get("resume") == "first-sdk-id"
+
+    def test_in_repl_resume_reopens_sdk_with_resume_id(self, monkeypatch, capsys):
+        # Pre-seed a saved session
+        from agentwire.repl import persistence
+        seed = persistence.create_session(
+            mode="bypass", model="claude-opus-4-7",
+            allowed_tools=["Read"], name="prior",
+            home=self._repl_home,
+        )
+        persistence.record_session_id(seed, "prior-sdk-id")
+        seed.close()
+
+        # Now run with /resume prior → the second SDK client should have
+        # resume="prior-sdk-id" in its options.
+        turn1 = [FakeResultMessage(usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=10)]
+        turn2 = [FakeResultMessage(usage={"input_tokens": 1, "output_tokens": 1}, duration_ms=10)]
+        state = _install_fake_sdk(monkeypatch, [turn1, turn2])
+        _install_fake_prompt_toolkit(monkeypatch, [
+            "first turn on fresh session",
+            "/resume prior",
+            "second turn on resumed session",
+        ])
+
+        from agentwire.repl.app import run_repl
+        rc = run_repl(mode="bypass")
+        assert rc == 0
+
+        # Two FakeOptions were created (one per SDK client open).
+        all_opts = state["all_options"]
+        assert len(all_opts) == 2
+        # First had no resume; second should.
+        assert all_opts[0].kwargs.get("resume") is None
+        assert all_opts[1].kwargs.get("resume") == "prior-sdk-id"
 
     def test_missing_prompt_toolkit_returns_one(self, monkeypatch, capsys):
         _install_fake_sdk(monkeypatch, [])

@@ -19,6 +19,7 @@ from agentwire.repl.state import ReplState
 CONTINUE = "continue"
 EXIT = "exit"
 RESTART = "restart"
+RESUME = "resume"
 
 
 Handler = Callable[[ReplState, str, TextIO], str]
@@ -104,6 +105,68 @@ def _model(state: ReplState, args: str, out: TextIO) -> str:
     return CONTINUE
 
 
+def _save(state: ReplState, args: str, out: TextIO) -> str:
+    """Confirm where the transcript is being written. Every turn is already
+    auto-persisted, so `/save` is a UX affirmation, not a flush-on-demand."""
+    if not state.session_dir:
+        out.write("[no transcript dir yet — persistence starts with the first turn]\n")
+        return CONTINUE
+    out.write(
+        f"[transcript · {state.transcript_name} · "
+        f"{state.turn_count} turn{'s' if state.turn_count != 1 else ''}]\n"
+        f"[path · {state.session_dir}]\n"
+    )
+    if state.session_id:
+        out.write(f"[resume with · /resume {state.transcript_name}]\n")
+    return CONTINUE
+
+
+def _resume(state: ReplState, args: str, out: TextIO) -> str:
+    """`/resume` lists recent sessions; `/resume NAME` restarts with that
+    session's sdk_session_id to continue the prior conversation.
+
+    Looks up metadata in `~/.agentwire/sessions/repl/` and defers the
+    actual SDK re-open to the outer loop (via RESUME + pending_resume_*).
+    """
+    # Local import — commands.py stays lightweight + avoids circular imports
+    # through app.py.
+    from agentwire.repl import persistence
+
+    target = args.strip()
+    if not target:
+        sessions = persistence.list_sessions(limit=10)
+        if not sessions:
+            out.write("[no saved sessions found]\n")
+            return CONTINUE
+        out.write("Recent sessions (most recent first):\n")
+        for meta in sessions:
+            name = meta.get("name", "?")
+            turns = meta.get("turn_count", 0)
+            mode = meta.get("mode", "?")
+            started = meta.get("started_at", 0)
+            from datetime import datetime, timezone
+            try:
+                when = datetime.fromtimestamp(started, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                when = "?"
+            out.write(f"  {name}  ({turns} turn{'s' if turns != 1 else ''} · mode={mode} · {when} UTC)\n")
+        out.write("\nUsage: /resume <name>\n")
+        return CONTINUE
+
+    meta = persistence.load_session(target)
+    if meta is None:
+        out.write(f"[no session found: {target}]\n")
+        return CONTINUE
+    ids = meta.get("sdk_session_ids") or []
+    if not ids:
+        out.write(f"[session {target!r} has no recorded sdk_session_id; cannot resume]\n")
+        return CONTINUE
+
+    state.pending_resume_sdk_session_id = ids[-1]
+    out.write(f"[resuming {target} (sdk session {ids[-1][:8]}…) — reopening client]\n")
+    return RESUME
+
+
 # -------- registry --------
 
 def _build_registry() -> dict[str, Command]:
@@ -115,6 +178,8 @@ def _build_registry() -> dict[str, Command]:
         Command(name="/cost", handler=_cost, summary="Show session token + cost totals"),
         Command(name="/tools", handler=_tools, summary="List allowed tools for this mode"),
         Command(name="/model", handler=_model, summary="Show current model + session id"),
+        Command(name="/save", handler=_save, summary="Show transcript path + resume hint"),
+        Command(name="/resume", handler=_resume, summary="Resume a saved session (or list)"),
         exit_cmd,
     ]
     registry: dict[str, Command] = {}

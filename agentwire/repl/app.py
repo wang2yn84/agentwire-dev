@@ -1,9 +1,9 @@
 """Agentwire REPL application entry point.
 
-Phase 1 PR 2 — wires claude-agent-sdk into print mode (`agentwire repl -p ...`).
-Interactive mode stays on the PR 1 scaffold until PR 3 replaces it with a real
-prompt_toolkit-backed loop. Splitting keeps SDK wiring isolated from terminal-UI
-concerns.
+Print mode: one-shot SDK call, stream events, exit.
+Interactive: persistent prompt_toolkit loop holding one ClaudeSDKClient open
+across turns. Ctrl+D exits; Ctrl+C cancels the current turn. Slash commands
+live in `commands.py`; transcript persistence lives in `persistence.py`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agentwire.repl.commands import CONTINUE, EXIT, RESTART, dispatch_command
+from agentwire.repl.commands import CONTINUE, EXIT, RESTART, RESUME, dispatch_command
+from agentwire.repl import persistence
 from agentwire.repl.state import ReplState, reset_for_restart, track_result, track_system_init
 
 
@@ -45,17 +46,19 @@ def run_repl(
     model: str | None = None,
     print_prompt: str | None = None,
     system_prompt: str | None = None,
+    session_name: str | None = None,
+    resume: str | None = None,
 ) -> int:
     """Run the REPL. Returns exit code.
 
-    - Print mode (`-p PROMPT`): wire up claude-agent-sdk, run one turn, stream
-      events to stdout, exit.
-    - Interactive: persistent prompt_toolkit loop holding one SDK client open
-      across turns. Ctrl+D exits; Ctrl+C cancels the current turn.
+    - Print mode (`-p PROMPT`): one SDK call, stream events, exit. No
+      transcript (print mode is fire-and-forget).
+    - Interactive: persistent loop with full transcript persistence under
+      `~/.agentwire/sessions/repl/<session_name>/`.
     """
     if print_prompt is not None:
         return asyncio.run(_run_print_mode(print_prompt, mode, model, system_prompt))
-    return asyncio.run(_run_interactive(mode, model, system_prompt))
+    return asyncio.run(_run_interactive(mode, model, system_prompt, session_name, resume))
 
 
 # -------- print mode (SDK-backed) --------
@@ -117,12 +120,14 @@ def build_options(
     model: str | None,
     system_prompt: str | None,
     cwd: Path | None = None,
+    resume_sdk_session_id: str | None = None,
 ) -> Any:
     """Compose `ClaudeAgentOptions` for a REPL session.
 
     Permission mode + tool surface are derived from the session-type variant
     (`sdk-bypass`/`sdk-prompted`/`sdk-restricted`). System prompt layers project
-    CLAUDE.md + AGENTS.md + an optional explicit append.
+    CLAUDE.md + AGENTS.md + an optional explicit append. `resume_sdk_session_id`
+    passes through to the SDK's `resume` field to continue a prior conversation.
     """
     kwargs: dict[str, Any] = {
         "model": model or DEFAULT_MODEL,
@@ -135,6 +140,8 @@ def build_options(
     }
     if cwd is not None:
         kwargs["cwd"] = str(cwd)
+    if resume_sdk_session_id:
+        kwargs["resume"] = resume_sdk_session_id
 
     append_parts: list[str] = []
     if cwd is not None:
@@ -164,6 +171,37 @@ def _find_ancestor_file(start: Path, name: str) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def _persist_sdk_message(
+    message: Any,
+    transcript: Any,
+    AssistantMessage: Any,
+    UserMessage: Any,
+    SystemMessage: Any,
+    ResultMessage: Any,
+) -> None:
+    """Translate one SDK message to event shape and append to the transcript.
+
+    Reuses `agentwire.workflows.runners.anthropic_events` so REPL events and
+    workflow events share vocabulary (portal history window can render both
+    without a separate codepath).
+    """
+    try:
+        from agentwire.workflows.runners import anthropic_events as ev
+    except ImportError:
+        return
+
+    if isinstance(message, SystemMessage) and getattr(message, "subtype", None) == "init":
+        for event in ev.translate_system_init(message):
+            transcript.write_event(event)
+    elif isinstance(message, AssistantMessage):
+        transcript.write_event(ev.translate_assistant(message))
+    elif isinstance(message, UserMessage):
+        transcript.write_event(ev.translate_user(message))
+    elif isinstance(message, ResultMessage):
+        for event in ev.translate_result(message):
+            transcript.write_event(event)
 
 
 # -------- event rendering --------
@@ -317,6 +355,8 @@ async def _run_interactive(
     mode: str,
     model: str | None,
     system_prompt: str | None,
+    session_name: str | None = None,
+    resume: str | None = None,
 ) -> int:
     """Run the interactive REPL.
 
@@ -347,37 +387,70 @@ async def _run_interactive(
         print(f"error: prompt_toolkit not installed: {e}", file=sys.stderr)
         return 1
 
-    options = build_options(ClaudeAgentOptions, mode, model, system_prompt, cwd=Path.cwd())
+    # Resume handling — look up the SDK session_id to pass to the first
+    # ClaudeSDKClient.
+    resume_sdk_session_id: str | None = None
+    if resume:
+        prior = persistence.load_session(resume)
+        if prior is None:
+            print(f"error: no session named {resume!r} under {persistence.DEFAULT_REPL_HOME}", file=sys.stderr)
+            return 1
+        ids = prior.get("sdk_session_ids") or []
+        if not ids:
+            print(f"warning: session {resume!r} has no recorded sdk_session_id; starting fresh conversation", file=sys.stderr)
+        else:
+            resume_sdk_session_id = ids[-1]  # most recent
+
+    options = build_options(
+        ClaudeAgentOptions, mode, model, system_prompt,
+        cwd=Path.cwd(), resume_sdk_session_id=resume_sdk_session_id,
+    )
 
     model_display = model or f"{DEFAULT_MODEL} (default)"
     sys.stdout.write(BANNER.format(mode=mode, model=model_display))
+    if resume_sdk_session_id:
+        sys.stdout.write(f"Resuming {resume!r} (sdk session {resume_sdk_session_id[:8]}…)\n")
     sys.stdout.write(
         "Interactive mode. Enter to send · Ctrl+D to exit · Ctrl+C to cancel current turn.\n"
         "Type /help for commands.\n\n"
     )
     sys.stdout.flush()
 
+    allowed_tools = (
+        list(options.allowed_tools)
+        if hasattr(options, "allowed_tools")
+        else list(getattr(options, "kwargs", {}).get("allowed_tools", []))
+    )
     state = ReplState(
         mode=mode,
         model=model or DEFAULT_MODEL,
-        allowed_tools=list(options.allowed_tools)
-        if hasattr(options, "allowed_tools")
-        else list(getattr(options, "kwargs", {}).get("allowed_tools", [])),
+        allowed_tools=allowed_tools,
     )
 
-    session = PromptSession(history=InMemoryHistory())
+    transcript = persistence.create_session(
+        mode=mode,
+        model=model or DEFAULT_MODEL,
+        allowed_tools=allowed_tools,
+        name=session_name,
+    )
+    sys.stdout.write(f"[transcript → {transcript.session_dir}]\n\n")
+    state.session_dir = str(transcript.session_dir)
+    state.transcript_name = transcript.name
+
+    prompt_session = PromptSession(history=InMemoryHistory())
 
     saved_claudecode = os.environ.pop("CLAUDECODE", None)
     exit_code = 0
 
-    # Outer loop wraps the SDK client so /clear can close+reopen it for a
-    # fresh conversation while the REPL itself keeps running.
+    # Outer loop wraps the SDK client so /clear and /resume can close+reopen
+    # it for a different conversation while the REPL keeps running.
     try:
         while True:
             restart_requested, should_exit, loop_exit_code = await _run_sdk_session(
                 options=options,
                 state=state,
-                prompt_session=session,
+                transcript=transcript,
+                prompt_session=prompt_session,
                 ClaudeSDKClient=ClaudeSDKClient,
                 AssistantMessage=AssistantMessage,
                 UserMessage=UserMessage,
@@ -391,10 +464,23 @@ async def _run_interactive(
                 break
             if not restart_requested:
                 break
+            # Rebuild options for /clear vs /resume.
+            next_resume_id = state.pending_resume_sdk_session_id
+            state.pending_resume_sdk_session_id = None
+            options = build_options(
+                ClaudeAgentOptions, mode, model, system_prompt,
+                cwd=Path.cwd(), resume_sdk_session_id=next_resume_id,
+            )
+            transcript.write_event({
+                "type": "restart",
+                "resume_sdk_session_id": next_resume_id,
+            })
             reset_for_restart(state)
     finally:
         if saved_claudecode is not None:
             os.environ["CLAUDECODE"] = saved_claudecode
+        persistence.finalize(transcript, state)
+        transcript.close()
     return exit_code
 
 
@@ -402,6 +488,7 @@ async def _run_sdk_session(
     *,
     options: Any,
     state: ReplState,
+    transcript: Any,
     prompt_session: Any,
     ClaudeSDKClient: Any,
     AssistantMessage: Any,
@@ -412,8 +499,10 @@ async def _run_sdk_session(
 ) -> tuple[bool, bool, int]:
     """Run one ClaudeSDKClient lifecycle. Returns (restart, exit, exit_code).
 
-    A slash-command `/clear` signals restart — outer loop reopens the client.
-    EOF or `/exit` signals exit.
+    A slash-command `/clear` or `/resume` signals restart — outer loop
+    reopens the client (with a resume session_id if /resume fired). EOF or
+    `/exit` signals exit. Every turn + tool event is written to
+    `transcript.events_path` as JSONL.
     """
     exit_code = 0
     async with ClaudeSDKClient(options=options) as client:
@@ -436,9 +525,12 @@ async def _run_sdk_session(
                 action = dispatch_command(text, state, sys.stdout)
                 if action == EXIT:
                     return False, True, exit_code
-                if action == RESTART:
+                if action in (RESTART, RESUME):
                     return True, False, exit_code
                 continue
+
+            # Record the user's input as a first-class event.
+            transcript.write_event({"type": "user_input", "text": text})
 
             try:
                 await client.query(text)
@@ -453,8 +545,15 @@ async def _run_sdk_session(
                             out=sys.stdout,
                         )
                         sys.stdout.flush()
+                        _persist_sdk_message(
+                            message, transcript,
+                            AssistantMessage, UserMessage,
+                            SystemMessage, ResultMessage,
+                        )
                         if isinstance(message, SystemMessage):
                             track_system_init(state, message)
+                            if state.session_id:
+                                persistence.record_session_id(transcript, state.session_id)
                         elif isinstance(message, ResultMessage):
                             track_result(state, message)
                             if getattr(message, "is_error", False):
