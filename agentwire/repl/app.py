@@ -122,7 +122,40 @@ def run_repl(
     """
     if print_prompt is not None:
         return asyncio.run(_run_print_mode(print_prompt, mode, model, system_prompt, roles))
+    if _should_use_textual():
+        from agentwire.repl.textual_app import run_textual_repl
+        return asyncio.run(run_textual_repl(
+            mode=mode, model=model, system_prompt=system_prompt,
+            session_name=session_name, resume=resume, roles=roles,
+            seed_message=seed_message,
+        ))
     return asyncio.run(_run_interactive(mode, model, system_prompt, session_name, resume, roles, seed_message))
+
+
+def _should_use_textual() -> bool:
+    """Decide whether to route to the Textual rewrite (Phase 1+).
+
+    Order matters:
+      1. `AGENTWIRE_REPL_TUI=textual` env flag — opt-in only during rollout.
+      2. Both stdin and stdout must be a TTY — non-TTY callers (scheduler,
+         workflow `human_gate`, piped stdin, captured stdout) keep the
+         existing line-mode path. This is load-bearing for headless work.
+      3. `import textual` must succeed — the textual dep is intentionally
+         optional during rollout; if missing, fall back rather than crash.
+    """
+    if os.environ.get("AGENTWIRE_REPL_TUI", "").lower() != "textual":
+        return False
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    try:
+        import textual  # noqa: F401
+    except ImportError:
+        sys.stderr.write(
+            "[repl: AGENTWIRE_REPL_TUI=textual but textual is not installed; "
+            "falling back to line-mode]\n"
+        )
+        return False
+    return True
 
 
 # -------- print mode (SDK-backed) --------
