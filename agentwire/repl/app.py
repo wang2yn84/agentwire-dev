@@ -541,7 +541,10 @@ async def _run_interactive(
         "Type /help for commands. @path/to/file expands inline. /effort, /thinking, /say tune session.\n"
     )
     if _mcp_enabled():
-        sys.stdout.write("agentwire MCP server attached — /tools to see what's wired in.\n")
+        sys.stdout.write(
+            "agentwire MCP server attached — /tools to see what's wired in. "
+            "(write HTML artifacts via mcp__agentwire__desktop_write_artifact)\n"
+        )
     if state.role_names:
         sys.stdout.write(f"Roles: {', '.join(state.role_names)}\n")
     if state.voice:
