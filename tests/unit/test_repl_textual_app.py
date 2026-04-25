@@ -13,7 +13,9 @@ arrive in the next PR.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -320,6 +322,133 @@ async def test_user_turn_fires_worker_and_renders_sdk_events(patched_sdk):
         assert "claude-opus-4-7" in all_text
         # ResultMessage produces "[done · ...]"
         assert "done" in all_text
+
+
+@pytest.mark.asyncio
+async def test_user_turn_writes_transcript_event(patched_sdk, tmp_path, monkeypatch):
+    # Persistence parity: each user turn writes a `user_input` event,
+    # finalize() runs on unmount, and metadata.json/transcript.jsonl exist.
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        assert isinstance(client, _FakeClient)
+        client.script([
+            _FakeSystemMessage(subtype="init", data={"model": "claude-opus-4-7", "session_id": "deadbeef"}),
+            _FakeResultMessage(total_cost_usd=0.01, duration_ms=500,
+                               usage={"input_tokens": 5, "output_tokens": 3}),
+        ])
+
+        inp = app.query_one("#input", Input)
+        inp.value = "hello world"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+
+        session_dir = app.state.session_dir
+        events_path = Path(session_dir) / "transcript.jsonl"
+        assert events_path.exists()
+        events = [json.loads(line) for line in events_path.read_text().splitlines()]
+        kinds = [e.get("type") for e in events]
+        assert "user_input" in kinds
+        # Finalize happens on unmount — verify metadata.json exists after.
+    metadata = Path(session_dir) / "metadata.json"
+    assert metadata.exists()
+
+
+@pytest.mark.asyncio
+async def test_at_mention_expands_and_records(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "notes.txt").write_text("hello mention\n")
+
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        client = app._client
+        client.script([_FakeResultMessage(total_cost_usd=0.0, duration_ms=10, usage={})])
+
+        inp = app.query_one("#input", Input)
+        inp.value = "summarize @notes.txt"
+        await inp.action_submit()
+        for _ in range(20):
+            await pilot.pause()
+
+        chat_lines = [
+            line.text if hasattr(line, "text") else str(line)
+            for line in app.query_one("#chat").lines
+        ]
+        all_text = " ".join(chat_lines)
+        assert "expanded 1 mention" in all_text or "@notes.txt" in all_text
+
+        events_path = Path(app.state.session_dir) / "transcript.jsonl"
+        events = [json.loads(line) for line in events_path.read_text().splitlines()]
+        user_events = [e for e in events if e.get("type") == "user_input"]
+        assert len(user_events) == 1
+        assert "mentions" in user_events[0]
+        assert user_events[0]["mentions"][0]["raw"] == "@notes.txt"
+
+
+@pytest.mark.asyncio
+async def test_clear_writes_restart_event(patched_sdk, tmp_path, monkeypatch):
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        starting_restart_count = app.state.restart_count
+
+        inp = app.query_one("#input", Input)
+        inp.value = "/clear"
+        await inp.action_submit()
+        # Let the restart worker run.
+        for _ in range(10):
+            await pilot.pause()
+
+        assert app.state.restart_count == starting_restart_count + 1
+        events_path = Path(app.state.session_dir) / "transcript.jsonl"
+        events = [json.loads(line) for line in events_path.read_text().splitlines()]
+        kinds = [e.get("type") for e in events]
+        assert "restart" in kinds
+
+
+@pytest.mark.asyncio
+async def test_prompted_mode_routes_answer_to_permission(patched_sdk, tmp_path, monkeypatch):
+    # The next user submission while a permission Future is pending
+    # answers the prompt instead of starting a new turn.
+    from agentwire.repl import persistence
+    monkeypatch.setattr(persistence, "DEFAULT_REPL_HOME", tmp_path / "repl")
+    from agentwire.repl.textual_app import AgentwireREPL
+    from textual.widgets import Input
+
+    app = AgentwireREPL(mode="bypass")  # bypass so init doesn't need real SDK perms
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Manually park a Future on the app — simulates can_use_tool awaiting.
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        app._pending_permission = future
+        app._pending_tool_name = "Bash"
+
+        inp = app.query_one("#input", Input)
+        inp.value = "y"
+        await inp.action_submit()
+        await pilot.pause()
+
+        assert future.done()
+        assert future.result() == "y"
 
 
 @pytest.mark.asyncio
