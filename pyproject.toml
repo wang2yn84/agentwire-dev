@@ -34,7 +34,6 @@ dependencies = [
     "resend>=2.0.0",
     "markdown>=3.5",
     "claude-agent-sdk>=0.1.0",
-    "prompt_toolkit>=3.0.40",
     "rich>=13.0",
     "textual>=0.80",
 ]

@@ -5,7 +5,7 @@
 A from-scratch rendering layer for `agentwire repl` built on [Textual](https://github.com/textualize/textual). The current `prompt_toolkit` line-oriented loop hit its ceiling: there's no way to keep streaming partial output visible without flooding the chat history, no proportional layout, no borders/titles, no docked status line, no scrollable subregion for "what claude is doing right now". Textual gives all of that out of the box.
 
 **Phase of:** own mission (sibling of `agentwire-repl.md`)
-**Status:** **Phase 1 shipped (parity, 2026-04-25). Phase 2A next.** The Textual REPL is feature-complete behind `AGENTWIRE_REPL_TUI=textual` — chat history, slash commands, persistence, mentions, prompted-mode, /clear+/resume lifecycle all parity with the legacy line-mode path. Live partial streaming is intentionally choppy in Phase 1 (one RichLog entry per delta on flush); Phase 2A's CurrentAction subpane fixes that with proper in-place streaming.
+**Status:** **Mission complete (2026-04-26).** Phase 1A → 3E shipped, plus the default-flip cleanup (#140) — `_run_interactive`, `prompt_toolkit`, `AGENTWIRE_REPL_TUI` env flag, and the dispatch fork are all gone. `agentwire repl` is the Textual TUI; print mode (`-p`) keeps the stdout single-shot path. See `docs/repl-tui.md` for the user-facing walkthrough.
 **Depends on:** `agentwire-repl.md` Phases 1-5 (complete) + streaming-visibility quick fixes (#123-#125 shipped 2026-04-25)
 **Blocks:** future REPL feature work that needs richer layout (mode badges, modal permission prompts, inline waveform for /say, etc.)
 
@@ -458,7 +458,8 @@ SDK `can_use_tool` callback `await self.push_screen_wait(PermissionPrompt(...))`
 - [x] **Phase 2A** — CurrentAction subpane + proportional weights (#131, 2026-04-25)
 - [x] **Phase 2B** — Header + StatusLine (#132, 2026-04-25)
 - [x] **Phase 2C** — tool-call collapse + permission ModalScreen (#133, 2026-04-25)
-- [x] **Phase 2D** — theming + `/layout` (#134, 2026-04-25). Flag default flip deferred to a follow-up after the 1-week daily-driver soak window completes.
+- [x] **Phase 2D** — theming + `/layout` (#134, 2026-04-25)
+- [x] **Default flip** — `AGENTWIRE_REPL_TUI` env flag, dispatcher, `_run_interactive`, `_run_sdk_session`, `_make_bottom_toolbar`, `_make_can_use_tool`, `_prompt_sync`, and the `prompt_toolkit` dep all deleted (#140, 2026-04-26)
 - [x] **Phase 3A** — snapshot test infra (#135, 2026-04-25; opt-in via `pytest -m snapshots` because the framework leaves asyncio state polluted across the rest of the suite)
 - [x] **Phase 3B** — `@`-mention autocomplete (#136, 2026-04-25; live preview in action pane + Tab to complete to top match)
 - [x] **Phase 3C** — slash command palette (#137, 2026-04-25; Ctrl+P opens fuzzy picker)

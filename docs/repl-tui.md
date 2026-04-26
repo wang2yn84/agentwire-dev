@@ -1,18 +1,16 @@
 # Agentwire REPL — Textual TUI walkthrough
 
-> The Textual rewrite of `agentwire repl`. Behind `AGENTWIRE_REPL_TUI=textual`
-> until the soak window unlocks the default flip. See the mission doc at
-> `docs/missions/agentwire-repl-textual.md` for design and ship history.
+> The Textual TUI for `agentwire repl`. See `docs/missions/agentwire-repl-textual.md`
+> for design and ship history.
 
 ## Quick start
 
 ```bash
-AGENTWIRE_REPL_TUI=textual agentwire repl
+agentwire repl
 ```
 
-The flag must be set on a real TTY. Print mode (`-p`) and non-TTY callers
-(scheduler, workflow `human_gate`, piped stdin) keep using the line-mode
-REPL. Without the flag, every invocation behaves exactly as before.
+That's it. Print mode (`-p PROMPT`) keeps a stdout single-shot pipe — the
+TUI is for interactive sessions only.
 
 ## Layout
 
@@ -200,12 +198,8 @@ Both files are byte-identical to what the line-mode path produces, so
 
 ## What's next
 
-- **Phase 2D follow-up**: flip `AGENTWIRE_REPL_TUI=textual` to default
-  on after the 1-week daily-driver soak window completes. Removes the
-  env-flag gate, makes `textual` a hard runtime dep, deletes
-  `_run_interactive`.
-- **Trigger-driven**: snapshot tests for new visual changes (Phase 3A
-  laid the infra; run via `pytest -m snapshots`).
+Trigger-driven: snapshot tests for new visual changes (Phase 3A laid the
+infra; run via `pytest -m snapshots`).
 
 See `docs/missions/agentwire-repl-textual.md` for the living checklist
 and shipping log.

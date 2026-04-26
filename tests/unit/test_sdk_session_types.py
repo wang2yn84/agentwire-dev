@@ -91,6 +91,5 @@ class TestBuildAgentCommandSdk:
 
 
 # --- REPL interactive loop ---
-# The full interactive loop (prompt_toolkit + persistent SDK client) is tested
-# in test_repl_sdk.py with both subsystems mocked. This file still covers the
-# session-type + build_agent_command dispatch surface.
+# The Textual REPL is tested in test_repl_textual_app.py. This file covers
+# the session-type + build_agent_command dispatch surface.
