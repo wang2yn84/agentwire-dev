@@ -1107,6 +1107,81 @@ async def test_scrub_opens_modal(patched_sdk, tmp_path, monkeypatch):
         assert olist.option_count >= 2
 
 
+class TestAgentwireBrandTheme:
+    """Phase: brand theme — neon green primary + neon cyan accent on flat black."""
+
+    def test_default_palette_matches_brand(self):
+        from agentwire.repl.textual_app import build_agentwire_theme
+
+        theme = build_agentwire_theme()
+        assert theme.name == "agentwire"
+        assert theme.dark is True
+        assert theme.primary == "#00ff88"
+        assert theme.secondary == "#00d4ff"
+        assert theme.accent == "#00d4ff"
+        assert theme.foreground == "#e2e8f0"
+        assert theme.background == "#000000"
+        assert theme.surface == "#0a0a0a"
+        assert theme.success == "#00ff88"
+        assert theme.warning == "#fbbf24"
+        assert theme.error == "#dc2626"
+
+    def test_palette_overrides_apply(self):
+        from agentwire.repl.textual_app import build_agentwire_theme
+
+        theme = build_agentwire_theme({
+            "primary": "#ff00aa",
+            "background": "#0d0d2a",
+        })
+        assert theme.primary == "#ff00aa"
+        assert theme.background == "#0d0d2a"
+        # Other palette keys keep their brand defaults.
+        assert theme.secondary == "#00d4ff"
+        assert theme.foreground == "#e2e8f0"
+
+    def test_variable_overrides_apply(self):
+        # Keys outside the palette (e.g. header-foreground) go to variables.
+        from agentwire.repl.textual_app import build_agentwire_theme
+
+        theme = build_agentwire_theme({
+            "header-foreground": "#ff00ff",
+        })
+        assert theme.variables["header-foreground"] == "#ff00ff"
+
+    def test_empty_overrides_keep_defaults(self):
+        from agentwire.repl.textual_app import build_agentwire_theme
+
+        theme = build_agentwire_theme({"primary": ""})
+        # Empty string treated as no-op — brand default preserved.
+        assert theme.primary == "#00ff88"
+
+
+def test_repl_config_loads_theme_overrides(tmp_path, monkeypatch):
+    """Config plumbing: repl.theme.* in YAML round-trips into Config.repl.theme."""
+    from agentwire import config as cfg_mod
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "repl:\n"
+        "  theme:\n"
+        '    primary: "#ff00aa"\n'
+        '    background: "#0d0d2a"\n'
+    )
+    cfg = cfg_mod.load_config(yaml_path)
+    assert cfg.repl.theme["primary"] == "#ff00aa"
+    assert cfg.repl.theme["background"] == "#0d0d2a"
+
+
+def test_repl_config_default_theme_is_empty(tmp_path):
+    """No `repl.theme` in YAML → empty dict, app falls back to brand defaults."""
+    from agentwire import config as cfg_mod
+
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("server:\n  port: 8765\n")
+    cfg = cfg_mod.load_config(yaml_path)
+    assert cfg.repl.theme == {}
+
+
 @pytest.mark.asyncio
 async def test_exit_command_quits_app(patched_sdk):
     from agentwire.repl.textual_app import AgentwireREPL
