@@ -1,9 +1,14 @@
 """Agentwire REPL application entry point.
 
-Print mode: one-shot SDK call, stream events, exit.
-Interactive: persistent prompt_toolkit loop holding one ClaudeSDKClient open
-across turns. Ctrl+D exits; Ctrl+C cancels the current turn. Slash commands
-live in `commands.py`; transcript persistence lives in `persistence.py`.
+- Print mode: one-shot SDK call, stream events, exit (single-shot stdout
+  pipe — used by `agentwire workflow run`, scheduler tasks, `human_gate`
+  seeds; never moves to Textual).
+- Interactive: Textual TUI implemented in `agentwire/repl/textual_app.py`.
+  This file holds the print-mode helper, the SDK options builder, the
+  message renderer (used by both surfaces), and supporting utilities.
+
+Slash commands live in `commands.py`; transcript persistence lives in
+`persistence.py`.
 """
 
 from __future__ import annotations
@@ -14,12 +19,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agentwire.repl.commands import CONTINUE, EXIT, RESTART, RESUME, dispatch_command
 from agentwire.repl import persistence
 from agentwire.repl.context import SessionContext, load_session_context
 from agentwire.repl.damage_control import make_pre_tool_hook
-from agentwire.repl.mentions import expand_mentions
-from agentwire.repl.state import ReplState, reset_for_restart, track_result, track_system_init
+from agentwire.repl.state import ReplState
 from agentwire.workflows.runners.sdk_errors import classify as _classify_sdk_error
 
 
@@ -108,10 +111,11 @@ def run_repl(
 ) -> int:
     """Run the REPL. Returns exit code.
 
-    - Print mode (`-p PROMPT`): one SDK call, stream events, exit. No
-      transcript (print mode is fire-and-forget).
-    - Interactive: persistent loop with full transcript persistence under
-      `~/.agentwire/sessions/repl/<session_name>/`.
+    - Print mode (`-p PROMPT`): single-shot stdout pipe — one SDK call,
+      stream events, exit. Used by `agentwire workflow run`, scheduler
+      tasks, and `human_gate` seeds where a TUI would interfere.
+    - Interactive: Textual TUI under `~/.agentwire/sessions/repl/<name>/`
+      with full transcript persistence.
 
     `roles` overrides the role list from `.agentwire.yml` for this session;
     when None, project config wins.
@@ -122,40 +126,12 @@ def run_repl(
     """
     if print_prompt is not None:
         return asyncio.run(_run_print_mode(print_prompt, mode, model, system_prompt, roles))
-    if _should_use_textual():
-        from agentwire.repl.textual_app import run_textual_repl
-        return asyncio.run(run_textual_repl(
-            mode=mode, model=model, system_prompt=system_prompt,
-            session_name=session_name, resume=resume, roles=roles,
-            seed_message=seed_message,
-        ))
-    return asyncio.run(_run_interactive(mode, model, system_prompt, session_name, resume, roles, seed_message))
-
-
-def _should_use_textual() -> bool:
-    """Decide whether to route to the Textual rewrite (Phase 1+).
-
-    Order matters:
-      1. `AGENTWIRE_REPL_TUI=textual` env flag — opt-in only during rollout.
-      2. Both stdin and stdout must be a TTY — non-TTY callers (scheduler,
-         workflow `human_gate`, piped stdin, captured stdout) keep the
-         existing line-mode path. This is load-bearing for headless work.
-      3. `import textual` must succeed — the textual dep is intentionally
-         optional during rollout; if missing, fall back rather than crash.
-    """
-    if os.environ.get("AGENTWIRE_REPL_TUI", "").lower() != "textual":
-        return False
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return False
-    try:
-        import textual  # noqa: F401
-    except ImportError:
-        sys.stderr.write(
-            "[repl: AGENTWIRE_REPL_TUI=textual but textual is not installed; "
-            "falling back to line-mode]\n"
-        )
-        return False
-    return True
+    from agentwire.repl.textual_app import run_textual_repl
+    return asyncio.run(run_textual_repl(
+        mode=mode, model=model, system_prompt=system_prompt,
+        session_name=session_name, resume=resume, roles=roles,
+        seed_message=seed_message,
+    ))
 
 
 # -------- print mode (SDK-backed) --------
@@ -628,411 +604,6 @@ def _format_tool_result(content: Any) -> str:
     text = text.replace("\n", " ")
     return text if len(text) <= 120 else text[:117] + "..."
 
-
-# -------- interactive (prompt_toolkit + persistent SDK client) --------
-
-
-async def _run_interactive(
-    mode: str,
-    model: str | None,
-    system_prompt: str | None,
-    session_name: str | None = None,
-    resume: str | None = None,
-    roles: list[str] | None = None,
-    seed_message: str | None = None,
-) -> int:
-    """Run the interactive REPL.
-
-    Holds one `ClaudeSDKClient` open across the whole session so each turn
-    extends the same conversation (model keeps short-term context, session_id
-    stays stable). Ctrl+D exits cleanly; Ctrl+C cancels the current turn.
-    Slash commands are Phase 2 — here we only honor `/exit` and `/quit` as
-    conveniences for users who prefer explicit exit to Ctrl+D.
-    """
-    try:
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ClaudeSDKClient,
-            ResultMessage,
-            SystemMessage,
-            UserMessage,
-        )
-    except ImportError as e:
-        print(f"error: claude-agent-sdk not installed: {e}", file=sys.stderr)
-        return 1
-
-    try:
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.history import InMemoryHistory
-        from prompt_toolkit.key_binding import KeyBindings
-        from prompt_toolkit.patch_stdout import patch_stdout
-    except ImportError as e:
-        print(f"error: prompt_toolkit not installed: {e}", file=sys.stderr)
-        return 1
-
-    # Resume handling — look up the SDK session_id to pass to the first
-    # ClaudeSDKClient.
-    resume_sdk_session_id: str | None = None
-    if resume:
-        prior = persistence.load_session(resume)
-        if prior is None:
-            print(f"error: no session named {resume!r} under {persistence.DEFAULT_REPL_HOME}", file=sys.stderr)
-            return 1
-        ids = prior.get("sdk_session_ids") or []
-        if not ids:
-            print(f"warning: session {resume!r} has no recorded sdk_session_id; starting fresh conversation", file=sys.stderr)
-        else:
-            resume_sdk_session_id = ids[-1]  # most recent
-
-    # ReplState built up-front so the permission callback (and the bottom
-    # toolbar) can close over it before the first SDK options bake.
-    placeholder_tools = (RESTRICTED_TOOLS if mode == "restricted" else FULL_TOOLS).copy()
-    state = ReplState(
-        mode=mode,
-        model=model or DEFAULT_MODEL,
-        allowed_tools=placeholder_tools,
-    )
-
-    ctx = load_session_context(Path.cwd(), role_overrides=roles)
-    state.role_names = list(ctx.role_names)
-    state.voice = ctx.voice
-    if ctx.missing_roles:
-        sys.stderr.write(f"[repl: roles not found: {', '.join(ctx.missing_roles)}]\n")
-
-    can_use_tool = _make_can_use_tool(state) if mode == "prompted" else None
-
-    options = build_options(
-        ClaudeAgentOptions, mode, model, system_prompt,
-        cwd=Path.cwd(), resume_sdk_session_id=resume_sdk_session_id,
-        effort=state.effort, thinking_mode=state.thinking_mode,
-        can_use_tool=can_use_tool,
-        session_context=ctx,
-    )
-
-    model_display = model or f"{DEFAULT_MODEL} (default)"
-    sys.stdout.write(BANNER.format(mode=mode, model=model_display))
-    if resume_sdk_session_id:
-        sys.stdout.write(f"Resuming {resume!r} (sdk session {resume_sdk_session_id[:8]}…)\n")
-    sys.stdout.write(
-        "Interactive mode. Enter to send · Alt+Enter for newline · Ctrl+D to exit · Ctrl+C to cancel.\n"
-        "Type /help for commands. @path/to/file expands inline. /effort, /thinking, /say tune session.\n"
-    )
-    if _mcp_enabled():
-        sys.stdout.write(
-            "agentwire MCP server attached — /tools to see what's wired in. "
-            "(write HTML artifacts via mcp__agentwire__desktop_write_artifact)\n"
-        )
-    if state.role_names:
-        sys.stdout.write(f"Roles: {', '.join(state.role_names)}\n")
-    if state.voice:
-        sys.stdout.write(f"Voice: {state.voice}\n")
-    sys.stdout.write("\n")
-    sys.stdout.flush()
-
-    allowed_tools = (
-        list(options.allowed_tools)
-        if hasattr(options, "allowed_tools")
-        else list(getattr(options, "kwargs", {}).get("allowed_tools", []))
-    )
-    state.allowed_tools = allowed_tools
-
-    transcript = persistence.create_session(
-        mode=mode,
-        model=model or DEFAULT_MODEL,
-        allowed_tools=allowed_tools,
-        name=session_name,
-    )
-    sys.stdout.write(f"[transcript → {transcript.session_dir}]\n\n")
-    state.session_dir = str(transcript.session_dir)
-    state.transcript_name = transcript.name
-
-    # Multi-line input: only meaningful when stdin is a real TTY. With piped
-    # stdin (smoke tests, scripts, scheduler invocations) prompt_toolkit's
-    # multi-line mode treats every \n as literal and never submits on EOF,
-    # so we fall back to single-line in that case.
-    is_tty = sys.stdin.isatty()
-    bottom_toolbar = _make_bottom_toolbar(state) if is_tty else None
-    if is_tty:
-        kb = KeyBindings()
-
-        @kb.add("escape", "enter")
-        def _(event):
-            event.current_buffer.insert_text("\n")
-
-        @kb.add("c-j")  # Ctrl-J fallback for terminals that don't pass Alt
-        def _(event):
-            event.current_buffer.insert_text("\n")
-
-        @kb.add("enter")
-        def _(event):
-            event.current_buffer.validate_and_handle()
-
-        prompt_session = PromptSession(
-            history=InMemoryHistory(),
-            multiline=True,
-            key_bindings=kb,
-            prompt_continuation="… ",
-            bottom_toolbar=bottom_toolbar,
-            refresh_interval=0.5,
-        )
-    else:
-        prompt_session = PromptSession(history=InMemoryHistory())
-
-    saved_claudecode = os.environ.pop("CLAUDECODE", None)
-    exit_code = 0
-
-    # Outer loop wraps the SDK client so /clear and /resume can close+reopen
-    # it for a different conversation while the REPL keeps running.
-    pending_seed = seed_message
-    try:
-        while True:
-            restart_requested, should_exit, loop_exit_code = await _run_sdk_session(
-                options=options,
-                state=state,
-                transcript=transcript,
-                prompt_session=prompt_session,
-                ClaudeSDKClient=ClaudeSDKClient,
-                AssistantMessage=AssistantMessage,
-                UserMessage=UserMessage,
-                SystemMessage=SystemMessage,
-                ResultMessage=ResultMessage,
-                patch_stdout=patch_stdout,
-                seed_message=pending_seed,
-            )
-            pending_seed = None  # only seed the first conversation
-            if loop_exit_code != 0:
-                exit_code = loop_exit_code
-            if should_exit:
-                break
-            if not restart_requested:
-                break
-            # Rebuild options for /clear vs /resume vs /effort vs /thinking.
-            next_resume_id = state.pending_resume_sdk_session_id
-            state.pending_resume_sdk_session_id = None
-            options = build_options(
-                ClaudeAgentOptions, mode, model, system_prompt,
-                cwd=Path.cwd(), resume_sdk_session_id=next_resume_id,
-                effort=state.effort, thinking_mode=state.thinking_mode,
-                can_use_tool=can_use_tool,
-                session_context=ctx,
-            )
-            transcript.write_event({
-                "type": "restart",
-                "resume_sdk_session_id": next_resume_id,
-            })
-            reset_for_restart(state)
-    finally:
-        if saved_claudecode is not None:
-            os.environ["CLAUDECODE"] = saved_claudecode
-        persistence.finalize(transcript, state)
-        transcript.close()
-    return exit_code
-
-
-async def _run_sdk_session(
-    *,
-    options: Any,
-    state: ReplState,
-    transcript: Any,
-    prompt_session: Any,
-    ClaudeSDKClient: Any,
-    AssistantMessage: Any,
-    UserMessage: Any,
-    SystemMessage: Any,
-    ResultMessage: Any,
-    patch_stdout: Any,
-    seed_message: str | None = None,
-) -> tuple[bool, bool, int]:
-    """Run one ClaudeSDKClient lifecycle. Returns (restart, exit, exit_code).
-
-    A slash-command `/clear` or `/resume` signals restart — outer loop
-    reopens the client (with a resume session_id if /resume fired). EOF or
-    `/exit` signals exit. Every turn + tool event is written to
-    `transcript.events_path` as JSONL.
-    """
-    exit_code = 0
-    pending_seed = seed_message
-    async with ClaudeSDKClient(options=options) as client:
-        while True:
-            if pending_seed is not None:
-                # Workflow human_gate (or any caller using seed_message) wants
-                # this turn injected without prompt_async firing first. After
-                # the seed runs, normal prompt loop resumes.
-                user_input = pending_seed
-                pending_seed = None
-                sys.stdout.write(f"> {user_input.splitlines()[0] if user_input else ''}\n")
-                if user_input.count("\n") > 0:
-                    sys.stdout.write("[seeded with multi-line context]\n")
-                sys.stdout.flush()
-            else:
-                try:
-                    with patch_stdout():
-                        user_input = await prompt_session.prompt_async("> ")
-                except EOFError:
-                    sys.stdout.write("\n[exit]\n")
-                    return False, True, exit_code
-                except KeyboardInterrupt:
-                    sys.stdout.write("\n")
-                    continue
-
-            text = user_input.strip()
-            if not text:
-                continue
-
-            if text.startswith("/"):
-                action = dispatch_command(text, state, sys.stdout)
-                if action == EXIT:
-                    return False, True, exit_code
-                if action in (RESTART, RESUME):
-                    return True, False, exit_code
-                continue
-
-            # Expand @path mentions before sending. Record both raw and
-            # expanded text so transcripts capture user intent + what the
-            # model actually saw.
-            expanded_text, expansions = expand_mentions(text, cwd=Path.cwd())
-            if expansions:
-                sys.stdout.write(
-                    f"[expanded {len(expansions)} mention"
-                    f"{'s' if len(expansions) != 1 else ''}: "
-                    f"{', '.join(e.raw for e in expansions)}]\n"
-                )
-                sys.stdout.flush()
-
-            transcript.write_event({
-                "type": "user_input",
-                "text": text,
-                **(
-                    {
-                        "expanded_text": expanded_text,
-                        "mentions": [{"raw": e.raw, "target": e.target} for e in expansions],
-                    }
-                    if expansions
-                    else {}
-                ),
-            })
-
-            try:
-                await client.query(expanded_text)
-                stream_state = _StreamRenderState()
-                async for message in _heartbeat_iter(
-                    client.receive_response(), idle_timeout=5.0,
-                ):
-                    if message is _HEARTBEAT:
-                        stream_state.heartbeat(sys.stdout)
-                        continue
-                    try:
-                        render_message(
-                            message,
-                            AssistantMessage=AssistantMessage,
-                            UserMessage=UserMessage,
-                            SystemMessage=SystemMessage,
-                            ResultMessage=ResultMessage,
-                            out=sys.stdout,
-                            stream_state=stream_state,
-                        )
-                        sys.stdout.flush()
-                        _persist_sdk_message(
-                            message, transcript,
-                            AssistantMessage, UserMessage,
-                            SystemMessage, ResultMessage,
-                        )
-                        if isinstance(message, SystemMessage):
-                            track_system_init(state, message)
-                            if state.session_id:
-                                persistence.record_session_id(transcript, state.session_id)
-                        elif isinstance(message, ResultMessage):
-                            track_result(state, message)
-                            if getattr(message, "is_error", False):
-                                exit_code = 1
-                    except Exception as exc:
-                        print(f"[repl: render error: {exc}]", file=sys.stderr)
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                sys.stdout.write("\n[turn cancelled]\n")
-                sys.stdout.flush()
-                continue
-            except Exception as exc:
-                category = _classify_sdk_error(type(exc).__name__, str(exc))
-                print(
-                    f"[repl: {category} · {type(exc).__name__}: {exc}]",
-                    file=sys.stderr,
-                )
-                continue
-
-
-# -------- Phase 2 PR 4 helpers: bottom toolbar + permission prompt --------
-
-
-def _make_bottom_toolbar(state: ReplState):
-    """Return a callable rendered by prompt_toolkit at the bottom of the prompt.
-
-    Reads from `state` directly so token/cost totals refresh after every turn
-    without us pushing into prompt_toolkit. Falls back to a config-only line
-    before the first response lands.
-    """
-    def _render():
-        if state.turn_count == 0:
-            return (
-                f"{state.mode} · {state.model} · effort={state.effort} · "
-                f"thinking={state.thinking_mode}"
-            )
-        total = state.total_input_tokens + state.total_output_tokens
-        return (
-            f"{state.turn_count} turn{'s' if state.turn_count != 1 else ''} · "
-            f"{total} tok ({state.total_input_tokens} in / {state.total_output_tokens} out) · "
-            f"${state.total_cost_usd:.4f} · effort={state.effort} · "
-            f"thinking={state.thinking_mode}"
-        )
-    return _render
-
-
-def _make_can_use_tool(state: ReplState):
-    """Build a `can_use_tool` async callback for `sdk-prompted` mode.
-
-    Prints a one-line tool-use prompt (`Read /etc/passwd?`) and reads y/n/a
-    from stdin in a worker thread so the SDK's async loop isn't blocked. 'a'
-    adds the tool name to a per-session always-allow set kept on `state`.
-    Reset by `/clear`.
-    """
-    async def _can_use_tool(tool_name: str, tool_input: dict, ctx: Any):
-        # Lazy import — keeps SDK absence from breaking module import.
-        from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
-
-        if tool_name in state.always_allow_tools:
-            return PermissionResultAllow()
-
-        summary = _format_tool_input(tool_name, tool_input or {})
-        prompt = f"\n[? allow {tool_name}{' ' + summary if summary else ''}? (y/n/a=always)] "
-
-        loop = asyncio.get_event_loop()
-        try:
-            answer = await loop.run_in_executor(None, _prompt_sync, prompt)
-        except (EOFError, KeyboardInterrupt):
-            sys.stdout.write("\n[denied via Ctrl+C/EOF]\n")
-            sys.stdout.flush()
-            return PermissionResultDeny(message="user denied (interrupt)")
-
-        answer = (answer or "").strip().lower()
-        if answer in ("a", "always"):
-            state.always_allow_tools.add(tool_name)
-            sys.stdout.write(f"[allow · {tool_name} now always allowed this session]\n")
-            sys.stdout.flush()
-            return PermissionResultAllow()
-        if answer in ("", "y", "yes"):
-            return PermissionResultAllow()
-        sys.stdout.write(f"[deny · {tool_name}]\n")
-        sys.stdout.flush()
-        return PermissionResultDeny(message="user denied")
-
-    return _can_use_tool
-
-
-def _prompt_sync(prompt: str) -> str:
-    """Blocking prompt for the permission callback. Runs off-loop."""
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    return sys.stdin.readline()
 
 
 # -------- streaming visibility (2026-04-25) --------
