@@ -138,7 +138,7 @@ AGENTWIRE_THEME_DEFAULTS: dict[str, str] = {
 # override via `repl.theme.<key>` in `~/.agentwire/config.yaml` too.
 AGENTWIRE_THEME_VARIABLES: dict[str, str] = {
     "header-foreground": "#00ff88",
-    "header-background": "#0a0a0a",
+    "header-background": "#000000",
     "footer-key-foreground": "#00d4ff",
     "footer-foreground": "#e2e8f0",
     "footer-background": "#000000",
@@ -641,7 +641,7 @@ class StatusLine(Static):
         height: 1;
         padding: 0 1;
         color: $secondary;
-        background: $surface;
+        background: $background;
     }
     """
 
@@ -693,18 +693,30 @@ class AgentwireREPL(App):
         scrollbar-color: $primary $surface;
     }
 
-    /* CurrentAction — live partial stream, wrapped in the brand cyan accent. */
+    /* CurrentAction — live partial stream, wrapped in the brand cyan accent.
+       Flat-black background to match chat — no near-black surface. */
     #action {
         height: 2fr;
         border: tall $secondary;
         border-title-color: $secondary;
         padding: 0 1;
-        background: $surface;
-        scrollbar-color: $secondary $surface;
+        background: $background;
+        scrollbar-color: $secondary $background;
     }
 
-    /* Input — neon green border to match chat (the input is part of the
-       primary conversation flow). */
+    /* Input — neon green border, flat-black inside.
+       Textual's default Input uses `background: $surface` (#0a0a0a) and
+       adds a 5% foreground tint on focus — both override flat black, so
+       we squash them with explicit values. */
+    Input {
+        background: $background;
+        background-tint: $background;
+    }
+    Input:focus {
+        background: $background;
+        background-tint: $background;
+        border: tall $primary;
+    }
     #input {
         dock: bottom;
         height: 3;
@@ -712,12 +724,23 @@ class AgentwireREPL(App):
         background: $background;
     }
 
+    /* Header (title bar) — flat black with neon-green app title. */
     Header {
         dock: top;
+        background: $background;
+        color: $primary;
+    }
+    HeaderTitle {
+        background: $background;
+        color: $primary;
+    }
+    HeaderIcon {
+        background: $background;
     }
 
     Footer {
         dock: bottom;
+        background: $background;
     }
     """
 
