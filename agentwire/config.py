@@ -183,6 +183,27 @@ class ServicesConfig:
 
 
 @dataclass
+class ReplConfig:
+    """Agentwire REPL (Textual TUI) configuration.
+
+    `theme` is a dict of color overrides keyed by Textual theme attribute
+    (primary, secondary, accent, foreground, background, surface, panel,
+    success, warning, error). Each value is any color string Textual
+    accepts (#RRGGBB, named colors, etc.). Empty/missing keys fall back
+    to the brand defaults defined in `agentwire/repl/textual_app.py`.
+
+    Example `~/.agentwire/config.yaml`:
+
+        repl:
+          theme:
+            primary: "#ff00aa"        # override neon-green primary
+            background: "#0d0d2a"     # tweak the flat-black background
+    """
+
+    theme: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class SessionConfig:
     """Default session configuration."""
 
@@ -261,6 +282,7 @@ class Config:
     portal: PortalConfig = field(default_factory=PortalConfig)
     services: ServicesConfig = field(default_factory=ServicesConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    repl: ReplConfig = field(default_factory=ReplConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     overnight: OvernightConfig = field(default_factory=OvernightConfig)
     channels: dict = field(default_factory=dict)
@@ -479,6 +501,13 @@ def _dict_to_config(data: dict) -> Config:
         go_prompt=overnight_data.get("go_prompt", DEFAULT_GO_PROMPT),
     )
 
+    # REPL (Textual TUI) — theme overrides
+    repl_data = data.get("repl", {}) or {}
+    theme_overrides = repl_data.get("theme", {}) or {}
+    if not isinstance(theme_overrides, dict):
+        theme_overrides = {}
+    repl = ReplConfig(theme={str(k): str(v) for k, v in theme_overrides.items()})
+
     return Config(
         server=server,
         projects=projects,
@@ -493,6 +522,7 @@ def _dict_to_config(data: dict) -> Config:
         scheduler=scheduler,
         overnight=overnight,
         channels=channel_configs,
+        repl=repl,
     )
 
 

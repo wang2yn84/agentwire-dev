@@ -157,14 +157,47 @@ Esc / `q` to close.
 
 ## Theming
 
-Built-in Textual themes work out of the box:
+The default `agentwire` theme matches the dotdev/agentwire brand:
+
+| Token | Color | Role |
+|---|---|---|
+| `primary` | `#00ff88` neon green | chat border, input border, modal labels |
+| `secondary` / `accent` | `#00d4ff` neon cyan | action-pane border, status text, modal borders |
+| `background` | `#000000` flat black | screen + chat |
+| `surface` | `#0a0a0a` near-black | status line, modal interior, action pane |
+| `foreground` | `#e2e8f0` near-white | main text |
+| `success` | `#00ff88` | matches primary |
+| `warning` | `#fbbf24` amber | in-progress markers |
+| `error` | `#dc2626` red | destructive |
+
+### Per-user overrides
+
+Drop a `repl.theme` block into `~/.agentwire/config.yaml`:
+
+```yaml
+repl:
+  theme:
+    primary: "#ff00aa"        # override neon-green primary
+    background: "#0d0d2a"     # tweak the flat-black background
+    header-foreground: "#ffffff"  # variable-level override
+```
+
+Any palette key (`primary`, `secondary`, `accent`, `foreground`,
+`background`, `surface`, `panel`, `success`, `warning`, `error`) and
+any Textual variable (e.g. `header-foreground`, `footer-key-foreground`,
+`border-blurred`) can be overridden independently. Missing keys keep
+the brand defaults.
+
+### Switching at runtime
+
+Other Textual built-ins remain available:
 
 ```
 > /theme
-[theme: textual-dark]
-[available: catppuccin-latte, catppuccin-mocha, dracula, flexoki,
-gruvbox, monokai, nord, solarized-light, textual-dark, textual-light,
-tokyo-night]
+[theme: agentwire]
+[available: agentwire, catppuccin-latte, catppuccin-mocha, dracula,
+flexoki, gruvbox, monokai, nord, solarized-light, textual-dark,
+textual-light, tokyo-night]
 
 > /theme dracula
 [theme set: dracula]

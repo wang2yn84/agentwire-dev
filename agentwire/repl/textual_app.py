@@ -59,6 +59,7 @@ from textual.binding import Binding
 from textual.containers import Center, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.theme import Theme
 from textual.widgets import Button, Footer, Header, Input, Label, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 
@@ -93,6 +94,89 @@ from agentwire.repl.state import (
     track_result,
     track_system_init,
 )
+
+
+# ----- agentwire brand theme ------------------------------------------------
+#
+# Mirrors the dotdev/agentwire brand palette from agentwire-website's
+# `src/app/globals.css`:
+#   --background: #000000          flat black
+#   --foreground: #e2e8f0          near-white
+#   --primary:    #00ff88          neon green
+#   --secondary:  #00d4ff          neon cyan (accent)
+#   --muted/card: #0a0a0a          near-black surface
+#   --accent:     #1a1a1a          slightly elevated panel
+#   --border:     #27272a          subtle line
+#   --destructive: #dc2626         red
+#
+# Textual `Theme` keys map onto these:
+#   primary    → neon green   (main brand)
+#   secondary  → neon cyan    (accent)
+#   accent     → neon cyan    (titlebars, focus)
+#   background → #000000
+#   foreground → #e2e8f0
+#   surface    → #0a0a0a      (status line, modal interior)
+#   panel      → #1a1a1a      (button, elevated container)
+#   success    → neon green   (matches brand)
+#   warning    → amber        (in-progress markers)
+#   error      → red          (destructive / failures)
+
+AGENTWIRE_THEME_DEFAULTS: dict[str, str] = {
+    "primary": "#00ff88",
+    "secondary": "#00d4ff",
+    "accent": "#00d4ff",
+    "foreground": "#e2e8f0",
+    "background": "#000000",
+    "surface": "#0a0a0a",
+    "panel": "#1a1a1a",
+    "success": "#00ff88",
+    "warning": "#fbbf24",
+    "error": "#dc2626",
+}
+
+# Variables (theme-token level) that derive from the palette. The user can
+# override via `repl.theme.<key>` in `~/.agentwire/config.yaml` too.
+AGENTWIRE_THEME_VARIABLES: dict[str, str] = {
+    "header-foreground": "#00ff88",
+    "header-background": "#0a0a0a",
+    "footer-key-foreground": "#00d4ff",
+    "footer-foreground": "#e2e8f0",
+    "footer-background": "#000000",
+    "footer-description-foreground": "#b8b8b8",
+    "border-blurred": "#27272a",
+}
+
+
+def build_agentwire_theme(overrides: dict[str, str] | None = None) -> Theme:
+    """Construct the agentwire brand `Theme` with optional user overrides.
+
+    `overrides` is a flat dict from `~/.agentwire/config.yaml`'s
+    `repl.theme.*` entries. Keys map onto either Theme palette attributes
+    (primary, secondary, …) or Textual variable names (header-foreground,
+    footer-key-foreground, …). Unknown keys are ignored.
+    """
+    overrides = overrides or {}
+    palette = {**AGENTWIRE_THEME_DEFAULTS}
+    variables = {**AGENTWIRE_THEME_VARIABLES}
+    for key, value in overrides.items():
+        if not value:
+            continue
+        if key in palette:
+            palette[key] = value
+        else:
+            # Anything not in the palette is treated as a variable override
+            # (e.g. header-foreground, footer-key-foreground).
+            variables[key] = value
+    return Theme(
+        name="agentwire",
+        dark=True,
+        variables=variables,
+        **palette,
+    )
+
+
+# Stable instance for tests and code that doesn't need overrides.
+AGENTWIRE_THEME = build_agentwire_theme()
 
 
 # ----- adapters -------------------------------------------------------------
@@ -267,7 +351,7 @@ class CommandPalette(ModalScreen[str | None]):
     }
     CommandPalette > Vertical {
         background: $surface;
-        border: thick $accent;
+        border: thick $secondary;
         width: 70;
         height: 22;
     }
@@ -388,20 +472,21 @@ class PermissionPrompt(ModalScreen[str]):
     }
     PermissionPrompt > Vertical {
         background: $surface;
-        border: thick $accent;
+        border: thick $primary;
         padding: 1 2;
         width: 80;
         height: auto;
     }
     PermissionPrompt Label {
         margin-bottom: 1;
+        color: $primary;
     }
     PermissionPrompt Static.tool-line {
-        color: $text;
+        color: $foreground;
         margin-bottom: 1;
     }
     PermissionPrompt Static.help-line {
-        color: $text 60%;
+        color: $foreground 60%;
     }
     PermissionPrompt Center {
         margin-top: 1;
@@ -461,14 +546,14 @@ class TranscriptScrubber(ModalScreen[None]):
     }
     TranscriptScrubber > Vertical {
         background: $surface;
-        border: thick $accent;
+        border: thick $secondary;
         width: 100;
         height: 30;
         padding: 0 1;
     }
     TranscriptScrubber Label {
         margin: 1 0;
-        color: $text;
+        color: $primary;
     }
     TranscriptScrubber OptionList {
         height: 1fr;
@@ -555,7 +640,7 @@ class StatusLine(Static):
     StatusLine {
         height: 1;
         padding: 0 1;
-        color: $text 60%;
+        color: $secondary;
         background: $surface;
     }
     """
@@ -596,25 +681,35 @@ class AgentwireREPL(App):
     CSS = """
     Screen {
         layout: vertical;
+        background: $background;
     }
 
+    /* Chat — main conversation area, wrapped in the brand neon green. */
     #chat {
         height: 6fr;
-        border: tall $accent;
+        border: tall $primary;
         padding: 0 1;
+        background: $background;
+        scrollbar-color: $primary $surface;
     }
 
+    /* CurrentAction — live partial stream, wrapped in the brand cyan accent. */
     #action {
         height: 2fr;
-        border: tall $warning;
-        border-title-color: $warning;
+        border: tall $secondary;
+        border-title-color: $secondary;
         padding: 0 1;
+        background: $surface;
+        scrollbar-color: $secondary $surface;
     }
 
+    /* Input — neon green border to match chat (the input is part of the
+       primary conversation flow). */
     #input {
         dock: bottom;
         height: 3;
-        border: tall $accent-lighten-1;
+        border: tall $primary;
+        background: $background;
     }
 
     Header {
@@ -677,6 +772,26 @@ class AgentwireREPL(App):
     # ------ lifecycle ------
 
     async def on_mount(self) -> None:
+        # Build + apply the agentwire brand theme, merging any per-user
+        # overrides from `~/.agentwire/config.yaml` (`repl.theme.*`). Other
+        # built-in themes remain available via `/theme <name>`.
+        try:
+            overrides: dict[str, str] = {}
+            try:
+                from agentwire.config import get_config
+                cfg = get_config()
+                overrides = dict(getattr(cfg.repl, "theme", {}) or {})
+            except Exception:
+                # Config load is best-effort — fall back to defaults silently.
+                pass
+            theme = build_agentwire_theme(overrides)
+            self.register_theme(theme)
+            self.theme = "agentwire"
+        except Exception:
+            # Older Textual versions or theme-system changes shouldn't crash
+            # the app — fall back to the default theme.
+            pass
+
         chat = self.query_one("#chat", RichLog)
         action = self.query_one("#action", RichLog)
         action.border_title = "Current action"
