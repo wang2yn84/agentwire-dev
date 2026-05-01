@@ -199,6 +199,12 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         api_key = provider_cfg.get("api_key", "")
         default_model = provider_cfg.get("default_model", "")
 
+        # Merge provider key + any global pi extra_env (e.g. BRAVE_SEARCH_API_KEY)
+        env: dict[str, str] = {}
+        if api_key:
+            env[env_var] = api_key
+        env.update(pi_config.get("extra_env", {}))
+
         parts = [pi_binary, "--provider", provider]
         resolved_model = model or default_model
         if resolved_model:
@@ -219,18 +225,23 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
             if pi_tools:
                 parts.extend(["--tools", ",".join(pi_tools)])
 
-        # Role-based system prompt (skipped for restricted/readonly — those are curated contexts)
-        if merged and merged.instructions and variant not in ("restricted", "readonly"):
-            f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-            f.write(merged.instructions)
-            f.close()
-            temp_file = f.name
-            parts.append(f'--append-system-prompt "$(<{temp_file})"')
+        # System prompt: combine global pi.system_prompt + role instructions.
+        # Skipped for restricted/readonly — those are curated contexts.
+        if variant not in ("restricted", "readonly"):
+            global_prompt = pi_config.get("system_prompt", "")
+            role_prompt = merged.instructions if merged and merged.instructions else ""
+            combined = "\n\n".join(filter(None, [global_prompt, role_prompt]))
+            if combined:
+                f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                f.write(combined)
+                f.close()
+                temp_file = f.name
+                parts.append(f'--append-system-prompt "$(<{temp_file})"')
 
         return AgentCommand(
             command=" ".join(parts),
             temp_file=temp_file,
-            env={env_var: api_key} if api_key else {},
+            env=env,
         )
 
     # === Agentwire REPL (claude-agent-sdk) ===
