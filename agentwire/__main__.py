@@ -175,26 +175,41 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
     # Merge roles if provided
     merged = merge_roles(roles) if roles else None
 
-    # === Pi coding agent via Z.AI GLM ===
-    if session_type.startswith("pi-zai"):
+    # === Pi coding agent (any provider) ===
+    # Session type: pi-<provider>[-restricted|-readonly]
+    # e.g. pi-zai, pi-deepseek, pi-openai-restricted
+    if session_type.startswith("pi-"):
+        remainder = session_type[3:]  # strip "pi-"
+        if remainder.endswith("-restricted"):
+            provider = remainder[:-11]
+            variant = "restricted"
+        elif remainder.endswith("-readonly"):
+            provider = remainder[:-9]
+            variant = "readonly"
+        else:
+            provider = remainder
+            variant = None
+
         config = load_config()
-        zai = config.get("zai", {})
         pi_config = config.get("pi", {})
-
-        # Pi reads ZAI_API_KEY from env. We inject it via `tmux set-environment`
-        # (see inject_session_env) so the key never appears in `ps auxwww`.
         pi_binary = pi_config.get("binary", "pi")
-        default_model = pi_config.get("default_model", "glm-5.1")
 
-        parts = [pi_binary, "--provider", "zai"]
-        parts.extend(["--model", model or default_model])
+        provider_cfg = pi_config.get("providers", {}).get(provider, {})
+        env_var = provider_cfg.get("env_var", f"{provider.upper().replace('-', '_')}_API_KEY")
+        api_key = provider_cfg.get("api_key", "")
+        default_model = provider_cfg.get("default_model", "")
+
+        parts = [pi_binary, "--provider", provider]
+        resolved_model = model or default_model
+        if resolved_model:
+            parts.extend(["--model", resolved_model])
 
         # Permission variants (pi has no permission system to bypass; variants
         # translate to pi's --tools whitelist instead)
         temp_file = None
-        if session_type == "pi-zai-restricted":
+        if variant == "restricted":
             parts.extend(["--tools", "read,grep,find,bash"])
-        elif session_type == "pi-zai-readonly":
+        elif variant == "readonly":
             parts.extend(["--tools", "read,grep,find"])
         elif merged and merged.tools:
             # Translate Claude tool names to pi's lowercase tool names.
@@ -205,7 +220,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
                 parts.extend(["--tools", ",".join(pi_tools)])
 
         # Role-based system prompt (skipped for restricted/readonly — those are curated contexts)
-        if merged and merged.instructions and session_type not in ("pi-zai-restricted", "pi-zai-readonly"):
+        if merged and merged.instructions and variant not in ("restricted", "readonly"):
             f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
             f.write(merged.instructions)
             f.close()
@@ -215,7 +230,7 @@ def build_agent_command(session_type: str, roles: list[RoleConfig] | None = None
         return AgentCommand(
             command=" ".join(parts),
             temp_file=temp_file,
-            env={"ZAI_API_KEY": zai.get("api_key", "")},
+            env={env_var: api_key} if api_key else {},
         )
 
     # === Agentwire REPL (claude-agent-sdk) ===
@@ -10224,7 +10239,7 @@ def main() -> int:
     new_parser.add_argument("-p", "--path", help="Working directory (default: ~/projects/<name>)")
     new_parser.add_argument("-f", "--force", action="store_true", help="Replace existing session")
     # Session type
-    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, sdk-bypass, sdk-prompted, sdk-restricted, standard, worker, voice)")
+    new_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-<provider>, pi-<provider>-restricted, pi-<provider>-readonly, standard, worker, voice) — e.g. pi-zai, pi-deepseek")
     # Roles
     new_parser.add_argument("--roles", help="Comma-separated list of roles (preserves existing config, defaults to agentwire for new projects)")
     new_parser.add_argument("--model", help="Model override (e.g., haiku, sonnet, opus)")
@@ -10260,7 +10275,7 @@ def main() -> int:
     spawn_parser.add_argument("-s", "--session", help="Target session (default: auto-detect)")
     spawn_parser.add_argument("--cwd", help="Working directory (default: current)")
     spawn_parser.add_argument("--branch", "-b", help="Create worktree on this branch for isolated commits")
-    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly)")
+    spawn_parser.add_argument("--type", help="Session type (claude-bypass, claude-prompted, claude-restricted, pi-<provider>, pi-<provider>-restricted, pi-<provider>-readonly) — e.g. pi-zai, pi-deepseek")
     spawn_parser.add_argument("--roles", default="worker", help="Comma-separated roles (default: worker)")
     spawn_parser.add_argument("--no-wait", action="store_true", help="Don't wait for worker to be ready (default: wait up to 30s)")
     spawn_parser.add_argument("--timeout", type=int, default=30, help="Seconds to wait for worker ready (default: 30)")
@@ -10299,7 +10314,7 @@ def main() -> int:
     recreate_parser = subparsers.add_parser("recreate", help="Destroy and recreate session with fresh worktree")
     recreate_parser.add_argument("-s", "--session", required=True, help="Session name (project/branch or project/branch@machine)")
     # Session type
-    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
+    recreate_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-<provider>, pi-<provider>-restricted, pi-<provider>-readonly, standard, worker, voice) — e.g. pi-zai, pi-deepseek")
     recreate_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     recreate_parser.add_argument("--json", action="store_true", help="Output as JSON")
     recreate_parser.set_defaults(func=cmd_recreate)
@@ -10309,7 +10324,7 @@ def main() -> int:
     fork_parser.add_argument("-s", "--source", required=True, help="Source session (project or project/branch)")
     fork_parser.add_argument("-t", "--target", required=True, help="Target session (must include branch: project/new-branch)")
     # Session type
-    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-zai, pi-zai-restricted, pi-zai-readonly, standard, worker, voice)")
+    fork_parser.add_argument("--type", help="Session type (bare, claude-bypass, claude-prompted, claude-restricted, pi-<provider>, pi-<provider>-restricted, pi-<provider>-readonly, standard, worker, voice) — e.g. pi-zai, pi-deepseek")
     fork_parser.add_argument("--commit", metavar="REF", help="Fork from this commit/ref instead of HEAD (e.g. abc123, main~5)")
     fork_parser.add_argument("--env", action="append", metavar="KEY=VAL", help="Inject env var via `tmux set-environment` (repeatable)")
     fork_parser.add_argument("--json", action="store_true", help="Output as JSON")

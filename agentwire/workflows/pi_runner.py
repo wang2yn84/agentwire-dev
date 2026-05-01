@@ -28,14 +28,19 @@ CONFIG_PATH = Path.home() / ".agentwire" / "config.yaml"
 # arrive as content blocks of type "tool_use" and results as "tool_result".
 
 
-def _get_zai_api_key() -> str:
-    """Load Z.AI API key from config (falls back to env if missing)."""
+def _get_pi_api_key(provider: str) -> str:
+    """Load API key for a pi provider from config, falling back to env."""
     try:
         data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
     except FileNotFoundError:
         data = {}
-    key = (data.get("zai") or {}).get("api_key", "") if isinstance(data, dict) else ""
-    return key or os.environ.get("ZAI_API_KEY", "")
+    if isinstance(data, dict):
+        provider_cfg = (data.get("pi") or {}).get("providers", {}).get(provider, {})
+        key = provider_cfg.get("api_key", "")
+    else:
+        key = ""
+    env_var = f"{provider.upper().replace('-', '_')}_API_KEY"
+    return key or os.environ.get(env_var, "")
 
 
 def _extract_final_assistant_text(events: list[dict]) -> str:
@@ -151,9 +156,10 @@ def run_node(
     cmd = build_pi_command(node)
 
     env = {**os.environ, **node.extra_env}
-    api_key = _get_zai_api_key()
+    api_key = _get_pi_api_key(node.provider)
     if api_key:
-        env["ZAI_API_KEY"] = api_key
+        env_var = f"{node.provider.upper().replace('-', '_')}_API_KEY"
+        env[env_var] = api_key
 
     cwd = node.workdir or workflow_cwd or os.getcwd()
 

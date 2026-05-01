@@ -31,6 +31,18 @@ class SessionType(str, Enum):
     VOICE = "voice"        # Voice with prompts -> claude-prompted
 
     @classmethod
+    def _missing_(cls, value: object) -> "SessionType | None":
+        """Handle dynamic pi-<provider> types not enumerated at definition time."""
+        if isinstance(value, str) and (
+            value.startswith("pi-") or value.startswith("claude-") or value.startswith("sdk-")
+        ):
+            obj = str.__new__(cls, value)
+            obj._name_ = value.upper().replace("-", "_")
+            obj._value_ = value
+            return obj
+        return None
+
+    @classmethod
     def from_str(cls, value: str) -> "SessionType":
         """Parse session type from string."""
         value = value.lower().replace("_", "-")
@@ -74,13 +86,12 @@ def normalize_session_type(session_type: str, agent_type: str) -> str:
         Agent-specific session type
     """
     # If already agent-specific, return as-is
-    agent_specific_types = [
-        "claude-bypass", "claude-auto", "claude-prompted", "claude-restricted",
-        "pi-zai", "pi-zai-restricted", "pi-zai-readonly",
-        "sdk-bypass", "sdk-prompted", "sdk-restricted",
-        "bare"
-    ]
-    if session_type in agent_specific_types:
+    if (
+        session_type.startswith("claude-")
+        or session_type.startswith("pi-")
+        or session_type.startswith("sdk-")
+        or session_type == "bare"
+    ):
         return session_type
 
     # Map universal types to agent-specific
