@@ -10150,6 +10150,19 @@ def main() -> int:
     brave_parser.add_argument("--json", action="store_true", help="Output raw JSON instead of compact text")
     brave_parser.set_defaults(func=cmd_brave)
 
+    # === fetch command ===
+    from agentwire.fetch import cmd_fetch
+    fetch_parser = subparsers.add_parser(
+        "fetch",
+        help="Fetch a URL via Jina Reader — handles JS-rendered pages, returns clean markdown.",
+    )
+    fetch_parser.add_argument("url", help="URL to fetch")
+    fetch_parser.add_argument(
+        "--limit", "-l", type=int, default=8000,
+        help="Max characters to return (default: 8000, 0 = no limit)",
+    )
+    fetch_parser.set_defaults(func=cmd_fetch)
+
     # === notify command ===
     notify_parser = subparsers.add_parser("notify", help="Notify portal of session/pane state changes")
     notify_parser.add_argument(
