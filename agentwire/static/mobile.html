@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>AgentWire Voice</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #7d8590; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --orange: #f0883e;
+  }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
+
+  header { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .status-dot.connected { background: var(--green); }
+
+  #stt-badge { font-size: 11px; color: var(--muted); padding: 2px 8px; border: 1px solid var(--border); border-radius: 20px; cursor: pointer; }
+
+  .sessions { flex: 1; padding: 16px; overflow-y: auto; }
+  .sessions h2 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 10px; }
+  .session-list { display: flex; flex-direction: column; gap: 8px; }
+  .session-btn {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; text-align: left; color: var(--text); font-size: 15px;
+    font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px;
+    transition: border-color .15s, background .15s;
+  }
+  .session-btn.active { border-color: var(--accent); background: #161b22; }
+  .session-btn:active { background: #1f2937; }
+  .session-icon { font-size: 20px; }
+
+  .ptt-area { padding: 20px; border-top: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .active-session-label { font-size: 13px; color: var(--muted); }
+  .active-session-label span { color: var(--accent); font-weight: 600; }
+
+  #ptt-btn {
+    width: 100px; height: 100px; border-radius: 50%; border: 3px solid var(--border);
+    background: var(--surface); color: var(--text); font-size: 36px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color .15s, background .15s, transform .1s;
+    user-select: none; -webkit-user-select: none;
+  }
+  #ptt-btn.recording { border-color: var(--red); background: #2d1a1a; transform: scale(1.05); }
+  #ptt-btn.processing { border-color: var(--orange); animation: pulse 1s ease-in-out infinite; }
+  #ptt-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+  .ptt-hint { font-size: 12px; color: var(--muted); text-align: center; }
+  #transcript { font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-height: 40px; width: 100%; word-break: break-word; display: none; }
+  #transcript.visible { display: block; }
+
+  .stt-picker { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: flex-end; z-index: 100; }
+  .stt-picker.open { display: flex; }
+  .stt-sheet { background: var(--surface); border-radius: 16px 16px 0 0; padding: 20px; width: 100%; border-top: 1px solid var(--border); }
+  .stt-sheet h3 { font-size: 14px; color: var(--muted); margin-bottom: 14px; }
+  .stt-opt { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 15px; cursor: pointer; }
+  .stt-opt:last-child { border-bottom: none; }
+  .stt-opt.active .check { color: var(--green); }
+  .check { font-size: 18px; color: transparent; }
+  .stt-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎙 AgentWire</h1>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span id="stt-badge" onclick="openSttPicker()">STT: –</span>
+    <span class="status-dot" id="conn-dot"></span>
+  </div>
+</header>
+
+<div class="sessions">
+  <h2>Sessions</h2>
+  <div class="session-list" id="session-list">
+    <div style="color:var(--muted);font-size:13px">Loading…</div>
+  </div>
+</div>
+
+<div class="ptt-area">
+  <div class="active-session-label">Sending to: <span id="active-label">none selected</span></div>
+  <button id="ptt-btn" disabled>🎤</button>
+  <div class="ptt-hint">Tap and hold to speak</div>
+  <div id="transcript"></div>
+</div>
+
+<!-- STT picker sheet -->
+<div class="stt-picker" id="stt-picker" onclick="if(event.target===this)closeSttPicker()">
+  <div class="stt-sheet">
+    <h3>Speech-to-text backend</h3>
+    <div id="stt-options"></div>
+  </div>
+</div>
+
+<script>
+const BACKENDS = {
+  'faster-whisper': { label: 'faster-whisper', sub: 'Local GPU · free · ~2s' },
+  'whispercpp':     { label: 'whisper.cpp',    sub: 'Local GGUF · free · ~1s' },
+  'openai':         { label: 'OpenAI whisper-1', sub: 'Cloud · $0.006/min' },
+  'gpt4o-mini':     { label: 'gpt-4o-mini-transcribe', sub: 'Cloud · $0.003/min · best quality' },
+};
+
+const ICONS = { trade: '📈', fringe: '🃏', 'ai-team': '🤖', agentwire: '🤖' };
+const SKIP = ['agentwire-portal','agentwire-stt-fw','agentwire-stt-gpt4o','agentwire-stt-oai','agentwire-stt-router'];
+
+let activeSession = null;
+let activeStt = 'gpt4o-mini';
+let ws = null;
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => document.getElementById('conn-dot').className = 'status-dot connected';
+  ws.onclose = () => { document.getElementById('conn-dot').className = 'status-dot'; setTimeout(connectWs, 3000); };
+}
+
+// ── Sessions ───────────────────────────────────────────────────────────────
+async function loadSessions() {
+  const r = await fetch('/api/sessions/local');
+  const data = await r.json();
+  const sessions = (data.sessions || []).filter(s => !SKIP.includes(s.name));
+  const list = document.getElementById('session-list');
+  if (!sessions.length) { list.innerHTML = '<div style="color:var(--muted);font-size:13px">No sessions found</div>'; return; }
+  list.innerHTML = sessions.map(s => `
+    <button class="session-btn" onclick="selectSession('${s.name}')">
+      <span class="session-icon">${ICONS[s.name] || '💻'}</span>
+      <span>${s.name}</span>
+    </button>`).join('');
+  // auto-select first
+  selectSession(sessions[0].name);
+}
+
+function selectSession(name) {
+  activeSession = name;
+  document.getElementById('active-label').textContent = name;
+  document.querySelectorAll('.session-btn').forEach(b => b.classList.toggle('active', b.querySelector('span:last-child').textContent === name));
+  document.getElementById('ptt-btn').disabled = false;
+}
+
+// ── STT ────────────────────────────────────────────────────────────────────
+async function loadStt() {
+  try {
+    const r = await fetch('/api/stt/router/status');
+    const d = await r.json();
+    activeStt = d.active || 'gpt4o-mini';
+    updateSttBadge();
+  } catch(e) {}
+}
+
+function updateSttBadge() {
+  const b = BACKENDS[activeStt];
+  document.getElementById('stt-badge').textContent = `STT: ${b ? b.label.split(' ')[0] : activeStt}`;
+}
+
+async function switchStt(backend) {
+  await fetch(`/switch/${backend}`, { method: 'POST' });
+  activeStt = backend;
+  updateSttBadge();
+  closeSttPicker();
+}
+
+function openSttPicker() {
+  fetch('/status').then(r=>r.json()).then(d => {
+    const opts = document.getElementById('stt-options');
+    opts.innerHTML = Object.entries(BACKENDS).map(([k,v]) => `
+      <div class="stt-opt ${d.active===k?'active':''}" onclick="switchStt('${k}')">
+        <div>
+          <div>${v.label}</div>
+          <div class="stt-sub">${v.sub} ${d.backends?.[k]?.healthy ? '✓' : '✗'}</div>
+        </div>
+        <span class="check">✓</span>
+      </div>`).join('');
+    document.getElementById('stt-picker').classList.add('open');
+  });
+}
+function closeSttPicker() { document.getElementById('stt-picker').classList.remove('open'); }
+
+// ── PTT ────────────────────────────────────────────────────────────────────
+let mediaRecorder = null, chunks = [];
+
+const btn = document.getElementById('ptt-btn');
+btn.addEventListener('pointerdown', startRecording);
+btn.addEventListener('pointerup', stopRecording);
+btn.addEventListener('pointerleave', stopRecording);
+
+async function startRecording(e) {
+  e.preventDefault();
+  if (btn.classList.contains('recording') || btn.classList.contains('processing')) return;
+  if (!activeSession) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+    chunks = [];
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    mediaRecorder.onstop = sendRecording;
+    mediaRecorder.start();
+    btn.classList.add('recording');
+    btn.textContent = '🔴';
+  } catch(err) { alert('Microphone access denied: ' + err.message); }
+}
+
+function stopRecording() {
+  if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+  mediaRecorder.stop();
+  mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  btn.classList.remove('recording');
+  btn.classList.add('processing');
+  btn.textContent = '⏳';
+}
+
+async function sendRecording() {
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const fd = new FormData();
+  fd.append('audio', blob, 'recording.webm');
+  try {
+    const r = await fetch('/transcribe', { method: 'POST', body: fd });
+    const { text } = await r.json();
+    if (text && text.trim()) {
+      showTranscript(text);
+      await fetch(`/send/${activeSession}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+    }
+  } catch(err) { console.error('Send failed:', err); }
+  btn.classList.remove('processing');
+  btn.textContent = '🎤';
+}
+
+function showTranscript(text) {
+  const el = document.getElementById('transcript');
+  el.textContent = text;
+  el.className = 'visible';
+  setTimeout(() => el.className = '', 5000);
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+connectWs();
+loadSessions();
+loadStt();
+</script>
+</body>
+</html>

@@ -244,6 +244,10 @@ class AgentWireServer:
         self.app.router.add_static("/artifacts", artifacts_dir)
         self.app.router.add_static("/static", Path(__file__).parent / "static")
 
+        # STT router proxy — used by mobile UI
+        self.app.router.add_get("/status", self.handle_stt_status)
+        self.app.router.add_post("/switch/{backend}", self.handle_stt_switch)
+
     async def init_backends(self):
         """Initialize TTS, STT, and agent backends."""
         # Convert config to dict for backend factories
@@ -691,7 +695,12 @@ class AgentWireServer:
         return web.json_response({"status": "ok", "version": __version__})
 
     async def handle_index(self, request: web.Request) -> web.Response:
-        """Serve the desktop UI."""
+        """Serve the desktop UI, or mobile UI for phone browsers."""
+        ua = request.headers.get("User-Agent", "")
+        is_mobile = any(x in ua for x in ("iPhone", "Android", "Mobile", "iPad"))
+        if is_mobile:
+            static_dir = Path(__file__).parent / "static"
+            return web.FileResponse(static_dir / "mobile.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
         voices = await self._get_voices()
         context = {
             "version": __version__,
@@ -3268,6 +3277,23 @@ projects:
         except Exception as e:
             logger.error(f"Send failed: {e}")
             return web.json_response({"error": str(e)})
+
+    async def handle_stt_status(self, request: web.Request) -> web.Response:
+        """Proxy to STT router /status — used by mobile UI."""
+        try:
+            async with self._http_session.get("http://localhost:8199/status", timeout=aiohttp.ClientTimeout(total=3)) as r:
+                return web.Response(body=await r.read(), content_type="application/json")
+        except Exception:
+            return web.json_response({"active": "unknown", "backends": {}})
+
+    async def handle_stt_switch(self, request: web.Request) -> web.Response:
+        """Proxy to STT router /switch/{backend} — used by mobile UI."""
+        backend = request.match_info["backend"]
+        try:
+            async with self._http_session.post(f"http://localhost:8199/switch/{backend}", timeout=aiohttp.ClientTimeout(total=3)) as r:
+                return web.Response(body=await r.read(), content_type="application/json")
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=503)
 
     # TTS Integration
 
