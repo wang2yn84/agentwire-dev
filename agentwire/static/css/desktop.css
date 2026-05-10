@@ -4400,3 +4400,17 @@ body.sidebar-pinned .sidebar-tab {
 .sdk-watch-event .ev-tool-result { color: #00ff88; }
 .sdk-watch-event .ev-done { color: #00ff88; opacity: 0.7; }
 .sdk-watch-event .ev-error { color: #dc2626; font-weight: bold; }
+
+/* ── Mobile: make sidebar tab prominent and sidebar open by default ── */
+@media (max-width: 768px) {
+    .sidebar-tab {
+        width: 36px;
+        height: 64px;
+        opacity: 0.9;
+        font-size: 20px;
+        background: var(--accent);
+        color: #fff;
+        border-radius: 0 10px 10px 0;
+    }
+    .sidebar-tab:hover { opacity: 1; }
+}

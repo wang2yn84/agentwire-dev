@@ -23,6 +23,11 @@ export const sidebar = {
             this.pin();
         }
 
+        // On mobile, open sidebar by default so sessions are immediately visible
+        if (window.innerWidth <= 768 && !this.isOpen()) {
+            this.open();
+        }
+
         // Tab click → toggle sidebar
         this.tab.addEventListener('click', () => this.toggle());
 
