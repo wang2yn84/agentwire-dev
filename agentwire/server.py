@@ -331,6 +331,8 @@ class AgentWireServer:
         """Get available TTS voices via HTTP call to TTS server."""
         if not self._http_session:
             return [self.config.tts.default_voice]
+        if not self.config.tts.url or getattr(self.config.tts, 'backend', None) == "none":
+            return [self.config.tts.default_voice]
 
         try:
             async with self._http_session.get(
