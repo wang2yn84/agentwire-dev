@@ -248,6 +248,9 @@ class AgentWireServer:
         self.app.router.add_get("/status", self.handle_stt_status)
         self.app.router.add_post("/switch/{backend}", self.handle_stt_switch)
 
+        # Mobile/simple PTT UI — works on any browser
+        self.app.router.add_get("/mobile", self.handle_mobile)
+
     async def init_backends(self):
         """Initialize TTS, STT, and agent backends."""
         # Convert config to dict for backend factories
@@ -3277,6 +3280,14 @@ projects:
         except Exception as e:
             logger.error(f"Send failed: {e}")
             return web.json_response({"error": str(e)})
+
+    async def handle_mobile(self, request: web.Request) -> web.Response:
+        """Serve simple mobile/PTT UI regardless of browser type."""
+        static_dir = Path(__file__).parent / "static"
+        return web.FileResponse(static_dir / "mobile.html", headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "ngrok-skip-browser-warning": "1",
+        })
 
     async def handle_stt_status(self, request: web.Request) -> web.Response:
         """Proxy to STT router /status — used by mobile UI."""
