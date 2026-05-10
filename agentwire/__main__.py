@@ -1693,6 +1693,69 @@ def cmd_stt_status(args) -> int:
     return 1
 
 
+def cmd_stt_switch(args) -> int:
+    """Switch the active STT backend via the router."""
+    router_url = "http://localhost:8199"
+    backend = args.backend
+    try:
+        req = urllib.request.Request(
+            f"{router_url}/switch/{backend}",
+            data=b"",
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            print(f"✓ STT backend switched to: {data['active']}")
+            print(f"  URL: {data['url']}")
+            return 0
+    except urllib.error.URLError:
+        print(f"✗ STT router not reachable at {router_url}", file=sys.stderr)
+        print("  Start it: agentwire stt router start", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"✗ Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_stt_router_start(args) -> int:
+    """Start the STT router in a tmux session."""
+    script = Path.home() / ".agentwire" / "scripts" / "start-stt-router.sh"
+    if not script.exists():
+        print(f"✗ Start script not found: {script}", file=sys.stderr)
+        return 1
+    import subprocess
+    subprocess.run(["bash", str(script)], check=False)
+    return 0
+
+
+def cmd_stt_router_stop(args) -> int:
+    """Stop the STT router tmux session."""
+    import subprocess
+    subprocess.run(["tmux", "kill-session", "-t", "agentwire-stt-router"], check=False)
+    print("STT router stopped.")
+    return 0
+
+
+def cmd_stt_router_status(args) -> int:
+    """Show STT router status and health of all backends."""
+    router_url = "http://localhost:8199"
+    try:
+        req = urllib.request.Request(f"{router_url}/status")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+        print(f"STT Router  [ok]  port 8199  active={data['active']}")
+        print()
+        for name, info in data.get("backends", {}).items():
+            mark = "✓" if info["healthy"] else "✗"
+            active = " ← active" if info.get("active") else ""
+            print(f"  {mark} {name:<18} {info['url']}{active}")
+        return 0
+    except Exception:
+        print("STT Router  [!!]  not running on port 8199")
+        print("  Start: agentwire stt router start")
+        return 1
+
+
 # === Telegram Commands ===
 
 
@@ -10268,6 +10331,22 @@ def main() -> int:
     stt_status = stt_subparsers.add_parser("status", help="Check STT status")
     stt_status.add_argument("--json", action="store_true", help="Output JSON")
     stt_status.set_defaults(func=cmd_stt_status)
+
+    # stt switch
+    stt_switch = stt_subparsers.add_parser("switch", help="Switch active STT backend via router")
+    stt_switch.add_argument("backend", choices=["faster-whisper", "whispercpp", "openai", "gpt4o-mini"],
+                            help="Backend to activate")
+    stt_switch.set_defaults(func=cmd_stt_switch)
+
+    # stt router
+    stt_router = stt_subparsers.add_parser("router", help="Manage STT router (port 8199)")
+    stt_router_sub = stt_router.add_subparsers(dest="router_command")
+    stt_router_start = stt_router_sub.add_parser("start", help="Start STT router")
+    stt_router_start.set_defaults(func=cmd_stt_router_start)
+    stt_router_stop = stt_router_sub.add_parser("stop", help="Stop STT router")
+    stt_router_stop.set_defaults(func=cmd_stt_router_stop)
+    stt_router_status = stt_router_sub.add_parser("status", help="Show router + all backend health")
+    stt_router_status.set_defaults(func=cmd_stt_router_status)
 
     # === telegram command group ===
     telegram_parser = subparsers.add_parser("telegram", help="Manage Telegram bridge")
